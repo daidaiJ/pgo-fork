@@ -32,13 +32,14 @@
 | 随手 | 不完整流恢复注入 | [stream-recovery-injection.md](stream-recovery-injection.md) | 传输层有连接期重试（429/503/529），工具失败有重试；无"流中断→下一轮续作指令注入" | projection-only 注入一条恢复提示 | P0（搭车） |
 | 随手 | 子 agent 结果信封 + next_step | [subagent-result-envelope.md](subagent-result-envelope.md) | task 子代理已有（进程隔离 JSON-RPC + 进度事件）；无结构化信封/stop_reason 映射 | 信封字段 + stop_reason→next_step 映射 + 失败可 resume | P2 |
 | ⑤ | TUI 组件改造（参考 crush） | [tui-crush-components.md](tui-crush-components.md) | Bubble Tea v2 + glamour（回合结束渲染）；`ThinkingContent` 已解析进消息（`internal/agentcore/content.go:42`、`internal/provider/openai.go:69`）但 TUI/REPL 均不渲染 | thinking 块展示、流式 markdown、组件化与终端兼容性 | P0 |
+| ⓪ | 启动/退出耗时探针 | [startup-exit-probes.md](startup-exit-probes.md) | 无内建 span 画像；慢启动/慢退出发生时不可定位 | `internal/spans` 包 + `startup.*`/`exit.*` 埋点 + 环境变量开关 + 三退出路径 flush | P0（基建，最先落地） |
 
 ## 施工顺序
 
-**随手-流恢复注入 → ② → ⑤（TUI thinking/md，独立线可并行）→ ① → ③ → ④**
+**⓪ 启动/退出探针（基建）→ 随手-流恢复注入 → ② → ⑤（TUI thinking/md，独立线可并行）→ ① → ③ → ④**
 （④ 开工前需先定 pigo 侧模型能力位载体）。
 
-理由：随手件独立便宜且对国模网关流中断直接对症；②是无人值守安全基座；
+理由：⓪最先落地——后续所有特性的启动回归都有耗时基线可查；随手件独立便宜且对国模网关流中断直接对症；②是无人值守安全基座；
 ⑤与①③④无代码耦合、可并行推进；①依赖的会话树机制已有，改的是选择器与
 编辑器回填；③④动声明面与 prompt 构建，按来源项目经验放最后（风险最高）。
 
