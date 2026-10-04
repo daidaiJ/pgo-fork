@@ -9,7 +9,8 @@
   + 全链埋点，tip `73220ea`，全量测试绿）；2026-10-04 完成规划覆盖面审查
   （内置工具集/国模适配/pi-durable 中断续接，结论见 handoff 最新条目），
   待拍板：T1.2 / T1.3 / pi-durable 切片 1（headless 续跑）；skill-as-tool
-  完整体、供应商韧性 S 件族（2026-10-04 六面审查候选，见 handoff）。
+  完整体、供应商韧性 S 件族（2026-10-04 六面审查候选）；周额度下界反推
+  （随 T5.4，用户点名）——均见 handoff。
 - **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
   ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
