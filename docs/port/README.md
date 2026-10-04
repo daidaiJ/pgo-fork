@@ -20,6 +20,11 @@
    （deepseek/moonshotai/zai/volcengine/dashscope 等）同样成立，逐条进验收。
 4. **尊重上游 pi 语义**：pigo 是 pi 的 Go 移植；grok 侧与 pi 相反的设计决策
    （如 context edit 不走 compaction 通道）在分文档里逐条标注取舍。
+5. **施工纪律见 [design-principles.md](design-principles.md)**（R1–R10：从
+   grok-build-proxy 编译/测试耗时反例提炼，含"测小特性不烧全 lib"约束）；
+   候选特性的完整坐标系（qwen/minimax/kimi/step/ZCode/crush 六路参照、六维
+   评估、明确不做清单）见 [cross-prototype-selection.md](cross-prototype-selection.md)——
+   本文选型表是其"已立项"子集的施工视图。
 
 ## 选型结论与已有判定
 
@@ -42,6 +47,10 @@
 理由：⓪最先落地——后续所有特性的启动回归都有耗时基线可查；随手件独立便宜且对国模网关流中断直接对症；②是无人值守安全基座；
 ⑤与①③④无代码耦合、可并行推进；①依赖的会话树机制已有，改的是选择器与
 编辑器回填；③④动声明面与 prompt 构建，按来源项目经验放最后（风险最高）。
+
+本轮之后的新候选（微压缩、防打转哨兵、工具副作用契约、questionnaire、BTW
+侧会话等）按 [cross-prototype-selection.md](cross-prototype-selection.md)
+§新立项建议排期。
 
 ## 来源与可信度约定
 
