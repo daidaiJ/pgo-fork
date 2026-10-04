@@ -2,6 +2,8 @@ package tui
 
 import (
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/smallnest/pigo/internal/spans"
 )
 
 // Run starts the full-screen TUI and blocks until the user quits (Ctrl+C /
@@ -18,7 +20,13 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	p := tea.NewProgram(NewModel(opts).withSession(s, history))
+	// startup.ui_init (T1.1) covers model construction through the first rendered
+	// frame: the probe closes the span from the first View call (Mark "first
+	// frame" + End), the closest thing to a first-frame hook bubbletea exposes.
+	uiInit := spans.Begin("startup.ui_init")
+	m := NewModel(opts).withSession(s, history)
+	m.uiProbe = spans.NewProbe(uiInit)
+	p := tea.NewProgram(m)
 	_, err = p.Run()
 	return err
 }

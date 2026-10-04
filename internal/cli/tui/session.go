@@ -33,6 +33,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -151,7 +152,11 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		curLeaf  string
 	)
 	if opts.ResumeID != "" {
+		// startup.session_load (T1.1): LoadEntries on a large session file is a
+		// prime slow-startup suspect, so it gets its own span.
+		loadSpan := spans.Begin("startup.session_load")
 		h, entries, err := store.LoadEntries(opts.ResumeID)
+		loadSpan.End()
 		if err != nil {
 			return nil, nil, err
 		}

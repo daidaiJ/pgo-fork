@@ -25,6 +25,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/spans"
 )
 
 // SessionStore returns the session store rooted at ~/.pigo/sessions (or under
@@ -110,7 +111,11 @@ func openHeadlessSession(resumeID, model, providerName, sysPrompt string) (agent
 	now := time.Now().UTC()
 
 	if resumeID != "" {
+		// startup.session_load (T1.1): a large resumed session file is a prime
+		// slow-startup suspect, so the load gets its own span.
+		loadSpan := spans.Begin("startup.session_load")
 		h, entries, err := store.LoadEntries(resumeID)
+		loadSpan.End()
 		if err != nil {
 			return nil, headlessSession{}, err
 		}

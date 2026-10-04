@@ -41,6 +41,7 @@ import (
 	"github.com/smallnest/pigo/internal/dream"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/selfupdate"
+	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/webhook"
 )
 
@@ -126,6 +127,11 @@ type cliOptions struct {
 	// showVersion prints build metadata (version/commit/date, injected at release
 	// time by goreleaser) and exits, without running the agent.
 	showVersion bool
+	// traceStartup is the --trace-startup flag: print the startup/exit span
+	// timeline (T1.1, internal/spans) to stderr. It is consumed by a pre-scan in
+	// main (spans begin before flag.Parse completes) and declared here only so
+	// --help documents it.
+	traceStartup bool
 	// credentialRef is the config.toml `credential` value (issue #568): a named
 	// reference into ~/.pigo/.credentials.yaml (0600). It resolves to opts.apiKey
 	// when no --api-key / config api_key is present; the literal secret never
@@ -194,6 +200,25 @@ func main() {
 		os.Exit(pkgcmd.Run(os.Args[1], os.Args[2:], os.Stdout, os.Stderr))
 	}
 
+	// Startup/exit span profiling (T1.1): --trace-startup is pre-scanned here
+	// rather than left to flag.Parse because spans begin before parsing completes
+	// — startup.total covers flag registration and Parse itself. SetTrace enables
+	// recording even without PIGO_SPAN_PROFILE_OUT; HandleExitSignals no-ops
+	// when recording stays off, leaving the default kill behavior untouched.
+	for _, a := range os.Args {
+		if a == "--trace-startup" {
+			spans.SetTrace(os.Stderr)
+			break
+		}
+	}
+	spans.HandleExitSignals()
+	total := spans.Begin("startup.total")
+	// Panic path: this defer runs during unwind, so a crashing startup still
+	// lands its profile. The normal path flushes explicitly below (os.Exit
+	// would skip defers); the signal path flushes inside HandleExitSignals.
+	defer spans.Flush()
+
+	parseSpan := spans.Begin("startup.flag_parse")
 	var opts cliOptions
 	flag.StringVarP(&opts.prompt, "print", "p", "", "prompt to run in headless print mode")
 	flag.StringVarP(&opts.model, "model", "m", "openrouter/free", "model id to run against (a well-known model name like claude-opus-4-8 or deepseek-chat auto-selects its provider when --provider/--protocol/--base-url are unset)")
@@ -225,6 +250,7 @@ func main() {
 	flag.BoolVar(&opts.noTUI, "no-tui", false, "use the line-based REPL instead of the full-screen TUI")
 	flag.StringVarP(&opts.cwd, "cwd", "C", "", "run as if pigo was started in this directory (matches the Claude Agent SDK's cwd; like git -C): tool file access, trust, hooks, and project config all resolve against it")
 	flag.BoolVarP(&opts.showVersion, "version", "v", false, "print version information and exit")
+	flag.BoolVar(&opts.traceStartup, "trace-startup", false, "print the startup/exit span timeline to stderr (consumed via pre-scan; implies span recording)")
 	// Extend the default pflag usage with a "Supported providers" block so
 	// `--help` documents the values accepted by --provider (name → env var →
 	// default base URL → protocol). The list is derived from the provider
@@ -236,6 +262,7 @@ func main() {
 		cli.PrintProviderHelp(out)
 	}
 	flag.Parse()
+	parseSpan.End()
 
 	// --cwd switches the process working directory before anything cwd-derived is
 	// resolved (tool roots, trust, hooks, project config, git info). Doing it here
@@ -253,11 +280,13 @@ func main() {
 	// Overlay ~/.config/pigo/config.toml: file values replace built-in defaults,
 	// but any flag the user set on the command line still wins (CLI > file >
 	// default). A malformed file warns but does not abort — defaults apply.
+	cfgLoad := spans.Begin("startup.config_load")
 	if cfg, err := config.LoadFileConfig(config.FileConfigPath()); err != nil {
 		fmt.Fprintf(os.Stderr, "pigo: %v\n", err)
 	} else {
 		applyFileConfig(&opts, cfg, flag.CommandLine.Changed)
 	}
+	cfgLoad.End()
 
 	// A bare provider name ("zai", "deepseek") means that provider's default
 	// model (issue #564): canonicalize once here so every downstream consumer —
@@ -293,7 +322,12 @@ func main() {
 		opts.prompt = strings.TrimSpace(strings.Join(flag.Args(), " "))
 	}
 
-	os.Exit(dispatch(context.Background(), opts, os.Stdout, os.Stderr))
+	// Normal exit path: close the startup envelope and flush the profile
+	// before os.Exit (which would skip the deferred Flush above).
+	code := dispatch(context.Background(), opts, os.Stdout, os.Stderr)
+	total.End()
+	spans.Flush()
+	os.Exit(code)
 }
 
 // applyFileConfig overlays config.toml values onto opts, but only for flags the
@@ -375,10 +409,14 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 // headless, subagent-rpc) is reached from here, so the CLI's behavior can be
 // exercised without re-parsing flags. A returned code of 0 is success.
 func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
+	modeDispatch := spans.Begin("startup.mode_dispatch")
+
 	// --subagent-rpc is a fully separate mode: speak the sub-agent JSON-RPC
 	// protocol over stdio and exit. It is the subprocess end of process-isolated
 	// sub-agents and shares nothing with the interactive/headless paths.
 	if opts.subagentRPC {
+		spans.SetLabel("subagent-rpc")
+		modeDispatch.End()
 		return headless.RunSubAgentRPC(ctx, os.Stdin, out, errOut)
 	}
 
@@ -389,17 +427,23 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 	// for the project scope (applied above via os.Chdir). It shares nothing with
 	// the REPL/headless paths.
 	if opts.dream {
+		spans.SetLabel("dream")
+		modeDispatch.End()
 		return runDream(ctx, opts, out, errOut)
 	}
 
 	// --github-review is a standalone long-running mode: the isolated webhook
 	// listener (issue #567). It shares nothing with interactive/headless paths.
 	if opts.githubReview {
+		spans.SetLabel("github-review")
+		modeDispatch.End()
 		return runGitHubReview(ctx, opts, errOut)
 	}
 
 	// --list-sessions is a standalone action: print and exit.
 	if opts.listSessions {
+		spans.SetLabel("list-sessions")
+		modeDispatch.End()
 		if err := headless.PrintSessions(out); err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return 1
@@ -434,16 +478,17 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "pigo: no prompt (use -p \"...\" or positional args)")
 			return 2
 		}
+		modeDispatch.End()
 		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
 		}
 		if env.Plugins != nil {
-			defer env.Plugins.Close()
+			defer closeWithSpan(env.Plugins.Close)
 		}
 		if env.Memory != nil {
-			defer env.Memory.Close()
+			defer closeWithSpan(env.Memory.Close)
 		}
 		thinking, err := run.ResolveThinkingLevel(opts.thinkingLevel)
 		if err != nil {
@@ -451,11 +496,13 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			return 2
 		}
 		if shouldUseTUI(opts, isTTY) {
+			spans.SetLabel("tui")
 			// Refresh the cached latest-release check off the hot path so the banner
 			// can show an upgrade hint on this or the next launch without blocking
 			// startup (US-004). No-ops for dev builds or a fresh cache.
 			selfupdate.StartBackgroundCheck(version)
-			if err := tui.Run(tui.Options{
+			exitTotal := spans.Begin("exit.total")
+			err := tui.Run(tui.Options{
 				Model:             opts.model,
 				ProviderName:      env.ProviderName,
 				Provider:          env.Provider,
@@ -473,13 +520,17 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
-			}); err != nil {
+			})
+			exitTotal.End()
+			if err != nil {
 				fmt.Fprintf(errOut, "pigo: %v\n", err)
 				return 1
 			}
 			return 0
 		}
-		if err := repl.Run(repl.Options{
+		spans.SetLabel("repl")
+		exitTotal := spans.Begin("exit.total")
+		err = repl.Run(repl.Options{
 			Model:             opts.model,
 			ProviderName:      env.ProviderName,
 			Provider:          env.Provider,
@@ -497,13 +548,17 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			CliPrompts:        opts.promptTemplates,
 			NoPromptTemplates: opts.noPromptTemplates,
 			Dream:             opts.dreamCfg,
-		}); err != nil {
+		})
+		exitTotal.End()
+		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 
+	modeDispatch.End()
+	spans.SetLabel("headless")
 	mode, err := headless.ParseOutputMode(opts.outputFmt)
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
@@ -516,12 +571,13 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		return setupExitCode(err)
 	}
 	if env.Plugins != nil {
-		defer env.Plugins.Close()
+		defer closeWithSpan(env.Plugins.Close)
 	}
 	if env.Memory != nil {
-		defer env.Memory.Close()
+		defer closeWithSpan(env.Memory.Close)
 	}
-	return headless.Run(ctx, headless.RunParams{
+	exitTotal := spans.Begin("exit.total")
+	code := headless.Run(ctx, headless.RunParams{
 		Mode:          mode,
 		Env:           env,
 		Prompt:        opts.prompt,
@@ -530,6 +586,17 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		ThinkingLevel: opts.thinkingLevel,
 		ResumeID:      resumeID,
 	}, out, errOut)
+	exitTotal.End()
+	return code
+}
+
+// closeWithSpan wraps a deferred Env teardown (plugin manager, memory store —
+// the MCP/plugin/background-work harvest) in an exit.shutdown span so the exit
+// profile covers it. Used via defer in dispatch so it runs in the caller's frame.
+func closeWithSpan(close func() error) {
+	s := spans.Begin("exit.shutdown")
+	close()
+	s.End()
 }
 
 // setupExitCode maps a run.SetupEnv failure to a process exit code. A bad tool
@@ -567,10 +634,10 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		return setupExitCode(err)
 	}
 	if env.Plugins != nil {
-		defer env.Plugins.Close()
+		defer closeWithSpan(env.Plugins.Close)
 	}
 	if env.Memory != nil {
-		defer env.Memory.Close()
+		defer closeWithSpan(env.Memory.Close)
 	}
 	store, err := headless.SessionStore()
 	if err != nil {
@@ -593,15 +660,18 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 	httpSrv := &http.Server{Addr: opts.githubWebhookAddr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
+	exitTotal := spans.Begin("exit.total")
 	select {
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
+			exitTotal.End()
 			fmt.Fprintf(errOut, "pigo: webhook listener: %v\n", err)
 			return 1
 		}
 	case <-ctx.Done():
 		_ = httpSrv.Shutdown(context.Background())
 	}
+	exitTotal.End()
 	return 0
 }
 

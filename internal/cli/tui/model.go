@@ -19,6 +19,7 @@ import (
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/spans"
 )
 
 // Model is the root Bubble Tea model for the full-screen TUI. It composes a
@@ -32,6 +33,11 @@ import (
 type Model struct {
 	opts  Options
 	theme Theme
+
+	// uiProbe closes the startup.ui_init span on the first View call (T1.1):
+	// Run seeds it before tea.NewProgram; it stays nil in tests and when span
+	// recording is off (spans.Probe is nil-safe either way).
+	uiProbe *spans.Probe
 
 	// width and height track the terminal size reported by tea.WindowSizeMsg.
 	// They are zero until the first size message arrives; View degrades to a
@@ -1184,6 +1190,10 @@ func (m Model) pumpNext() tea.Cmd {
 // AltScreen on the returned View is how Bubble Tea v2 enters/leaves the alternate
 // screen buffer, so the user's scrollback is restored on quit.
 func (m Model) View() tea.View {
+	// First rendered frame closes startup.ui_init (T1.1); the probe is
+	// once-guarded, so repeat View calls are free.
+	m.uiProbe.FirstFrame()
+
 	if m.quitting {
 		return tea.View{AltScreen: true}
 	}

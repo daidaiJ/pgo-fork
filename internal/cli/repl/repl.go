@@ -41,6 +41,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -61,8 +62,13 @@ type replDeps struct {
 	// when the schedule_* tools are not wired in (e.g. --no-tools); when set,
 	// streamRun wires it so due reminders are delivered as follow-up user turns.
 	schedule *agenttool.Schedule
-	slash    *runtime.SlashRegistry
-	creds    *provider.CredentialStore
+
+	// uiInit closes the startup.ui_init span at the first prompt print (T1.1):
+	// repl.Run seeds it, runREPL ends it once the editor is up and the loop is
+	// about to prompt. Nil (tests, recording off) is a no-op.
+	uiInit *spans.Span
+	slash  *runtime.SlashRegistry
+	creds  *provider.CredentialStore
 
 	// notifier delivers agent lifecycle events to subscribed plugins (US-017,
 	// #133). It is nil when no plugin subscribes; DrainStream's OnEvent stays
@@ -268,6 +274,10 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 	// guards it against a data race.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
+	// The REPL owns os.Interrupt (run cancel), so the span package's
+	// flush-and-exit on SIGINT must stand down (T1.1); the profile still lands
+	// via the normal-return flush when the REPL quits.
+	spans.SuppressInterruptExit()
 	defer signal.Stop(sigCh)
 	var (
 		mu        sync.Mutex
@@ -316,6 +326,9 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 	for {
 		replPrompt := fmt.Sprintf("pigo(%s)> ", deps.live.Model)
 		if !readerBusy {
+			// First prompt print is the REPL's "first frame" (T1.1): the editor,
+			// hooks, and signal wiring are all up. End is a no-op afterwards.
+			deps.uiInit.End()
 			fmt.Fprintln(out)
 			promptReq <- replPrompt
 			readerBusy = true

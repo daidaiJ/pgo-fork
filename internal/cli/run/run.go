@@ -21,6 +21,7 @@ import (
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -74,9 +75,18 @@ type Env struct {
 // fully assembled tool set and then applied, so an unknown tool name is a usage
 // error rather than a silently ineffective boundary. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, policy ToolPolicy) (Env, error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, policy ToolPolicy) (env Env, err error) {
+	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
+	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
+	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
+	// is off (wiki/port/startup-exit-probes.md §2.2).
+	se := spans.Begin("startup.setup_env")
+	defer se.End()
+
 	cwd, _ := os.Getwd()
+	providerSpan := spans.Begin("startup.setup_env.provider")
 	prov, resolvedName, err := provider.ResolveProvider(model, baseURL, protocol, providerName, os.Getenv)
+	providerSpan.End()
 	if err != nil {
 		return Env{}, err
 	}
@@ -84,7 +94,9 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	if err != nil {
 		return Env{}, err
 	}
+	toolsSpan := spans.Begin("startup.setup_env.tools")
 	tools := BuiltinTools(cwd, noTools)
+	toolsSpan.End()
 	// Open the persistent memory store once (issue #481) and expose it as the
 	// memory_search tool so the agent can recall earlier context. Memory is a
 	// tool, so it is skipped under --no-tools; memory.enabled=false disables it
@@ -92,12 +104,14 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// the "fall back to file-based auto-memory" contract.
 	var memStore *memory.Store
 	if !noTools {
+		memorySpan := spans.Begin("startup.setup_env.memory")
 		if store, err := OpenMemoryStore(memEnabled); err != nil {
 			fmt.Fprintf(os.Stderr, "pigo: memory disabled: %v\n", err)
 		} else if store != nil {
 			memStore = store
 			tools = append(tools, &agenttool.MemorySearchTool{Store: store})
 		}
+		memorySpan.End()
 	}
 	// Wire the generic task tool (US-002, #454) unless tools are disabled. It
 	// dispatches general-purpose sub-agents that reuse the resolved provider
@@ -133,20 +147,24 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// (NewConfig) and front-ends (ScheduleFromTools) can wire delivery.
 	var sched *agenttool.Schedule
 	if !noTools {
+		schedSpan := spans.Begin("startup.setup_env.schedule")
 		sched = agenttool.NewSchedule()
 		tools = append(tools, agenttool.ScheduleTools(sched)...)
+		schedSpan.End()
 	}
 	// Discover external plugins (US-016) and append their tools. Plugin loading
 	// is fault-tolerant: a plugin that fails to start is logged and skipped, and
 	// disabling tools (--no-tools) skips plugin discovery entirely.
 	var mgr *plugin.Manager
 	if !noTools {
+		pluginsSpan := spans.Begin("startup.setup_env.plugins")
 		if m, err := plugin.Discover(PluginsDir(), os.Stderr, os.Stderr); err == nil {
 			tools = append(tools, m.Tools()...)
 			mgr = m
 		} else {
 			fmt.Fprintf(os.Stderr, "pigo: plugin discovery failed: %v\n", err)
 		}
+		pluginsSpan.End()
 	}
 	// Enforce the --allowed-tools/--disallowed-tools boundary now that the set is
 	// complete. Validation must happen here rather than at flag-parse time: plugin
@@ -172,7 +190,9 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// Load skills once (shared between prompt injection and /skill-name
 	// registration). A partial parse error still yields the skills that DID load,
 	// so one malformed file is a non-fatal warning rather than a hard failure.
+	skillsSpan := spans.Begin("startup.setup_env.skills")
 	skills, err := LoadSkills(noSkills)
+	skillsSpan.End()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pigo: skills: %v\n", err)
 	}

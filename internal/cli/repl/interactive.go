@@ -24,6 +24,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -117,7 +118,11 @@ func Run(opts Options) error {
 		// Interactive resume always appends a fresh user message before running,
 		// so a session that ended normally (trailing assistant reply) is resumable
 		// here. Load the raw session and rebuild the context directly.
+		// startup.session_load (T1.1): a large resumed session file is a prime
+		// slow-startup suspect, so the load gets its own span.
+		loadSpan := spans.Begin("startup.session_load")
 		h, entries, err := store.LoadEntries(opts.ResumeID)
+		loadSpan.End()
 		if err != nil {
 			return err
 		}
@@ -219,7 +224,12 @@ func Run(opts Options) error {
 	// tool is wired into this session. Not-due / disabled is a cheap no-op.
 	maybeStartBackgroundDream(os.Stdout, dream.ResolveMemoryRoot(), cwd, opts.Dream)
 
+	// startup.ui_init (T1.1) covers the last assembly stretch (hooks, editor,
+	// signal wiring) and is closed by runREPL's first prompt print.
+	uiInit := spans.Begin("startup.ui_init")
+
 	return runREPL(os.Stdin, os.Stdout, replDeps{
+		uiInit:     uiInit,
 		store:      store,
 		header:     header,
 		agentCtx:   agentCtx,
