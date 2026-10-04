@@ -91,6 +91,25 @@
 | 启动/退出探针 | grok span 画像层（已立项） | 见 [startup-exit-probes.md](startup-exit-probes.md) | 已立项 P0 |
 | 交接台账 | grok port-roadmap §5/§6（单参照） | 跨会话施工的只追加台账 + 中断点登记。已吸收进 [README.md](README.md) 交接纪律节 | 已吸收 |
 
+## 选型负面清单：趣味性/噱头类一律不吸收
+
+**判定标准（用户拍板）**：实用、易用、体验、成本、稳定、性能六维 > 趣味性。
+"好玩/有梗/演示效果"不构成立项理由；判断依据是它能否改善上述六维之一。
+
+不吸收的已知名单（出现新同类即登记）：
+
+| 特性 | 来源 | 不收理由 |
+|---|---|---|
+| Arena 模型竞技场（双 agent 同题竞速 + diff 对比） | qwen `/arena` | 演示型功能；token 成本翻倍，无日常实用场景 |
+| ultraloop/ultracode 关键词彩蛋入口 + prompt 内 `+500k` 魔法预算 | step-code | 趣味入口；pigo 走显式配置（flag/config），不做关键词咒语 |
+| witty phrases / 欢迎 logo 档案 / `/gboom` / 品牌公告系统 | grok fork 已剔除 | 纯品牌趣味（grok fork 用户改动即判例：v1.0.x 全部剥离） |
+| 语音听写 / 视频输入 | grok/kimi 已剔除 | 无对应模型能力位与实用场景 |
+| /insight 上报类 / 桌面端特效 | qwen/ZCode | 观测噱头，收益不入六维 |
+
+**偏好判例**：grok-build-proxy 的用户改动史就是本负面清单的实证——四特性
+（rewind 分支树、安全分析、context edit、工具声明面）+ 两随手件全部是六维
+导向的立项；品牌/趣味/云绑定面全部剔除。后续选型争议时以此为先例。
+
 ## 明确不做（共议留档）
 
 - **云绑定全家**：MiniMax OAuth/check-in/云分类员/云工具、qwen DashScope 绑定、

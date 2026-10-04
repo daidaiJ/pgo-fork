@@ -15,12 +15,15 @@
 2. **以 pigo 现有架构为准**：新能力优先做成"新工具 + 新 seam"（`run.SetupEnv`
    汇流、`runtime.RunConfig` seam 消费），不改 loop 主干；会话数据走
    `internal/session` Store 的 Version 递增迁移。
-3. **国模适配约束照单全收**：来源项目为国产模型做的适配（capability 门、
+3. **六维 > 趣味性**：实用、易用、体验、成本、稳定、性能是立项标准，
+   竞技场/彩蛋入口/品牌特效类噱头一律不吸收——负面清单与判例见
+   [cross-prototype-selection.md](cross-prototype-selection.md) §选型负面清单。
+4. **国模适配约束照单全收**：来源项目为国产模型做的适配（capability 门、
    fail-closed 安全下限、prompt cache 友好）对 pigo 的国模 provider 面
    （deepseek/moonshotai/zai/volcengine/dashscope 等）同样成立，逐条进验收。
-4. **尊重上游 pi 语义**：pigo 是 pi 的 Go 移植；grok 侧与 pi 相反的设计决策
+5. **尊重上游 pi 语义**：pigo 是 pi 的 Go 移植；grok 侧与 pi 相反的设计决策
    （如 context edit 不走 compaction 通道）在分文档里逐条标注取舍。
-5. **施工纪律见 [design-principles.md](design-principles.md)**（R1–R10：从
+6. **施工纪律见 [design-principles.md](design-principles.md)**（R1–R10：从
    grok-build-proxy 编译/测试耗时反例提炼，含"测小特性不烧全 lib"约束）；
    候选特性的完整坐标系（qwen/minimax/kimi/step/ZCode/crush 六路参照、六维
    评估、明确不做清单）见 [cross-prototype-selection.md](cross-prototype-selection.md)——
