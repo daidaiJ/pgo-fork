@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 	"time"
 )
 
@@ -211,6 +213,7 @@ func TestWithinScopeSymlinkEscape(t *testing.T) {
 // TestRunPathClean: a memory file referencing a non-existent local path has that
 // reference stripped and counted.
 func TestRunPathClean(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	root := t.TempDir()
 	proj := t.TempDir()
 	missing := filepath.Join(proj, "does", "not", "exist.go")

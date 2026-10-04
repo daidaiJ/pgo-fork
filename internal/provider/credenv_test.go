@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // TestScrubsCredentialVar exercises the name-shape rules: suffix matching,
@@ -75,6 +77,7 @@ func TestScrubEnv(t *testing.T) {
 // ResolveCredentialReference: found names, missing names, malformed YAML, and
 // the permission warning heuristic.
 func TestCredentialFileRoundTrip(t *testing.T) {
+	testgate.WinSkip(t, testgate.POSIXPerms)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".credentials.yaml")
 	body := "deepseek-main: sk-aaa\nzai-coding: sk-bbb\n"

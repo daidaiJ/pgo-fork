@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // newTestManager builds a Manager backed by a temp file, failing the test if
@@ -64,6 +66,7 @@ func TestNewManagerEmptyPath(t *testing.T) {
 // TestSetDecisionPersists verifies Trusted/Untrusted round-trip through disk:
 // after SetDecision + reload, the nearest decision matches what was written.
 func TestSetDecisionPersists(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	m := newTestManager(t)
 	if err := m.SetDecision("/a", Trusted); err != nil {
 		t.Fatalf("SetDecision Trusted: %v", err)
@@ -85,6 +88,7 @@ func TestSetDecisionPersists(t *testing.T) {
 // /a applies to /a/b/c, and the returned Path is the directory it was saved
 // for, not the query directory.
 func TestNearestAncestorWalk(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	m := newTestManager(t)
 	if err := m.SetDecision("/a", Trusted); err != nil {
 		t.Fatalf("SetDecision: %v", err)
@@ -125,6 +129,7 @@ func TestNearestNotFound(t *testing.T) {
 // schema: SetDecision(Undecided) writes an explicit JSON null, which reloads as
 // Found=true with Decision Undecided (recorded but not trusted).
 func TestNullEntryRoundTrip(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	m := newTestManager(t)
 	if err := m.SetDecision("/a", Undecided); err != nil {
 		t.Fatalf("SetDecision Undecided: %v", err)
@@ -260,6 +265,7 @@ func TestDecisionForExactPath(t *testing.T) {
 // TestDefaultPath verifies DefaultPath honors PIGO_HOME and falls back to
 // ~/.pigo/trust.json.
 func TestDefaultPath(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	t.Setenv("PIGO_HOME", "/custom/pigo")
 	if got := DefaultPath(); got != "/custom/pigo/trust.json" {
 		t.Errorf("DefaultPath with PIGO_HOME = %q, want /custom/pigo/trust.json", got)
@@ -278,6 +284,7 @@ func TestDefaultPath(t *testing.T) {
 // TestSaveIsSorted verifies the written file has sorted keys (stable, diffable
 // output) and is a valid JSON object.
 func TestSaveIsSorted(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	m := newTestManager(t)
 	for _, p := range []string{"/zeta", "/alpha", "/mid"} {
 		if err := m.SetDecision(p, Trusted); err != nil {
@@ -320,6 +327,7 @@ func TestMalformedFileIsError(t *testing.T) {
 // TestConcurrentAccess exercises the mutex under -race: many goroutines reading
 // and writing concurrently must not trip the race detector.
 func TestConcurrentAccess(t *testing.T) {
+	testgate.WinSkip(t, testgate.WinFileLock)
 	m := newTestManager(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {

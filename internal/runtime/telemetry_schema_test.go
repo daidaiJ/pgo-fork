@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testgate"
+
 	"github.com/smallnest/pigo/internal/agentcore"
 )
 
@@ -60,6 +62,7 @@ func writeOrCompare(t *testing.T, path string, got []byte) {
 // TestTelemetrySummaryGoldenConformance pins the canonical TelemetrySummary
 // JSON document byte-for-byte.
 func TestTelemetrySummaryGoldenConformance(t *testing.T) {
+	testgate.WinSkip(t, testgate.GoldenLineEndings)
 	doc := TelemetrySummaryFromEvent(goldenEvent)
 	got, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -120,6 +123,7 @@ func TestTelemetrySummaryFieldTypes(t *testing.T) {
 // telemetry event (camelCase, consumer-facing) byte-for-byte: the historical
 // shape is now part of the frozen contract.
 func TestStreamJSONTelemetryEnvelopeGolden(t *testing.T) {
+	testgate.WinSkip(t, testgate.GoldenLineEndings)
 	env := eventEnvelope(goldenEvent)
 	got, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {

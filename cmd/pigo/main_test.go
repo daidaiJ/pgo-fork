@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testgate"
+
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/run"
 )
@@ -113,6 +115,7 @@ func TestDispatchTUIGating(t *testing.T) {
 // project root as an SDK backend. It exercises the downstream effect rather than
 // re-parsing flags, since the chdir itself lives in main().
 func TestCwdChdirRootsEnv(t *testing.T) {
+	testgate.WinSkip(t, testgate.WinFileLock)
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)

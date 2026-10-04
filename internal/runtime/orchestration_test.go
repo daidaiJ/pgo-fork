@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testgate"
+
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/provider"
@@ -336,6 +338,7 @@ func TestParseSkillRejectsInvalidName(t *testing.T) {
 // TestFormatSkillsForPrompt verifies the <available_skills> block lists visible
 // skills with name/description/location and excludes disabled ones.
 func TestFormatSkillsForPrompt(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	skills := []*Skill{
 		{Frontmatter: SkillFrontmatter{Name: "weather", Description: "get weather"}, Path: "/skills/weather.md"},
 		{Frontmatter: SkillFrontmatter{Name: "secret", Description: "hidden", DisableModelInvocation: true}, Path: "/skills/secret.md"},
@@ -391,6 +394,7 @@ func TestFormatSkillsForPromptEscapesXML(t *testing.T) {
 // TestFormatSkillsForPromptAbsoluteLocation verifies a relative skill path is
 // rendered as an absolute location so the model can read it from any cwd.
 func TestFormatSkillsForPromptAbsoluteLocation(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	skills := []*Skill{
 		{Frontmatter: SkillFrontmatter{Name: "rel", Description: "d"}, Path: "sub/rel.md"},
 	}

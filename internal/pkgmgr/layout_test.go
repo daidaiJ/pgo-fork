@@ -3,6 +3,8 @@ package pkgmgr
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // TestHomeHonorsPIGOHOME verifies Home prefers PIGO_HOME over the default.
@@ -16,6 +18,7 @@ func TestHomeHonorsPIGOHOME(t *testing.T) {
 // TestTypeDirsUnderHome verifies the plugins/commands/themes dirs nest under
 // $PIGO_HOME.
 func TestTypeDirsUnderHome(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	t.Setenv("PIGO_HOME", "/custom/pigo")
 	cases := map[PackageType]string{
 		TypeExtension: "/custom/pigo/plugins",
@@ -42,6 +45,7 @@ func TestSkillsDirHonorsOverride(t *testing.T) {
 
 // TestSkillsDirDefault verifies skills default to ~/.agents/skills.
 func TestSkillsDirDefault(t *testing.T) {
+	testgate.WinSkip(t, testgate.HomeEnvOverride)
 	t.Setenv("PIGO_SKILLS_DIR", "")
 	t.Setenv("HOME", "/home/tester")
 	want := filepath.Join("/home/tester", ".agents", "skills")

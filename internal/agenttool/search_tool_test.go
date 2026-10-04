@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testgate"
+
 	"github.com/smallnest/pigo/internal/agentcore"
 )
 
@@ -88,6 +90,7 @@ func TestGrepInvalidPattern(t *testing.T) {
 }
 
 func TestFindGlob(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	dir := seedTree(t)
 	tool := &FindTool{Root: dir}
 	res := runSearch(t, tool, map[string]any{"glob": "*.go"})

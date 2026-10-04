@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testgate"
+
 	"github.com/smallnest/pigo/internal/agentcore"
 )
 
@@ -38,6 +40,7 @@ func readCapture(t *testing.T, path string) string {
 // TestSessionEndNaturalReason: an end_turn terminal message yields reason
 // "natural"; an aborted terminal message yields "aborted".
 func TestSessionEndReason(t *testing.T) {
+	testgate.WinSkip(t, testgate.POSIXShellHook)
 	cases := []struct {
 		name   string
 		stop   string
@@ -63,6 +66,7 @@ func TestSessionEndReason(t *testing.T) {
 // TestPreCompactTrigger: a manual CompactionEvent maps to trigger "manual";
 // threshold/overflow map to "auto".
 func TestPreCompactTrigger(t *testing.T) {
+	testgate.WinSkip(t, testgate.POSIXShellHook)
 	cases := []struct {
 		reason string
 		expect string
@@ -84,6 +88,7 @@ func TestPreCompactTrigger(t *testing.T) {
 
 // TestNotification: Notify fires the Notification event carrying the message.
 func TestNotification(t *testing.T) {
+	testgate.WinSkip(t, testgate.POSIXShellHook)
 	n, out := captureNotifier(t, "Notification")
 	n.Notify("approve bash in untrusted dir?")
 	got := readCapture(t, out)

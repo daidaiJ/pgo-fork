@@ -63,3 +63,7 @@ book/images/*.pdf
 
 # wiki knowledge dirs (managed by wiki CLI)
 /wiki
+
+# local build scratch (R9: GOTMPDIR) + codegraph local index
+/.gtmp/
+/.codegraph/

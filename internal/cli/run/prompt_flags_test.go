@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // TestResolveAppendInstructionsEmpty verifies no values yields no appends.
@@ -63,6 +65,7 @@ func TestResolveAppendInstructionsFile(t *testing.T) {
 // rather than being appended verbatim. A directory is used because os.Stat
 // succeeds on it (so it is not treated as literal text) while os.ReadFile fails.
 func TestResolveAppendInstructionsUnreadableFile(t *testing.T) {
+	testgate.WinSkip(t, testgate.POSIXPerms)
 	dir := t.TempDir()
 	// A directory: Stat succeeds and IsDir() is true, so it is treated as literal
 	// text — assert that. Then create an actually-unreadable regular file to hit

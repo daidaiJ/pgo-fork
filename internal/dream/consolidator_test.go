@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // canned builds an allowed-set + Plan pair for parser tests from a list of
@@ -60,6 +62,7 @@ func TestTruncateBody(t *testing.T) {
 }
 
 func TestParseConsolidateResponseMergeAndPrune(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	a := "/mem/global/user/a.md"
 	b := "/mem/global/user/b.md"
 	c := "/mem/global/user/c.md"
@@ -140,6 +143,7 @@ func TestParseConsolidateResponseNoOpMergeIgnored(t *testing.T) {
 }
 
 func TestLLMConsolidatorUsesCompleter(t *testing.T) {
+	testgate.WinSkip(t, testgate.PathSeparator)
 	root := "/mem"
 	a := "/mem/global/user/a.md"
 	b := "/mem/global/user/b.md"

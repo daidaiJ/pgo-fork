@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -99,6 +101,7 @@ func shareFixture(t *testing.T) (*Store, SessionHeader, []Entry) {
 // TestWriteMarkdownGolden pins the shareable Markdown document byte-for-byte
 // (redaction on, system prompt dropped).
 func TestWriteMarkdownGolden(t *testing.T) {
+	testgate.WinSkip(t, testgate.GoldenLineEndings)
 	store, _, _ := shareFixture(t)
 	_, entries, err := store.LoadEntries("20260912-120000-test")
 	if err != nil {

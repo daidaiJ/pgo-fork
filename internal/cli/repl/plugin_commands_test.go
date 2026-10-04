@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testgate"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -144,6 +146,7 @@ func loadTestManager(t *testing.T) *plugin.Manager {
 // TestBuildSlashRegistryRegistersPluginCommand verifies a discovered plugin
 // command is registered as a resolvable slash command in the registry.
 func TestBuildSlashRegistryRegistersPluginCommand(t *testing.T) {
+	testgate.WinSkip(t, testgate.PluginSubprocess)
 	t.Setenv("PIGO_HOME", t.TempDir())
 	mgr := loadTestManager(t)
 	defer mgr.Close()
@@ -177,6 +180,7 @@ func TestBuildSlashRegistryRegistersPluginCommand(t *testing.T) {
 // wins over a plugin command (existing precedence preserved): the plugin command
 // is shadowed and the built-in's behavior is what resolves.
 func TestBuiltinWinsOverPluginCommand(t *testing.T) {
+	testgate.WinSkip(t, testgate.PluginSubprocess)
 	t.Setenv("PIGO_HOME", t.TempDir())
 	mgr := loadTestManager(t)
 	defer mgr.Close()
@@ -205,6 +209,7 @@ func TestBuiltinWinsOverPluginCommand(t *testing.T) {
 // agent turn (so the fake provider is called once and the injected prompt lands
 // in the conversation history).
 func TestREPLPluginCommandInjectsPrompt(t *testing.T) {
+	testgate.WinSkip(t, testgate.PluginSubprocess)
 	t.Setenv("PIGO_HOME", t.TempDir())
 	mgr := loadTestManager(t)
 	defer mgr.Close()
