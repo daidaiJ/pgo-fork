@@ -6,8 +6,9 @@
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
 - **当前阶段**：第 1 期进行中——**T1.1 启动/退出探针已完成**（`internal/spans`
-  + 全链埋点，tip `73220ea`，全量测试绿）；下一步 = T1.2 流恢复注入 或
-  T1.3 thinking 渲染。
+  + 全链埋点，tip `73220ea`，全量测试绿）；2026-10-04 完成规划覆盖面审查
+  （内置工具集/国模适配/pi-durable 中断续接，结论见 handoff 最新条目），
+  待拍板：T1.2 / T1.3 / pi-durable 切片 1（headless 续跑）。
 - **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
   ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
