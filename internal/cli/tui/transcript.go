@@ -23,8 +23,14 @@ import (
 //
 // Thinking blocks (T1.3) stream in as thinkingDeltaMsg values into a dimmed
 // roleThinking block that renders collapsed to its first few lines; Ctrl+T
-// toggles expanded/full, and once real reply text starts (or the turn ends) the
-// block closes and gains a "Thought for Xs" footer.
+// cycles collapsed → tail-window (only when the body exceeds
+// thinkingTailWindowLines) → full, and once real reply text starts (or the turn
+// ends) the block closes and gains a "Thought for Xs" footer.
+//
+// Streaming assistant text (T2.2) renders through a stable-prefix markdown
+// cache (streaming_markdown.go) so headings/lists/code light up while the
+// reply is still arriving; the turn-end renderMarkdown pass stays the final
+// layout authority.
 
 // blockRole distinguishes the three transcript block kinds so each renders with
 // its own theme style.
@@ -46,19 +52,38 @@ const (
 // collapsed (the default); the rest are summarized by a hidden-lines hint.
 const thinkingCollapsedLines = 10
 
+// thinkingTailWindowLines caps the expanded view of a very long thinking body:
+// the tail-window state shows only the last N lines with an earlier-lines
+// hint; one more Ctrl+T promotes to full. Short bodies skip the tail-window
+// step entirely (toggleThinking), so they keep the two-click toggle.
+const thinkingTailWindowLines = 200
+
+// thinkingView is the three-state view machine of a thinking block (ported
+// from crush's thinkingViewMode): Ctrl+T cycles collapsed → tail-window →
+// full → collapsed, with the tail-window step skipped when the body fits
+// within thinkingTailWindowLines.
+type thinkingView int
+
+const (
+	thinkCollapsed thinkingView = iota
+	thinkTailWindow
+	thinkFull
+)
+
 // transcriptBlock is one rendered turn in the transcript. text is the raw
 // (unstyled, unwrapped) message body; the role selects the theme style and any
 // prefix applied at render time. For roleTool blocks text is unused and card
 // points at the live tool card (#389); the pointer lets a later toolEndMsg /
 // Ctrl+O mutate the card in place and have it re-render on the next reflow.
-// roleThinking blocks use expanded (Ctrl+T two-state view: collapsed ≤10 lines
-// by default, full when toggled), and done/started/ended to time the
-// "Thought for Xs" footer shown once the block closes.
+// roleThinking blocks use expanded (Ctrl+T three-state view: collapsed ≤10
+// lines by default, tail-window when the body is long, full when toggled
+// through) and done/started/ended to time the "Thought for Xs" footer shown
+// once the block closes.
 type transcriptBlock struct {
 	role     blockRole
 	text     string
 	card     *toolCard
-	expanded bool
+	expanded thinkingView
 	done     bool
 	started  time.Time
 	ended    time.Time
@@ -104,6 +129,14 @@ type transcript struct {
 	// auto-scroll correct across height changes (setSize resizes the viewport
 	// before reflow runs, which would make an AtBottom() sample read false).
 	follow bool
+
+	// streamMd caches the stable-prefix streaming renders (T2.2) keyed by
+	// content width. reflow can lay the transcript out at two widths (full and
+	// full-1 once the scrollbar column is reserved), and interleaved renders at
+	// both widths must not thrash a single cache. Entries are dropped when a
+	// turn finalizes or a fresh assistant block starts, since each turn is a
+	// new markdown document.
+	streamMd map[int]*streamingMarkdown
 }
 
 // newTranscript builds an empty transcript with the given theme. The viewport
@@ -203,16 +236,33 @@ func (t *transcript) closeThinking() {
 	t.reflow()
 }
 
-// toggleThinking flips the collapsed/expanded two-state view of the most recent
-// thinking block and re-flows (Ctrl+T). Blocks start collapsed; a later turn's
-// block toggles independently, matching the tool-card Ctrl+O behavior.
+// toggleThinking cycles the three-state view of the most recent thinking block
+// and re-flows (Ctrl+T): collapsed → tail-window → full → collapsed, with the
+// tail-window step skipped when the raw body fits within
+// thinkingTailWindowLines so short blocks keep the two-click toggle. The skip
+// heuristic counts raw source lines (cheap; no re-render just to count) and
+// can over-trigger on many short lines, where the tail-window render is
+// visually identical to full and the cycle costs one extra press — preferred
+// over failing to offer the affordance on a genuinely long block.
 func (t *transcript) toggleThinking() {
 	for i := len(t.blocks) - 1; i >= 0; i-- {
-		if t.blocks[i].role == roleThinking {
-			t.blocks[i].expanded = !t.blocks[i].expanded
-			t.reflow()
-			return
+		if t.blocks[i].role != roleThinking {
+			continue
 		}
+		switch t.blocks[i].expanded {
+		case thinkCollapsed:
+			if 1+strings.Count(t.blocks[i].text, "\n") > thinkingTailWindowLines {
+				t.blocks[i].expanded = thinkTailWindow
+			} else {
+				t.blocks[i].expanded = thinkFull
+			}
+		case thinkTailWindow:
+			t.blocks[i].expanded = thinkFull
+		default:
+			t.blocks[i].expanded = thinkCollapsed
+		}
+		t.reflow()
+		return
 	}
 }
 
@@ -220,15 +270,34 @@ func (t *transcript) toggleThinking() {
 // the first delta of a turn. The re-flow auto-sticks to the bottom when the user
 // has not scrolled up. If the thinking block is still open this is the first
 // real reply text, so it closes there first: the footer clock must stop when
-// reasoning stopped, not when the turn ends.
+// reasoning stopped, not when the turn ends. A freshly created block starts a
+// new markdown document, so any stale streaming caches from a previous turn are
+// dropped.
 func (t *transcript) appendDelta(delta string) {
 	t.closeThinking()
 	if t.activeAssistant < 0 {
 		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant})
 		t.activeAssistant = len(t.blocks) - 1
+		t.streamMd = nil
 	}
 	t.blocks[t.activeAssistant].text += delta
 	t.reflow()
+}
+
+// streamRender renders the still-streaming assistant body through the
+// stable-prefix markdown cache for the given width, creating the per-width
+// cache entry on first use (reflow lays the transcript out at two widths, so
+// entries must coexist; see the streamMd field comment).
+func (t *transcript) streamRender(text string, width int) string {
+	if t.streamMd == nil {
+		t.streamMd = map[int]*streamingMarkdown{}
+	}
+	sm := t.streamMd[width]
+	if sm == nil {
+		sm = &streamingMarkdown{}
+		t.streamMd[width] = sm
+	}
+	return renderMarkdownStreaming(sm, text, width)
 }
 
 // finalizeTurn closes the streaming assistant block. When the final message
@@ -271,6 +340,7 @@ func (t *transcript) finalizeTurn(msg agentcore.AssistantMessage) {
 		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant, text: text})
 	}
 	t.activeAssistant = -1
+	t.streamMd = nil
 	t.reflow()
 }
 
@@ -484,9 +554,11 @@ func (t *transcript) renderAll() string {
 // WrapToWidth) before styling so ANSI escapes never confuse the width math and
 // no double-width rune is split. A finalized assistant block is rendered as
 // Markdown (fix #3, mirroring the REPL's turn-end render); the still-streaming
-// block (streaming==true) stays plain text because Markdown can only be laid out
-// once the whole block is known.
-func (t transcript) renderBlock(blk transcriptBlock, streaming bool) string {
+// block (streaming==true) renders through the stable-prefix streaming cache
+// (T2.2) so formatting appears while the reply arrives. No theme.Assistant
+// wrapper is applied on either path — the glamour palette owns the colors, and
+// styling only the streaming half would make the finalize switch flash.
+func (t *transcript) renderBlock(blk transcriptBlock, streaming bool) string {
 	if blk.role == roleTool && blk.card != nil {
 		return blk.card.render(t.theme, t.width)
 	}
@@ -501,7 +573,7 @@ func (t transcript) renderBlock(blk transcriptBlock, streaming bool) string {
 		return t.renderThinking(blk)
 	default:
 		if streaming {
-			return t.theme.Assistant.Render(WrapToWidth(blk.text, t.width))
+			return t.streamRender(blk.text, t.width)
 		}
 		return renderMarkdown(blk.text, t.width)
 	}
@@ -509,23 +581,36 @@ func (t transcript) renderBlock(blk transcriptBlock, streaming bool) string {
 
 // renderThinking renders a reasoning-model thinking block: the body dimmed
 // behind a left rule, collapsed by default to its first few lines with a
-// hidden-lines hint, full when expanded (Ctrl+T). A closed block ends with the
-// "Thought for Xs" footer, so a collapsed block still tells the user the model
-// reasoned and for how long. The raw text renders plain (not markdown): while
-// streaming the block is incomplete and markdown can only be laid out on the
-// whole block, and the collapsed view truncates anyway — the quiet treatment,
-// not formatting, is the point.
+// hidden-lines hint, tail-windowed to the last thinkingTailWindowLines lines
+// when expanded and the body is longer than that (the earlier-lines hint sits
+// on top so the newest reasoning reads first), and full one Ctrl+T later. A
+// closed block ends with the "Thought for Xs" footer, so a collapsed block
+// still tells the user the model reasoned and for how long. The raw text
+// renders plain (not markdown): while streaming the block is incomplete and
+// markdown can only be laid out on the whole block, and the collapsed view
+// truncates anyway — the quiet treatment, not formatting, is the point.
 func (t transcript) renderThinking(blk transcriptBlock) string {
 	body := WrapToWidth(blk.text, t.width-2)
 	lines := strings.Split(body, "\n")
 	visible := lines
 	hidden := 0
-	if !blk.expanded && len(lines) > thinkingCollapsedLines {
+	var head []string
+	switch {
+	case blk.expanded == thinkCollapsed && len(lines) > thinkingCollapsedLines:
 		hidden = len(lines) - thinkingCollapsedLines
 		visible = lines[:thinkingCollapsedLines]
+	case blk.expanded == thinkTailWindow && len(lines) > thinkingTailWindowLines:
+		hidden = len(lines) - thinkingTailWindowLines
+		visible = lines[hidden:]
+		head = []string{fmt.Sprintf("… %d earlier lines hidden (ctrl+t for full)", hidden)}
+		hidden = 0
 	}
 	rule := t.theme.ThinkingBorder.Render("▌")
 	var b strings.Builder
+	for _, l := range head {
+		b.WriteString(t.theme.Thinking.Render(l))
+		b.WriteByte('\n')
+	}
 	for i, l := range visible {
 		if i > 0 {
 			b.WriteByte('\n')

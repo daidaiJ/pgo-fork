@@ -120,3 +120,24 @@ func renderMarkdown(src string, width int) string {
 	}
 	return trimmed
 }
+
+// renderMarkdownStreaming is the T2.2 streaming entry: it renders a
+// still-streaming assistant block through the stable-prefix cache in sm, so a
+// flush only re-renders the trailing portion after the latest safe markdown
+// boundary while the prefix render stays cached (see streaming_markdown.go).
+// The turn-end renderMarkdown pass stays the final layout authority — a glued
+// streaming render converges to the full render once, at finalize. The gating
+// and hard-wrap contract match renderMarkdown exactly.
+func renderMarkdownStreaming(sm *streamingMarkdown, src string, width int) string {
+	if !ui.Enabled() {
+		return src
+	}
+	if strings.TrimSpace(src) == "" {
+		return src
+	}
+	out := sm.render(src, width)
+	if width > 0 {
+		out = ansi.Hardwrap(out, width, false)
+	}
+	return out
+}

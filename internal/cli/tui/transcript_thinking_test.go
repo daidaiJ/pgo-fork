@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -133,5 +134,102 @@ func TestThinkingFooterVariants(t *testing.T) {
 	}
 	if got := thinkingFooter(transcriptBlock{done: true, started: now, ended: now}); got != "\n✻ Thought" {
 		t.Errorf("instant footer = %q, want %q", got, "\n✻ Thought")
+	}
+}
+
+// TestTranscriptThinkingTailWindow covers the three-state cycle on a body
+// longer than the tail-window cap: collapsed → tail-window (only the tail
+// shown, the earlier-lines hint on top) → full → collapsed. Short bodies skip
+// the tail-window step (TestTranscriptThinkingCollapsedAndExpand pins that).
+func TestTranscriptThinkingTailWindow(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	// Short, unique marker lines: the thinkingMsgs x-run prefix grows with the
+	// line index, and lines past the 40-column width wrap mid-run, breaking
+	// substring assertions.
+	lines := thinkingTailWindowLines + 10
+	m = apply(t, m, thinkingDeltaMsg{delta: "head-unique-line\n"})
+	for i := 0; i < lines-2; i++ {
+		m = apply(t, m, thinkingDeltaMsg{delta: fmt.Sprintf("filler line %03d\n", i)})
+	}
+	m = apply(t, m, thinkingDeltaMsg{delta: "tail-unique-line\n"})
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent("done")},
+	}})
+
+	// Collapsed: hidden-lines hint, head visible, tail not.
+	content := stripANSI(m.transcript.renderAll())
+	if !strings.Contains(content, "lines hidden (ctrl+t to expand)") {
+		t.Fatalf("collapsed view missing hidden-lines hint; got:\n%s", content)
+	}
+	if !strings.Contains(content, "head-unique-line") {
+		t.Errorf("collapsed view missing first thinking line")
+	}
+	if strings.Contains(content, "tail-unique-line") {
+		t.Errorf("collapsed view leaks the tail line")
+	}
+
+	// First Ctrl+T on a long body lands on the tail window: the newest
+	// reasoning is shown, the earlier lines are summarized on top.
+	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	content = stripANSI(m.transcript.renderAll())
+	if !strings.Contains(content, "earlier lines hidden (ctrl+t for full)") {
+		t.Fatalf("tail-window view missing earlier-lines hint; got:\n%s", content)
+	}
+	if !strings.Contains(content, "tail-unique-line") {
+		t.Errorf("tail-window view missing the newest line")
+	}
+	if strings.Contains(content, "head-unique-line") {
+		t.Errorf("tail-window view leaks the earliest line")
+	}
+
+	// Second Ctrl+T promotes to full: everything, no hints.
+	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	content = stripANSI(m.transcript.renderAll())
+	if strings.Contains(content, "hidden") {
+		t.Errorf("full view still shows a hidden-lines hint; got:\n%s", content)
+	}
+	if !strings.Contains(content, "head-unique-line") || !strings.Contains(content, "tail-unique-line") {
+		t.Errorf("full view missing head or tail line")
+	}
+
+	// Third Ctrl+T returns to collapsed.
+	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	content = stripANSI(m.transcript.renderAll())
+	if !strings.Contains(content, "lines hidden (ctrl+t to expand)") {
+		t.Errorf("third Ctrl+T did not return to the collapsed view; got:\n%s", content)
+	}
+}
+
+// TestTranscriptStreamingMarkdownCacheLifecycle pins the T2.2 wiring at the
+// transcript level: the streaming assistant block owns per-width stable-prefix
+// caches, and they are dropped at finalize (a new turn is a new markdown
+// document, so stale prefixes must never leak into it).
+func TestTranscriptStreamingMarkdownCacheLifecycle(t *testing.T) {
+	tr := newTranscript(DefaultTheme())
+	tr.setSize(40, 12)
+	tr.addUser("hi")
+
+	tr.appendDelta("# Heading\n\nbody ")
+	if len(tr.streamMd) == 0 {
+		t.Fatal("streaming render did not seed a cache entry")
+	}
+	tr.appendDelta("more")
+	if len(tr.streamMd) == 0 {
+		t.Fatal("subsequent delta dropped the cache mid-turn")
+	}
+
+	tr.finalizeTurn(agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent("# Heading\n\nbody more")},
+	})
+	if tr.streamMd != nil {
+		t.Fatal("streaming cache survived finalizeTurn")
+	}
+
+	// The next turn starts a fresh document with fresh caches.
+	tr.addUser("next")
+	tr.appendDelta("fresh doc")
+	if tr.streamMd == nil {
+		t.Fatal("new turn did not seed fresh streaming caches")
 	}
 }
