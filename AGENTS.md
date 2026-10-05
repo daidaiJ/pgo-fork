@@ -14,10 +14,13 @@
   task 子代理/goal）。偏差八条见 runaway-sentinel.md §5（D1 注入挂
   reminder 而非 prepareNextTurn、D2 无硬停档）。T3.1 遗留 flake 未动：
   TestREPLExportImportRoundTrip 整包偶发（疑似 NewID 微秒碰撞），待排查。
-  下一步 = T3.3 微压缩 / T3.4 canonical context edit，待用户排；待拍板项
+  下一步 = T3.3 微压缩 / T3.4 canonical context edit，待用户排（**T3.3 施工
+  前置：先按 context-compaction-comparison.md 十维对比各原型压缩实现再动手，
+  2026-10-05 用户指令**）；待拍板项
   （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
-  dynamic-workflow、code mode、TUI 风格对齐 grok）见 implementation-plan
-  待议段；其余均见 handoff。
+  dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移需求已按
+  用户截图提取为 tui-grok-style.md，14 条 S 需求待拍板排期**）见
+  implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
