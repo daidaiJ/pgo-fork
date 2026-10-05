@@ -5,17 +5,18 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：第 1 期进行中——**T1.1 启动/退出探针已完成**（`internal/spans`
-  + 全链埋点，tip `73220ea`，全量测试绿）；2026-10-04 完成七轮规划审查
-  （覆盖面/六面/后台监视器/fork 自有特性两轮/slash 全量差集+压缩潜藏设计
-  +todo 查看面/六原型可交互面并行摸排/记忆系统专项，结论见 handoff 最新
-  条目），待拍板：T1.2 / T1.3 / pi-durable 切片 1（headless 续跑）；
-  skill-as-tool 完整体、供应商韧性 S 件族（六面审查候选）；周额度下界反推
-  （随 T5.4，用户点名）——均见 handoff。
+- **当前阶段**：第 1 期进行中——**T1.1 启动/退出探针、T1.2 流恢复注入已
+  完成**（T1.2：`provider.IsStreamInterruption` 判别式 + projection-only
+  五要点折叠，tip `6bca2a2`，全量测试绿；实现偏差登记见规格 §7）；2026-10-04
+  完成七轮规划审查（覆盖面/六面/后台监视器/fork 自有特性两轮/slash 全量差
+  集+压缩潜藏设计+todo 查看面/六原型可交互面并行摸排/记忆系统专项，结论见
+  handoff 各条目），待拍板：T1.3 / pi-durable 切片 1（headless 续跑，可复用
+  T1.2 判别式）；skill-as-tool 完整体、供应商韧性 S 件族（六面审查候选）；
+  周额度下界反推（随 T5.4，用户点名）——均见 handoff。
 - **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
   ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
-  （六期任务表，状态每期收口回填；T1.1 已 ✅）。
+  （六期任务表，状态每期收口回填；T1.1、T1.2 已 ✅）。
 - **施工纪律**：[wiki/port/design-principles.md](wiki/port/design-principles.md)
   （R1–R10；附录已登记 7 个 Windows 测试差异族 + `internal/testgate` 门控机制，
   本机全量测试基线 = 门控后全绿）。
