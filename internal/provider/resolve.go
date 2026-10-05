@@ -232,7 +232,12 @@ func ResolveNamedProvider(name, model, baseURL, protocol string, env func(string
 		// the spec name so errors reference the selected provider.
 		return NewAnthropicProtocolProvider(spec.Name, url, spec.AuthScheme, models), spec.Name, nil
 	case ProtocolOpenAI:
-		return NewOpenAICompatibleProvider(url, models), spec.Name, nil
+		// The driver carries the spec's name, not the generic "openai": the name
+		// is what missing-key errors reference (issue #564 — a named gateway like
+		// openrouter must report "openrouter: missing API key (set
+		// OPENROUTER_API_KEY)", not "openai: … OPENAI_API_KEY"). Wire behavior is
+		// unchanged: Bearer auth, no extra headers, no default endpoint.
+		return newOpenAICompat(openAICompatPreset{name: spec.Name, requiresAuth: true}, url, models), spec.Name, nil
 	case ProtocolOpenAIResponses:
 		return NewOpenAIResponsesProvider(spec.Name, url, models), spec.Name, nil
 	default:

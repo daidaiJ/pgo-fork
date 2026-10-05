@@ -6,6 +6,7 @@ package provider
 // precedence. Environment lookups are injected via os.Getenv here.
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -167,6 +168,45 @@ func TestResolveProviderExplicitProvider(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown --protocol") {
 		t.Errorf("invalid --protocol should surface the unknown-protocol error, got: %v", err)
+	}
+}
+
+// TestResolveNamedProviderDriverName verifies that an openai-protocol named
+// provider builds its wire driver under the spec's own name (issue #564): the
+// driver name is what missing-key errors reference, so openrouter must report
+// "openrouter: missing API key (set OPENROUTER_API_KEY)" — not the generic
+// "openai: … OPENAI_API_KEY" left over from the shared OpenAI-compatible
+// constructor.
+func TestResolveNamedProviderDriverName(t *testing.T) {
+	cases := []struct {
+		provider string
+		envHint  string
+	}{
+		{"openrouter", "OPENROUTER_API_KEY"},
+		{"groq", "GROQ_API_KEY"},
+		{"zai", "ZAI_API_KEY"},
+	}
+	for _, tc := range cases {
+		prov, name, err := ResolveNamedProvider(tc.provider, "test-model", "", "", func(string) string { return "" })
+		if err != nil || name != tc.provider {
+			t.Errorf("%s: ResolveNamedProvider = (%q, %v), want (%q, nil)", tc.provider, name, err, tc.provider)
+			continue
+		}
+		if got := prov.Name(); got != tc.provider {
+			t.Errorf("%s: driver Name() = %q, want %q", tc.provider, got, tc.provider)
+		}
+		_, err = prov.StreamCompletion(context.Background(), CompletionRequest{
+			Model:  "test-model",
+			Config: StreamConfig{APIKey: ""},
+		})
+		if err == nil {
+			t.Errorf("%s: missing key must return an early error", tc.provider)
+			continue
+		}
+		want := tc.provider + ": missing API key (set " + tc.envHint + ")"
+		if err.Error() != want {
+			t.Errorf("%s: missing-key error = %q, want %q", tc.provider, err.Error(), want)
+		}
 	}
 }
 
