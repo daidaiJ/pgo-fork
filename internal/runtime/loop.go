@@ -21,6 +21,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -183,6 +184,18 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		stream.SetResult(msgs)
 		stream.Close()
 	}
+	// finishErr is finish for a loop that ended because an emit failed. When
+	// the failure was the run context being cancelled, the cancellation is
+	// recorded as the stream outcome: otherwise stream.Result's select races
+	// its closed result channel against ctx.Done() and a consumer (headless
+	// termination via the shellguard seam, T2.1) can observe a nil error for
+	// a cancelled run about half the time.
+	finishErr := func(err error) {
+		if errors.Is(err, context.Canceled) {
+			stream.SetError(err)
+		}
+		finish()
+	}
 
 	if err := emit(agentcore.AgentStartEvent{SessionID: cfg.SessionID}); err != nil {
 		finish()
@@ -192,14 +205,14 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 	for { // outer loop: pending / follow-up messages
 		for { // inner loop: turns until no tool calls
 			if err := emit(agentcore.TurnStartEvent{}); err != nil {
-				finish()
+				finishErr(err)
 				return
 			}
 
 			assistant, err := streamAssistantResponse(ctx, agentCtx, cfg.LoopConfig, emitFrom)
 			if err != nil {
 				// emit was cancelled mid-stream; end the run.
-				finish()
+				finishErr(err)
 				return
 			}
 
@@ -209,7 +222,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				// resends, then continue feeding back.
 				toolResults := failToolCallsFromTruncatedMessage(agentCtx, assistant)
 				if err := emit(agentcore.TurnEndEvent{Message: assistant, ToolResults: toolResults}); err != nil {
-					finish()
+					finishErr(err)
 					return
 				}
 				if afterTurn(ctx, agentCtx, &cfg, true, emit, tel) {
@@ -228,7 +241,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 			if len(calls) == 0 {
 				// Natural turn end: no tools to run.
 				if err := emit(agentcore.TurnEndEvent{Message: assistant}); err != nil {
-					finish()
+					finishErr(err)
 					return
 				}
 				if afterTurn(ctx, agentCtx, &cfg, false, emit, tel) {
@@ -249,7 +262,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				agentCtx.Messages = append(agentCtx.Messages, tr)
 			}
 			if err := emit(agentcore.TurnEndEvent{Message: assistant, ToolResults: toolResults}); err != nil {
-				finish()
+				finishErr(err)
 				return
 			}
 			if allTerminate {
