@@ -173,6 +173,11 @@ type replDeps struct {
 	// the pre-turn leaf so /rewind can roll files and the conversation back together.
 	snap *agenttool.FileSnapshotRecorder
 
+	// editor is the line editor runREPL reads prompts from, published so
+	// /rewind can seed the input line with the rewound turn's prompt (G2).
+	// Set after assembly; nil in tests that build replDeps by hand.
+	editor *replLineEditor
+
 	// jobs holds background bash jobs launched with run_in_background. On REPL
 	// exit its still-running jobs are killed so background processes are not
 	// orphaned. nil when the shell tool is disabled.
@@ -273,6 +278,9 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 	}
 	editor := newREPLLineEditor(in, deps.in, out, deps.slash, priorInputs)
 	editor.models = append([]string{deps.live.Model}, editor.models...)
+	// Published on deps so /rewind can hand the rewound turn's prompt back to
+	// the editor (G2: the prompt reappears in the input line for edit-and-resend).
+	deps.editor = editor
 
 	// A SIGINT during a run cancels only that run; the handler is installed for
 	// the whole REPL and targets whichever run is active via runCancel. runCancel
@@ -580,7 +588,7 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		deps.header.Provider = deps.live.ProviderName
 		cli.PersistTurn(out, &deps)
 		// Group this turn's file mutations (if any) into a rewind restore point.
-		deps.snap.Commit(preTurnLeaf, rewindLabel(prompt))
+		deps.snap.Commit(preTurnLeaf, cli.RewindLabel(prompt))
 	}
 }
 

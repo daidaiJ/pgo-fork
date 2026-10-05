@@ -271,6 +271,11 @@ type replLineEditor struct {
 	slash    *runtime.SlashRegistry
 	history  []string // oldest to newest
 	models   []string
+	// prefill seeds the next ReadLine's buffer (G2): /rewind sets it so the
+	// rewound turn's prompt reappears in the input line, ready to edit and
+	// resend. Consumed by the first ReadLine (raw-mode path only — the plain
+	// bufio fallback cannot seed a line) and then cleared.
+	prefill string
 }
 
 func newREPLLineEditor(in io.Reader, buffered *bufio.Reader, out io.Writer, slash *runtime.SlashRegistry, history []string) *replLineEditor {
@@ -464,6 +469,10 @@ func (e *replLineEditor) editLoop(prompt string) (string, error) {
 	// so buf behaves exactly like the former input string; the buffer model is
 	// what later cross-line editing/rendering is built on.
 	buf := newMLBuffer()
+	if e.prefill != "" {
+		buf.setString(e.prefill)
+		e.prefill = ""
+	}
 	// selected indexes into the current candidate list. It advances with the
 	// up/down arrows so the user can cycle through suggestions; it resets to 0
 	// (the best match) whenever the input text changes, since the candidate list

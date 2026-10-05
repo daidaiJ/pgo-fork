@@ -925,6 +925,71 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/remote-control" || strings.HasPrefix(line, "/remote-control ") {
 		return m.runRemoteControl(line)
 	}
+	// /rewind is intercepted before registry resolution (like /rebuild): with no
+	// argument it lists the tree-derived restore points; with "/rewind <n>" it
+	// moves the active conversation leaf back before the selected turn and
+	// refills the input with that turn's prompt (T3.1 G1/G2/G4). The TUI keeps
+	// no file-snapshot journal, so rewind here is conversation-only.
+	if line == "/rewind" || strings.HasPrefix(line, "/rewind ") {
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.menu.close()
+		if m.session == nil {
+			m.transcript.addSystem("(rewind unavailable: no active session)")
+			m.relayout()
+			return m, nil
+		}
+		points, err := cli.DeriveRewindPoints(m.session.store, m.session.header.ID, m.session.curLeaf, nil)
+		if err != nil {
+			m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", err))
+			m.relayout()
+			return m, nil
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			var buf bytes.Buffer
+			cli.PrintRewindPoints(&buf, points)
+			m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
+			m.relayout()
+			return m, nil
+		}
+		n, convErr := strconv.Atoi(fields[1])
+		if convErr != nil || n < 1 || n > len(points) {
+			m.transcript.addSystem(fmt.Sprintf("invalid selection %q — run /rewind to list points (1..%d)", fields[1], len(points)))
+			m.relayout()
+			return m, nil
+		}
+		p := points[n-1]
+		var msgs agentcore.MessageList
+		if p.LeafID != "" {
+			loaded, found, loadErr := cli.LoadLeafPath(m.session.store, m.session.header.ID, p.LeafID)
+			if loadErr != nil {
+				m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", loadErr))
+				m.relayout()
+				return m, nil
+			}
+			if !found {
+				m.transcript.addSystem("pigo: restore point's conversation node is no longer in the tree; conversation left unchanged")
+				m.relayout()
+				return m, nil
+			}
+			msgs = loaded
+		}
+		m.session.agentCtx.Messages = msgs
+		m.session.curLeaf = p.LeafID
+		m.session.persisted = len(msgs)
+		m.session.compacted = false
+		note := fmt.Sprintf("rewound to before point %d — the prompt is back in the input line", n)
+		if p.Lossy {
+			note += "\nnote: this point predates a compaction; context was rebuilt from the summary"
+		}
+		m.transcript.addSystem(note)
+		if p.Prompt != "" {
+			m.input.SetValue(p.Prompt)
+		}
+		m.relayout()
+		return m, nil
+	}
 	m.transcript.addUser(line)
 	m.input.Clear()
 	m.menu.close()
