@@ -5,15 +5,14 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 1 期表格清空（T1.1/T1.2/T1.3 全部 ✅）**，期验收三条件
-  齐备（探针画像/流恢复 faux 断言/国模 reasoning 思考可见）。T1.2 流恢复
-  注入（tip `6bca2a2`）+ T1.3 thinking 块渲染（DrainStream OnThinking +
-  transcript 两态视图机 + REPL 折叠一行，偏差登记见 tui 规格 §8）；
-  2026-10-04 完成七轮规划审查（结论见 handoff 各条目）；待拍板：pi-durable
-  切片 1（headless 续跑，复用 T1.2 判别式）或进第 2 期（T2.1 shellguard
-  4–6d 大头）；/ui TUI 行为配置面板（用户点名 2026-10-05，grok 块展示策略
-  为参照，E 表 P2，配置对象已齐可单点立项）；skill-as-tool 完整体、供应商
-  韧性 S 件族、周额度下界反推（随 T5.4）——均见 handoff。
+- **当前阶段**：**第 2 期进行中——T2.1 shellguard 已落地（2026-10-05）**，
+  余 T2.2 流式 markdown checkpoint / T2.3 RemapANSI16 / T2.4 toolcard
+  注册表化。T2.1 = `internal/shellguard` 纯叶子包（mvdan/sh AST，~110 翻译
+  用例全绿）+ `internal/agenttool/shellguard.go` seam + 三驱动接线 +
+  headless `--non-interactive-denial`；**默认 off（用户拍板：可配置启用的
+  高级特性）**，`[shellguard] mode`/`--shellguard`，偏差十条见规格 §7；
+  pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板
+  ——均见 handoff。
 - **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
   ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
