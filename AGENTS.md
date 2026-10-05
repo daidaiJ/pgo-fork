@@ -11,8 +11,10 @@
   stable-prefix checkpoint 直译（精化边界规则）+ thinking tail-window
   第三态，偏差九条见规格 §9；T2.1 = `internal/shellguard` 纯叶子包 +
   三驱动接线，**默认 off（用户拍板）**，偏差十条见规格 §7。
-  pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板
-  ——均见 handoff。
+  pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板；
+  2026-10-05 用户点名新增待议：dynamic-workflow 编排器（原"明确不做"改判）、
+  code mode（goja 起步、不引 QuickJS）——见 implementation-plan 观察池
+  待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
