@@ -5,16 +5,19 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 2 期进行中——T2.1 shellguard 已落地（2026-10-05）**，
-  余 T2.2 流式 markdown checkpoint / T2.3 RemapANSI16 / T2.4 toolcard
-  注册表化。T2.1 = `internal/shellguard` 纯叶子包（mvdan/sh AST，~110 翻译
-  用例全绿）+ `internal/agenttool/shellguard.go` seam + 三驱动接线 +
-  headless `--non-interactive-denial`；**默认 off（用户拍板：可配置启用的
-  高级特性）**，`[shellguard] mode`/`--shellguard`，偏差十条见规格 §7；
+- **当前阶段**：**第 2 期进行中——T2.1 shellguard + T2.2 流式 markdown
+  checkpoint 已落地（2026-10-05）**，余 T2.3 RemapANSI16 / T2.4 toolcard
+  注册表化（两件收口后第 2 期对账打 dev 预览 tag）。T2.2 = crush 流式
+  stable-prefix checkpoint 直译（精化边界规则）+ thinking tail-window
+  第三态，偏差九条见规格 §9；T2.1 = `internal/shellguard` 纯叶子包 +
+  三驱动接线，**默认 off（用户拍板）**，偏差十条见规格 §7。
   pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板
   ——均见 handoff。
-- **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
-  ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
+- **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
+  [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
+  历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
+  ——新会话先读最新卡，再 `git log` + `git status` 核对现场，禁止凭记忆
+  续写；更早脉络查 archive。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
   （六期任务表，状态每期收口回填；第 1 期已清空）。
 - **施工纪律**：[wiki/port/design-principles.md](wiki/port/design-principles.md)
