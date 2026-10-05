@@ -12,6 +12,57 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 )
 
+// streamRecoveryHint is the projection-only recovery prompt folded into the
+// next user message after a mid-stream interruption (T1.2). It carries the
+// step-Code five points: interrupted tools were not executed / confirmed work
+// stands / shrink the next response / build large files incrementally /
+// permission constraints still apply.
+const streamRecoveryHint = "[Stream recovery] Your previous response was interrupted mid-stream, " +
+	"so any tool calls in it were NOT executed. Work already confirmed by earlier tool results " +
+	"remains valid — do not redo it. Keep your next response much smaller (about 50 lines / a few KB); " +
+	"for large files, build them incrementally with write/edit chunks instead of resending the whole " +
+	"payload. All permission constraints still apply."
+
+// foldStreamRecovery returns the request projection with the recovery hint
+// folded verbatim into the trailing user message when the context ends with a
+// mid-stream interrupted failure: a stopReason-error assistant whose message
+// classifies as a stream interruption (provider.IsStreamInterruption), or the
+// silent-close EmptyResponse sentinel (agentcore.ErrStreamIncomplete).
+//
+// Projection-only hard semantics: the hint lives only in the request copy —
+// never in agentCtx.Messages, never in the session file — so replay, rewind,
+// and resume never inherit stale recovery state (it is recomputed from the
+// context each request), and consecutive interruptions cannot stack copies.
+// Because the hint rides the existing user message it inherits that message's
+// timestamp; no synthetic history entry is created. Anything that does not
+// match the shape (in particular no trailing user message to fold into) is
+// returned unchanged: zero false positives beats coverage.
+func foldStreamRecovery(msgs agentcore.MessageList) agentcore.MessageList {
+	n := len(msgs)
+	if n < 2 {
+		return msgs
+	}
+	user, ok := msgs[n-1].(agentcore.UserMessage)
+	if !ok {
+		return msgs
+	}
+	failed, ok := msgs[n-2].(agentcore.AssistantMessage)
+	if !ok || failed.StopReason != agentcore.StopReasonError {
+		return msgs
+	}
+	if !provider.IsStreamInterruption(failed.ErrorMessage) &&
+		failed.ErrorMessage != agentcore.ErrStreamIncomplete.Error() {
+		return msgs
+	}
+	folded := user
+	folded.Content = append(append(agentcore.ContentList{}, user.Content...),
+		agentcore.NewTextContent(streamRecoveryHint))
+	out := make(agentcore.MessageList, n)
+	copy(out, msgs)
+	out[n-1] = folded
+	return out
+}
+
 // LoopConfig holds the pluggable behavior of the agent loop. Every hook is
 // optional (nil = use the default). The pointer/func-field pattern mirrors pi's
 // optional callbacks.
@@ -65,29 +116,32 @@ type LoopConfig struct {
 // identical to pi. It never returns an error for a request failure — such
 // failures arrive as a terminal assistant message with stopReason error/aborted.
 func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc) (agentcore.AssistantMessage, error) {
-	// 1. transformContext (optional, must not error).
-	msgs := agentCtx.Messages
+	// 1. fold the projection-only stream-recovery hint (T1.2) before any
+	// TransformContext runs: reminders append ephemeral messages at the tail,
+	// so the interruption trigger must be evaluated on the real context tail.
+	msgs := foldStreamRecovery(agentCtx.Messages)
+	// 2. transformContext (optional, must not error).
 	if cfg.TransformContext != nil {
 		msgs = cfg.TransformContext(ctx, msgs)
 	}
-	// 2. convertToLlm (filter UI-only; default identity).
+	// 3. convertToLlm (filter UI-only; default identity).
 	if cfg.ConvertToLlm != nil {
 		msgs = cfg.ConvertToLlm(msgs)
 	}
-	// 3. shape the LLM context.
+	// 4. shape the LLM context.
 	llm := provider.LlmContext{
 		SystemPrompt: agentCtx.SystemPrompt,
 		Messages:     msgs,
 		Tools:        agentCtx.Tools,
 	}
-	// 4. resolve API key dynamically, fall back to static.
+	// 5. resolve API key dynamically, fall back to static.
 	key := cfg.APIKey
 	if cfg.GetAPIKey != nil {
 		if dyn := cfg.GetAPIKey(ctx, cfg.Provider); dyn != "" {
 			key = dyn
 		}
 	}
-	// 5. build the provider stream.
+	// 6. build the provider stream.
 	stream, err := cfg.Stream(ctx, cfg.Model, llm, provider.StreamConfig{
 		APIKey:        key,
 		ThinkingLevel: cfg.ThinkingLevel,
@@ -99,7 +153,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 		return newErrorAssistantMessage(cfg, err), nil
 	}
 
-	// 6. drain the stream, back-filling the partial into the context.
+	// 7. drain the stream, back-filling the partial into the context.
 	addedPartial := false
 	backfill := func(partial agentcore.AssistantMessage) {
 		if !addedPartial {
@@ -147,7 +201,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 		}
 	}
 
-	// 7. stream ended without done/error: fall back to the stream result.
+	// 8. stream ended without done/error: fall back to the stream result.
 	final, resErr := stream.Result(ctx)
 	if resErr != nil {
 		return newErrorAssistantMessage(cfg, resErr), nil

@@ -238,14 +238,14 @@ func pump(ctx context.Context, stream *AssistantMessageEventStream, resp *http.R
 			fail("stream aborted", ctx.Err())
 			return
 		case <-idleTimer.C:
-			fail("idle timeout: no data received", errStreamIdle)
+			fail(streamFailIdle+"no data received", errStreamIdle)
 			return
 		case <-stallTimer.C:
-			fail("content stall timeout", errStreamStall)
+			fail(streamFailStall, errStreamStall)
 			return
 		case err := <-readErr:
 			if err != nil && !errors.Is(err, io.EOF) {
-				fail("read error: "+classifyTransportError(err).Error(), err)
+				fail(streamFailRead+classifyTransportError(err).Error(), err)
 				return
 			}
 			// Clean EOF: flush any buffered payload, then finish the decoder.
@@ -324,6 +324,36 @@ var (
 	errStreamIdle  = errors.New("stream idle timeout")
 	errStreamStall = errors.New("stream content stall")
 )
+
+// Stable prefixes of the runtime failure messages pump emits via fail. They
+// double as the stream-interruption discriminators consumed by
+// IsStreamInterruption, so the message text and the classifier share one
+// source of truth. Decode/finish failures and user aborts are deliberately
+// left without a recovery-class prefix: they are not recoverable interruptions.
+const (
+	streamFailRead  = "read error: "
+	streamFailIdle  = "idle timeout: "
+	streamFailStall = "content stall timeout"
+)
+
+// IsStreamInterruption reports whether an assistant message's ErrorMessage
+// names a recoverable mid-stream interruption — the pigo counterpart of grok's
+// kind ∈ {Http, IdleTimeout, EmptyResponse} enum (EmptyResponse never transits
+// pump; the runtime recognizes it via agentcore.ErrStreamIncomplete instead).
+// Only failures after the stream was partially consumed qualify: connect-time
+// failures (message prefix "transport: upstream …", nothing consumed yet) and
+// user aborts do not. The set is deliberately narrow — grok's lesson was that
+// folding the broad StreamError class into Api silently suppressed recovery,
+// so coverage here loses to zero false positives (decode/finish errors are
+// persistent protocol mismatches, not transient drops).
+func IsStreamInterruption(errorMessage string) bool {
+	if errorMessage == "" {
+		return false
+	}
+	return strings.HasPrefix(errorMessage, streamFailRead) ||
+		strings.HasPrefix(errorMessage, streamFailIdle) ||
+		errorMessage == streamFailStall
+}
 
 // retryAfter parses a Retry-After header (seconds or HTTP-date), returning 0
 // when absent/unparseable.
