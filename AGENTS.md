@@ -11,8 +11,9 @@
   transcript 两态视图机 + REPL 折叠一行，偏差登记见 tui 规格 §8）；
   2026-10-04 完成七轮规划审查（结论见 handoff 各条目）；待拍板：pi-durable
   切片 1（headless 续跑，复用 T1.2 判别式）或进第 2 期（T2.1 shellguard
-  4–6d 大头）；skill-as-tool 完整体、供应商韧性 S 件族、周额度下界反推
-  （随 T5.4）——均见 handoff。
+  4–6d 大头）；/ui TUI 行为配置面板（用户点名 2026-10-05，grok 块展示策略
+  为参照，E 表 P2，配置对象已齐可单点立项）；skill-as-tool 完整体、供应商
+  韧性 S 件族、周额度下界反推（随 T5.4）——均见 handoff。
 - **交接台账（L0.5 必读，只追加）**：[wiki/port/handoff.md](wiki/port/handoff.md)
   ——新会话先读最新条目，再 `git log` + `git status` 核对现场，禁止凭记忆续写。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
