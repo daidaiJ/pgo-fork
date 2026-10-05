@@ -5,21 +5,20 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 2 期代码四件全清（T2.1 shellguard + T2.2 流式
-  markdown checkpoint + T2.3 RemapANSI16 + T2.4 toolcard 注册表化，
-  2026-10-05）**，仅余第 2 期对账：期验收的 256/16 色截图回归补账（无头
-  环境截图途径待拍板）+ 危险命令表驱动全绿确认 → 打 dev 预览 tag。
-  T2.4 = toolcard.go 拆四渲染器注册表（bash/file/edit 折叠细节 +
-  generic 兜底，crush tools.go 工厂模式 pigo 化）+ 渲染缓存基元 +
-  expandable 能力接口，偏差五条见 tui-crush-components.md §11；
-  T2.3 偏差六条见 §10（Theme.ANSI 16 槽调色板、窄宽度 <20 列平铺、
-  随件修复 T2.1 headless 终止竞态见 shellguard 规格 §7.11）；T2.2
-  偏差九条见 §9；T2.1 = 三驱动接线**默认 off（用户拍板）**，偏差十一条
-  见规格 §7。
+- **当前阶段**：**第 2 期完成收口（2026-10-05）**——T2.1 shellguard +
+  T2.2 流式 markdown + T2.3 RemapANSI16 + T2.4 toolcard 注册表化四件全清，
+  期验收对账完成：危险命令表驱动全绿（全量 37 包复核）+ 截图回归真彩档
+  用户实测核验（**16 色档用户拍板豁免**）+ 流式 markdown 实跑正常，滚动
+  预览 tag `dev-preview` 已打。期验收随核验发现两笔小账待清（provider 兜底
+  报错误导 openai/openrouter + write 卡多行 input 缩进，见
+  tui-crush-components.md §12）；**TUI 视觉风格对齐 grok 已入待议**
+  （用户点名，见 implementation-plan）。下一步 = 第 3 期 T3.1 rewind
+  补齐四件（2–3d，rewind-branch-undo.md）或先清两笔小账，待用户排。
+  T2.4 偏差五条见 tui-crush-components.md §11；T2.3 偏差六条 §10；T2.2
+  偏差九条 §9；T2.1 = 三驱动接线**默认 off（用户拍板）**，偏差十一条 §7。
   pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板；
-  2026-10-05 用户点名新增待议：dynamic-workflow 编排器（原"明确不做"改判）、
-  code mode（goja 起步、不引 QuickJS）——见 implementation-plan 观察池
-  待议段；其余均见 handoff。
+  用户点名待议：dynamic-workflow 编排器、code mode（goja 起步）、TUI
+  风格对齐 grok——见 implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
