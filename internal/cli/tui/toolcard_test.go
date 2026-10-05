@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -61,6 +62,52 @@ func TestToolCardRender(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestToolCardMultiLineInputIndent verifies a multi-line input value (write's
+// content) keeps continuation lines aligned under the value column instead of
+// starting at column zero (tui-crush-components.md §12 小账②).
+func TestToolCardMultiLineInputIndent(t *testing.T) {
+	theme := DefaultTheme()
+	card := toolCard{
+		id:    "1",
+		name:  "write",
+		input: map[string]any{"path": "/tmp/x", "content": "first line\nsecond line\nthird line"},
+		state: cardSuccess,
+	}
+	out := card.render(theme, 60)
+	// lipgloss wraps every rendered line in ANSI escapes and the card frame adds
+	// border columns, so compare column positions within the plain text instead
+	// of matching raw substrings: each continuation line must start at the same
+	// column as the first line's value ("second" under "first" after "content: ").
+	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	plain := ansi.ReplaceAllString(out, "")
+	valueCol := -1
+	for _, ln := range strings.Split(plain, "\n") {
+		if i := strings.Index(ln, "first line"); i >= 0 {
+			valueCol = i
+			break
+		}
+	}
+	if valueCol < 0 {
+		t.Fatalf("render missing content value\n%s", plain)
+	}
+	for _, text := range []string{"second line", "third line"} {
+		found := false
+		for _, ln := range strings.Split(plain, "\n") {
+			i := strings.Index(ln, text)
+			if i < 0 {
+				continue
+			}
+			found = true
+			if i != valueCol {
+				t.Errorf("continuation %q at column %d, want the value column %d (flush-left or misaligned)\n%s", text, i, valueCol, plain)
+			}
+		}
+		if !found {
+			t.Errorf("render missing continuation %q\n%s", text, plain)
+		}
 	}
 }
 

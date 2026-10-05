@@ -266,15 +266,29 @@ func (c *toolCard) headerLine(r toolCardRenderer, theme Theme, inner int) string
 }
 
 // inputSection renders the "Input arguments" section: one wrapped key: value
-// line per argument in sorted-key order. Empty when the call carried no
-// arguments or the layout is narrow.
+// line per argument in sorted-key order. A multi-line value (e.g. write's
+// content) keeps only the "key:" label on its first line; continuation lines
+// align under the value column instead of starting at column zero. Empty when
+// the call carried no arguments or the layout is narrow.
 func (c toolCard) inputSection(theme Theme, inner int, narrow bool) []string {
 	if len(c.input) == 0 || narrow {
 		return nil
 	}
 	lines := []string{theme.ToolBody.Render("Input arguments")}
 	for _, k := range sortedKeys(c.input) {
-		kv := "  " + k + ": " + fmt.Sprintf("%v", c.input[k])
+		v := fmt.Sprintf("%v", c.input[k])
+		// Align continuation lines under the value (2-space key indent + "k: ");
+		// keys are ASCII so byte length is the display width. A key too long
+		// for the card falls back to a fixed 4-space indent.
+		contIndent := len(k) + 4
+		if contIndent >= inner {
+			contIndent = 4
+		}
+		if i := strings.Index(v, "\n"); i >= 0 {
+			pad := strings.Repeat(" ", contIndent)
+			v = v[:i] + "\n" + pad + strings.ReplaceAll(v[i+1:], "\n", "\n"+pad)
+		}
+		kv := "  " + k + ": " + v
 		lines = append(lines, theme.ToolBody.Render(WrapToWidth(kv, inner)))
 	}
 	return lines
