@@ -18,7 +18,9 @@
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
   （六期任务表，状态每期收口回填；T1.1、T1.2 已 ✅）。
 - **施工纪律**：[wiki/port/design-principles.md](wiki/port/design-principles.md)
-  （R1–R10；附录已登记 7 个 Windows 测试差异族 + `internal/testgate` 门控机制，
+  （R1–R11，R11=多参照实现择优：能融合则融合、不能融合取相对最优并在规格
+  登记互斥原因；附录已登记 7 个 Windows 测试差异族 + `internal/testgate`
+  门控机制，
   本机全量测试基线 = 门控后全绿）。
 - **T1.1 规格**：[wiki/port/startup-exit-probes.md](wiki/port/startup-exit-probes.md)
   （span 名以 §2.2 埋点表为唯一权威，已含实现偏差登记）。
