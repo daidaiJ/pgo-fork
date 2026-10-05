@@ -668,9 +668,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.interruptOrQuit()
 	case "ctrl+o":
 		// Toggle the most-recent tool card between its capped preview and the full
-		// response tree, then re-flow so the change shows inline (#389).
+		// response tree, then re-flow so the change shows inline (#389). Routed
+		// through the expandable capability interface (T2.4) instead of a direct
+		// field write.
 		if m.lastToolCard != nil {
-			m.lastToolCard.expanded = !m.lastToolCard.expanded
+			m.lastToolCard.toggleExpanded()
 			m.transcript.reflow()
 		}
 		return m, nil

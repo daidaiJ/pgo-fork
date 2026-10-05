@@ -213,11 +213,13 @@ func TestModelToolResultFiltered(t *testing.T) {
 
 // TestToolCardNarrowDegradation: below narrowCardWidth the card renders flat
 // (no border, no Input arguments) but keeps header and response; at the
-// threshold and above the full bordered layout is used.
+// threshold and above the full bordered layout is used. The card uses an
+// unregistered tool name so the generic layout (which keeps Input arguments
+// at full width) is exercised (T2.4 folds that section for bash/edit).
 func TestToolCardNarrowDegradation(t *testing.T) {
 	theme := DefaultTheme()
 	card := toolCard{
-		name:     "bash",
+		name:     "deploy_tool",
 		input:    map[string]any{"command": "go test ./..."},
 		response: parseToolResult("PASS"),
 		state:    cardSuccess,
@@ -230,7 +232,7 @@ func TestToolCardNarrowDegradation(t *testing.T) {
 	if strings.Contains(narrow, "Input arguments") {
 		t.Errorf("narrow render should omit the Input arguments section:\n%s", narrow)
 	}
-	if !strings.Contains(narrow, "bash") || !strings.Contains(narrow, "PASS") {
+	if !strings.Contains(narrow, "deploy_tool") || !strings.Contains(narrow, "PASS") {
 		t.Errorf("narrow render lost header/response:\n%s", narrow)
 	}
 

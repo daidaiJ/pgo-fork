@@ -307,3 +307,135 @@ func TestModelCtrlOTogglesExpanded(t *testing.T) {
 		t.Errorf("second Ctrl+O should collapse the card")
 	}
 }
+
+// TestToolCardRendererRegistry verifies the registry routing: known tool names
+// (case-insensitively) resolve to their family renderer, unknown names fall
+// back to the generic renderer.
+func TestToolCardRendererRegistry(t *testing.T) {
+	cases := []struct {
+		name string
+		want toolCardRenderer
+	}{
+		{"bash", bashToolRenderer{}},
+		{"BASH", bashToolRenderer{}},
+		{"bash_output", bashToolRenderer{}},
+		{"kill_bash", bashToolRenderer{}},
+		{"read", fileToolRenderer{}},
+		{"write", fileToolRenderer{}},
+		{"find", fileToolRenderer{}},
+		{"ls", fileToolRenderer{}},
+		{"grep", fileToolRenderer{}},
+		{"memory_search", fileToolRenderer{}},
+		{"edit", editToolRenderer{}},
+		{"totally_unknown", genericToolRenderer{}},
+		{"", genericToolRenderer{}},
+	}
+	for _, tc := range cases {
+		if got := toolCardRendererFor(tc.name); got != tc.want {
+			t.Errorf("toolCardRendererFor(%q) = %T, want %T", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestToolCardFamilyFolding verifies each family's folding detail (T2.4):
+// bash folds the Input arguments section and relabels the response "Output";
+// edit folds Input arguments (the Diff section carries the change); file
+// family and the generic fallback keep the full layout.
+func TestToolCardFamilyFolding(t *testing.T) {
+	theme := DefaultTheme()
+	input := map[string]any{"path": "f.txt", "command": "go vet"}
+	cases := []struct {
+		name      string
+		wantArgs  bool
+		respLabel string
+	}{
+		{"bash", false, "Output"},
+		{"edit", false, "Response"},
+		{"read", true, "Response"},
+		{"mystery_tool", true, "Response"},
+	}
+	for _, tc := range cases {
+		card := toolCard{
+			name:     tc.name,
+			input:    input,
+			response: parseToolResult("line"),
+			state:    cardSuccess,
+		}
+		out := card.render(theme, 60)
+		hasArgs := strings.Contains(out, "Input arguments")
+		if hasArgs != tc.wantArgs {
+			t.Errorf("%s: Input arguments present = %v, want %v\n%s", tc.name, hasArgs, tc.wantArgs, out)
+		}
+		if !strings.Contains(out, tc.respLabel) {
+			t.Errorf("%s: response section should be labeled %q\n%s", tc.name, tc.respLabel, out)
+		}
+		// Every family keeps the header (icon + name) and the response body.
+		if !strings.Contains(out, tc.name) || !strings.Contains(out, "line") {
+			t.Errorf("%s: lost header or response body\n%s", tc.name, out)
+		}
+	}
+}
+
+// TestToolCardPrimaryArgPerFamily verifies the header argument selection per
+// family: bash picks "command", file/edit pick "path" (falling back to
+// "file_path"), generic picks the first key in sorted order.
+func TestToolCardPrimaryArgPerFamily(t *testing.T) {
+	cases := []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{"bash", map[string]any{"command": "go test", "timeout": 30}, "go test"},
+		{"read", map[string]any{"path": "a.go", "limit": 5}, "a.go"},
+		{"edit", map[string]any{"file_path": "b.go"}, "b.go"},
+		{"edit", map[string]any{"old_string": "x"}, ""},
+		{"mystery", map[string]any{"alpha": 1, "beta": 2}, "1"},
+		{"bash", map[string]any{"timeout": 30}, ""},
+	}
+	for _, tc := range cases {
+		card := toolCard{name: tc.name, input: tc.input}
+		if got := toolCardRendererFor(tc.name).primaryArg(&card); got != tc.want {
+			t.Errorf("%s primaryArg = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestToolCardRenderCache verifies the cachedMessageItem-style primitive:
+// repeat renders at the same state are served from the cache, and a state
+// change (expanded flip through the expandable interface) invalidates it.
+func TestToolCardRenderCache(t *testing.T) {
+	theme := DefaultTheme()
+	var b strings.Builder
+	for i := 0; i < collapsedResponseLines+3; i++ {
+		b.WriteString("row\n")
+	}
+	card := &toolCard{name: "grep", response: parseToolResult(b.String()), state: cardSuccess}
+
+	first := card.render(theme, 60)
+	if !card.hasCache {
+		t.Fatalf("render should populate the cache")
+	}
+	if again := card.render(theme, 60); again != first {
+		t.Errorf("cached render differs from the first render")
+	}
+
+	// Toggling through the capability interface invalidates the cache.
+	card.toggleExpanded()
+	expanded := card.render(theme, 60)
+	if expanded == first {
+		t.Errorf("expanded render should differ after cache invalidation")
+	}
+	if strings.Contains(expanded, "(Ctrl+O for more)") {
+		t.Errorf("expanded render still shows the truncation hint")
+	}
+
+	// A different width is a different cache identity: no stale reuse.
+	card.toggleExpanded() // back to collapsed
+	narrow := card.render(theme, narrowCardWidth-1)
+	if narrow == "" {
+		t.Errorf("narrow render should not be empty")
+	}
+	if card.render(theme, 60) != first {
+		t.Errorf("re-render at the original width should match the original output")
+	}
+}
