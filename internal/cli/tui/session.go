@@ -226,7 +226,7 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		agentCtx:   agentCtx,
 		live:       live,
 		reg:        run.ToolRegistry(opts.Tools),
-		reminders:  run.TodoReminders(opts.Tools),
+		reminders:  run.WithRunawayGuard(run.TodoReminders(opts.Tools)),
 		schedule:   agenttool.ScheduleFromTools(opts.Tools),
 		creds:      creds,
 		cwd:        cwd,

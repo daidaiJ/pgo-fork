@@ -103,6 +103,21 @@ func (r *ReminderRegistry) Register(p ReminderProvider) {
 // injection wiring entirely).
 func (r *ReminderRegistry) Empty() bool { return r == nil || len(r.providers) == 0 }
 
+// Has reports whether a provider with the given name is already registered,
+// so a registrar can stay idempotent instead of double-registering (which
+// would inject its reminder twice per turn).
+func (r *ReminderRegistry) Has(name string) bool {
+	if r == nil {
+		return false
+	}
+	for _, p := range r.providers {
+		if p.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Messages consults every provider in registration order and returns the
 // ephemeral reminder messages to inject this turn (one UserMessage per provider
 // that fires). Reminders are modeled as user-role messages carrying

@@ -5,17 +5,19 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 3 期 T3.1 rewind 补齐四件完成（2026-10-05，`5119df1`）**
-  ——G1 弃分支点进 /rewind 选择器（↩ 标注、可切回）、G2 prompt 回填输入框
-  （REPL raw-mode 预填 + TUI SetValue）、G3 compaction 边界 ⚠ 预计算（树推导
-  近似，kimi 双 reason 未逐字移植）、G4 TUI 入口（对话级，TUI 无快照
-  journal）。共用层 `internal/cli/rewindpoints.go`，schema 未动。偏差八条见
-  rewind-branch-undo.md §8。**新发现既有 flake**：TestREPLExportImportRoundTrip
-  整包偶发（基线亦复现，疑似 NewID 微秒碰撞令 Import 覆盖原文件），待排查。
-  下一步 = T3.2 runaway 哨兵 / T3.3 微压缩，待用户排；待拍板项（pi-durable
-  切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
-  code mode、TUI 风格对齐 grok）见 implementation-plan 待议段；其余均见
-  handoff。
+- **当前阶段**：**第 3 期 T3.2 防打转哨兵完成（2026-10-05）**
+  ——叶子包 `internal/runaway`：repeat-key（name+args 规范化哈希）连续
+  streak≥3 + 结果 sha256 指纹佐证（args 同结果在变=有效轮询不触发），
+  注入 system-reminder **不硬停**；无状态现算挂 ReminderRegistry
+  （US-002 管道），窗口边界 = user/compaction/纯文本 assistant；
+  `run.WithRunawayGuard` 幂等接线，六驱动全覆盖（REPL/TUI/SDK/headless/
+  task 子代理/goal）。偏差八条见 runaway-sentinel.md §5（D1 注入挂
+  reminder 而非 prepareNextTurn、D2 无硬停档）。T3.1 遗留 flake 未动：
+  TestREPLExportImportRoundTrip 整包偶发（疑似 NewID 微秒碰撞），待排查。
+  下一步 = T3.3 微压缩 / T3.4 canonical context edit，待用户排；待拍板项
+  （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
+  dynamic-workflow、code mode、TUI 风格对齐 grok）见 implementation-plan
+  待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)

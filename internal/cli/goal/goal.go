@@ -286,7 +286,8 @@ func goalToolRegistry(base *agenttool.ToolRegistry, state *agenttool.GoalState) 
 // goalReminders builds the per-turn reminder registry for a goal run: the goal
 // reminder (re-stating the objective every turn) plus the todo reminder when a
 // todo tool is present, so an autonomous run keeps both its objective and its
-// task list in view.
+// task list in view. The runaway sentinel (T3.2) rides along: an autonomous
+// loop is where a stuck model spins unobserved.
 func goalReminders(base *agenttool.ToolRegistry, state *agenttool.GoalState) *runtime.ReminderRegistry {
 	reg := runtime.NewReminderRegistry(&runtime.GoalReminderProvider{State: state})
 	if base != nil {
@@ -296,7 +297,7 @@ func goalReminders(base *agenttool.ToolRegistry, state *agenttool.GoalState) *ru
 			}
 		}
 	}
-	return reg
+	return run.WithRunawayGuard(reg)
 }
 
 // goalTurnActivity sums the output tokens across the assistant messages in tail

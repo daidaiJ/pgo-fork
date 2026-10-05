@@ -241,7 +241,7 @@ func Run(opts Options) error {
 		agentCtx:   agentCtx,
 		live:       live,
 		reg:        reg,
-		reminders:  run.TodoReminders(opts.Tools),
+		reminders:  run.WithRunawayGuard(run.TodoReminders(opts.Tools)),
 		schedule:   agenttool.ScheduleFromTools(opts.Tools),
 		slash:      slash,
 		creds:      creds,

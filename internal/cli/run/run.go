@@ -136,6 +136,9 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 					GetAPIKey: childCreds.GetAPIKey,
 				},
 				Batch: agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: ToolRegistry(childTools)}},
+				// Child runs are unattended, exactly where a runaway loop burns
+				// tokens unobserved, so they carry the sentinel too (T3.2).
+				Reminders: WithRunawayGuard(nil),
 			}
 		}
 		tools = append(tools, runtime.NewTaskTool(factory, sem))
@@ -361,6 +364,23 @@ func TodoReminders(tools []agentcore.AgentTool) *runtime.ReminderRegistry {
 		return nil
 	}
 	return runtime.NewReminderRegistry(providers...)
+}
+
+// WithRunawayGuard registers the runaway sentinel provider (T3.2) on reg,
+// allocating the registry when nil, and returns it. Registration is idempotent
+// (a sentinel is never added twice). Unlike the todo/memory providers the
+// sentinel needs no tool state — it watches the message tail — so every
+// assembled run carries it: a stuck model gets an ephemeral system-reminder
+// nudge on the request where it would otherwise repeat an unproductive call.
+// Drivers that build their registry through TodoReminders wrap it here.
+func WithRunawayGuard(reg *runtime.ReminderRegistry) *runtime.ReminderRegistry {
+	if reg == nil {
+		reg = runtime.NewReminderRegistry()
+	}
+	if !reg.Has("runaway") {
+		reg.Register(&runtime.RunawayReminderProvider{})
+	}
+	return reg
 }
 
 // MemoryRootFromTools returns the persistent memory root the run's memory_search
@@ -627,7 +647,7 @@ func NewConfig(model, providerName string, thinking agentcore.ThinkingLevel, pro
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: reg},
 		},
-		Reminders: reminders,
+		Reminders: WithRunawayGuard(reminders),
 	}
 	// Due session-local reminders ride the follow-up seam (issue #565): when the
 	// run is about to settle, the loop consults the scheduler and queues each due
