@@ -5,21 +5,17 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 2 期收口 + 期验收两笔小账当日清账（2026-10-05）**
-  ——T2.1–T2.4 四件全清、期验收对账完成（真彩档用户实测核验，16 色档
-  豁免），滚动预览 tag `dev-preview` 已打。两笔小账已清（用户拍板"只清
-  小账"，T3.1 后排）：① provider 报错误导 = `ResolveNamedProvider` openai
-  协议分支驱动名硬编码 "openai"，修复为按 spec.Name 构建（`bac4147`）；
-  ② write 卡多行 input 续行对齐值列（`b8425fc`）。测试陷阱新知：
-  **GOTMPDIR 只用于 go build**——加给 go test 会让 `t.TempDir()` 产出混
-  合斜杠路径打破 trust 测试（详见 handoff 最新卡 + R9）。下一步 = 第 3
-  期 T3.1 rewind 补齐四件（2–3d，rewind-branch-undo.md），待用户排。
-  T2.4 偏差五条见 tui-crush-components.md §11；T2.3 偏差六条 §10；T2.2
-  偏差九条 §9；T2.1 = 三驱动接线**默认 off（用户拍板）**，偏差十一条 §7；
-  小账清账记录 §12。pi-durable 切片 1、/ui 面板、skill-as-tool、供应商
-  韧性 S 件族仍待拍板；用户点名待议：dynamic-workflow 编排器、code mode
-  （goja 起步）、TUI 风格对齐 grok——见 implementation-plan 待议段；其余
-  均见 handoff。
+- **当前阶段**：**第 3 期 T3.1 rewind 补齐四件完成（2026-10-05，`5119df1`）**
+  ——G1 弃分支点进 /rewind 选择器（↩ 标注、可切回）、G2 prompt 回填输入框
+  （REPL raw-mode 预填 + TUI SetValue）、G3 compaction 边界 ⚠ 预计算（树推导
+  近似，kimi 双 reason 未逐字移植）、G4 TUI 入口（对话级，TUI 无快照
+  journal）。共用层 `internal/cli/rewindpoints.go`，schema 未动。偏差八条见
+  rewind-branch-undo.md §8。**新发现既有 flake**：TestREPLExportImportRoundTrip
+  整包偶发（基线亦复现，疑似 NewID 微秒碰撞令 Import 覆盖原文件），待排查。
+  下一步 = T3.2 runaway 哨兵 / T3.3 微压缩，待用户排；待拍板项（pi-durable
+  切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
+  code mode、TUI 风格对齐 grok）见 implementation-plan 待议段；其余均见
+  handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
