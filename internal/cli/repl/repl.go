@@ -654,6 +654,27 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 		}
 		reply.Reset()
 	}
+	// The reasoning-model thinking region (T1.3): deltas buffer here and are
+	// folded to one dim summary line ("✻ Thought for Xs (N chars)") when real
+	// reply text starts or the turn ends. PIGO_SHOW_THINKING=1 prints the full
+	// reasoning text instead, dimmed, for users who want to read it.
+	var thinking strings.Builder
+	var thinkingStart time.Time
+	flushThinking := func() {
+		if thinking.Len() == 0 {
+			return
+		}
+		text := thinking.String()
+		elapsed := time.Since(thinkingStart).Seconds()
+		if showThinking() {
+			fmt.Fprintln(out, ui.Colorize(ui.Enabled(), ui.Dim, strings.TrimRight(text, "\n")))
+		} else {
+			fmt.Fprintf(out, "%s\n", ui.Colorize(ui.Enabled(), ui.Dim,
+				fmt.Sprintf("✻ Thought for %.1fs (%d chars)", elapsed, len(text))))
+		}
+		thinking.Reset()
+		thinkingStart = time.Time{}
+	}
 	// The SessionEnd/PreCompact observer chains onto the existing OnEvent closure
 	// (plugin notifier + telemetry). Nil when no hooks are configured.
 	var hookEvent func(agentcore.AgentEvent)
@@ -691,9 +712,19 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 			}
 		},
 		OnText: func(delta string) {
+			// Real reply text ends the thinking region: flush its summary before
+			// the first text lands so the "Thought for Xs" line sits above it.
+			flushThinking()
 			reply.WriteString(delta)
 		},
+		OnThinking: func(delta string) {
+			if thinkingStart.IsZero() {
+				thinkingStart = time.Now()
+			}
+			thinking.WriteString(delta)
+		},
 		OnTurnEnd: func(msg agentcore.AssistantMessage, results []agentcore.ToolResultMessage) {
+			flushThinking()
 			flushReply()
 			for _, c := range msg.ToolCalls() {
 				fmt.Fprintf(out, "  %s %s\n", ui.Colorize(ui.Enabled(), ui.Green, "→ tool:"), ui.ToolCallLabel(c))
@@ -731,6 +762,7 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 	})
 	// A run can end (error or interrupt) with buffered text from a final turn
 	// that never fired OnTurnEnd; flush it so no reply is silently dropped.
+	flushThinking()
 	flushReply()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -756,6 +788,16 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 // Both first persist the current session (so the fork copies a saved tree),
 // then call store.Fork to write the new branch, and finally swap deps.header and
 // deps.agentCtx to the new session in place so subsequent prompts continue on
+// showThinking reports whether the full reasoning text should be printed
+// instead of the folded one-line summary (PIGO_SHOW_THINKING; T1.3).
+func showThinking() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PIGO_SHOW_THINKING"))) {
+	case "", "0", "false", "off", "no":
+		return false
+	}
+	return true
+}
+
 // the branch. resume of either session id later walks to its own leaf.
 func runForkClone(out io.Writer, deps *replDeps, line string) {
 	// Persist the current turn as a branch so Fork copies an up-to-date tree

@@ -22,6 +22,12 @@ type StreamHandler struct {
 	// is flushed at turn end before OnTurnEnd, so a consumer that only implements
 	// OnText still sees the complete text.
 	OnText func(delta string)
+	// OnThinking mirrors OnText for the reasoning-model thinking region: each
+	// new suffix of the streaming thinking blocks (agentcore.ThinkingContent,
+	// never folded into text). The final suffix is flushed at turn end before
+	// OnTurnEnd, so a consumer that accumulates OnThinking sees the complete
+	// reasoning even when the provider only delivers it in the final message.
+	OnThinking func(delta string)
 	// OnTurnEnd fires once per completed turn, after the turn's text is fully
 	// flushed, carrying the final assistant message and the tool results produced
 	// during the turn. Consumers render tool activity here.
@@ -41,6 +47,10 @@ func DrainStream(ctx context.Context, stream *LoopEventStream, h StreamHandler) 
 	// printed tracks how many bytes of the current streaming assistant message
 	// have already been surfaced via OnText, so each update emits only the delta.
 	printed := 0
+	// thoughtPrinted is OnThinking's counterpart of printed, tracking the
+	// thinking region independently (the two regions live in separate content
+	// blocks and interleave as thinking → text within one message).
+	thoughtPrinted := 0
 	var lastTurn *agentcore.AssistantMessage
 
 	emitText := func(text string) {
@@ -49,6 +59,14 @@ func DrainStream(ctx context.Context, stream *LoopEventStream, h StreamHandler) 
 				h.OnText(text[printed:])
 			}
 			printed = len(text)
+		}
+	}
+	emitThinking := func(thinking string) {
+		if len(thinking) > thoughtPrinted {
+			if h.OnThinking != nil {
+				h.OnThinking(thinking[thoughtPrinted:])
+			}
+			thoughtPrinted = len(thinking)
 		}
 	}
 
@@ -60,13 +78,16 @@ func DrainStream(ctx context.Context, stream *LoopEventStream, h StreamHandler) 
 		case agentcore.MessageUpdateEvent:
 			if a, ok := e.Message.(agentcore.AssistantMessage); ok {
 				emitText(agentcore.ContentToText(a.Content))
+				emitThinking(agentcore.ContentToThinking(a.Content))
 			}
 		case agentcore.TurnEndEvent:
 			// Flush any tail the streaming updates did not cover (covers providers
 			// that only deliver the complete message at turn end), then reset for
 			// the next turn and hand the turn to the consumer.
 			emitText(agentcore.ContentToText(e.Message.Content))
+			emitThinking(agentcore.ContentToThinking(e.Message.Content))
 			printed = 0
+			thoughtPrinted = 0
 			m := e.Message
 			lastTurn = &m
 			if h.OnTurnEnd != nil {

@@ -15,6 +15,12 @@ import "github.com/smallnest/pigo/internal/agentcore"
 // OnText contract).
 type textDeltaMsg struct{ delta string }
 
+// thinkingDeltaMsg carries the newest suffix of the streaming thinking region
+// (reasoning-model reasoning_content, see DrainStream's OnThinking contract).
+// The transcript renders it in a dimmed thinking block that collapses to a
+// "Thought for Xs" footer once real text starts.
+type thinkingDeltaMsg struct{ delta string }
+
 // turnEndMsg fires once per completed turn with the final assistant message and
 // the tool results produced during it.
 type turnEndMsg struct {

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -18,6 +20,11 @@ import (
 // re-flowed through the viewport with theme.WrapToWidth at the live width so CJK
 // and emoji never split mid-rune. Tool cards are a later node (#389); this file
 // leaves a clean seam (system lines) without building cards.
+//
+// Thinking blocks (T1.3) stream in as thinkingDeltaMsg values into a dimmed
+// roleThinking block that renders collapsed to its first few lines; Ctrl+T
+// toggles expanded/full, and once real reply text starts (or the turn ends) the
+// block closes and gains a "Thought for Xs" footer.
 
 // blockRole distinguishes the three transcript block kinds so each renders with
 // its own theme style.
@@ -28,21 +35,33 @@ const (
 	roleAssistant
 	roleSystem
 	roleTool
+	roleThinking
 	// roleBanner is the startup logo + config splash. Its text is pre-rendered
 	// (already colored, already laid out) and emitted verbatim, so reflow neither
 	// wraps it nor overrides its colors with a role style.
 	roleBanner
 )
 
+// thinkingCollapsedLines is how many body lines the thinking region shows while
+// collapsed (the default); the rest are summarized by a hidden-lines hint.
+const thinkingCollapsedLines = 10
+
 // transcriptBlock is one rendered turn in the transcript. text is the raw
 // (unstyled, unwrapped) message body; the role selects the theme style and any
 // prefix applied at render time. For roleTool blocks text is unused and card
 // points at the live tool card (#389); the pointer lets a later toolEndMsg /
 // Ctrl+O mutate the card in place and have it re-render on the next reflow.
+// roleThinking blocks use expanded (Ctrl+T two-state view: collapsed ≤10 lines
+// by default, full when toggled), and done/started/ended to time the
+// "Thought for Xs" footer shown once the block closes.
 type transcriptBlock struct {
-	role blockRole
-	text string
-	card *toolCard
+	role     blockRole
+	text     string
+	card     *toolCard
+	expanded bool
+	done     bool
+	started  time.Time
+	ended    time.Time
 }
 
 // transcript is the scrolling message log. It wraps a viewport.Model and keeps
@@ -68,6 +87,14 @@ type transcript struct {
 
 	blocks          []transcriptBlock
 	activeAssistant int
+	// activeThinking indexes the thinking block currently receiving streaming
+	// deltas, or -1 when none is open (mirrors activeAssistant).
+	activeThinking int
+	// lastThinking indexes the thinking block opened this turn (open or
+	// already closed by arriving reply text), or -1. finalizeTurn uses it to
+	// treat the final message's thinking as the authoritative body of the block
+	// the turn already showed, instead of appending a duplicate.
+	lastThinking int
 
 	// follow is the stick-to-bottom intent: while true, every reflow snaps the
 	// viewport to the newest line so streamed output stays visible. It is set
@@ -87,6 +114,8 @@ func newTranscript(theme Theme) transcript {
 		vp:              vp,
 		theme:           theme,
 		activeAssistant: -1,
+		activeThinking:  -1,
+		lastThinking:    -1,
 	}
 }
 
@@ -116,6 +145,8 @@ func (t *transcript) setSize(width, height int) {
 func (t *transcript) addUser(text string) {
 	t.blocks = append(t.blocks, transcriptBlock{role: roleUser, text: text})
 	t.activeAssistant = -1
+	t.activeThinking = -1
+	t.lastThinking = -1
 	t.follow = true
 	t.reflow()
 }
@@ -144,10 +175,54 @@ func (t *transcript) addToolCard(c *toolCard) {
 	t.reflow()
 }
 
+// appendThinking grows the current thinking block by delta, creating the block
+// (and starting its "Thought for Xs" clock) on the first delta of a turn. The
+// block stays open — dimmed and collapsed — until real reply text arrives or
+// the turn ends.
+func (t *transcript) appendThinking(delta string) {
+	if t.activeThinking < 0 {
+		t.blocks = append(t.blocks, transcriptBlock{role: roleThinking, started: time.Now()})
+		t.activeThinking = len(t.blocks) - 1
+		t.lastThinking = t.activeThinking
+	}
+	t.blocks[t.activeThinking].text += delta
+	t.reflow()
+}
+
+// closeThinking seals the open thinking block: it stops the footer clock and
+// detaches it as the delta target so subsequent text starts a fresh assistant
+// block. A no-op when no thinking block is open.
+func (t *transcript) closeThinking() {
+	if t.activeThinking < 0 {
+		return
+	}
+	blk := &t.blocks[t.activeThinking]
+	blk.done = true
+	blk.ended = time.Now()
+	t.activeThinking = -1
+	t.reflow()
+}
+
+// toggleThinking flips the collapsed/expanded two-state view of the most recent
+// thinking block and re-flows (Ctrl+T). Blocks start collapsed; a later turn's
+// block toggles independently, matching the tool-card Ctrl+O behavior.
+func (t *transcript) toggleThinking() {
+	for i := len(t.blocks) - 1; i >= 0; i-- {
+		if t.blocks[i].role == roleThinking {
+			t.blocks[i].expanded = !t.blocks[i].expanded
+			t.reflow()
+			return
+		}
+	}
+}
+
 // appendDelta grows the current assistant block by delta, creating the block on
 // the first delta of a turn. The re-flow auto-sticks to the bottom when the user
-// has not scrolled up.
+// has not scrolled up. If the thinking block is still open this is the first
+// real reply text, so it closes there first: the footer clock must stop when
+// reasoning stopped, not when the turn ends.
 func (t *transcript) appendDelta(delta string) {
+	t.closeThinking()
 	if t.activeAssistant < 0 {
 		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant})
 		t.activeAssistant = len(t.blocks) - 1
@@ -159,7 +234,34 @@ func (t *transcript) appendDelta(delta string) {
 // finalizeTurn closes the streaming assistant block. When the final message
 // carries text it becomes the block's authoritative body (covering turns that
 // arrive without incremental deltas); otherwise the accumulated deltas stand.
+// The thinking region is finalized the same way: an open block is closed for
+// the footer, and a message that carries thinking the stream never surfaced
+// (providers that only deliver the full message at turn end) gets a completed
+// collapsed block so reasoning models stay visible on every transport.
 func (t *transcript) finalizeTurn(msg agentcore.AssistantMessage) {
+	if thinking := agentcore.ContentToThinking(msg.Content); thinking != "" {
+		if t.activeThinking >= 0 {
+			t.blocks[t.activeThinking].text = thinking
+			t.closeThinking()
+		} else if t.lastThinking >= 0 {
+			// The stream already showed this turn's thinking: replace its body
+			// with the authoritative final text rather than appending a
+			// duplicate block.
+			t.blocks[t.lastThinking].text = thinking
+			t.reflow()
+		} else {
+			now := time.Now()
+			t.blocks = append(t.blocks, transcriptBlock{
+				role: roleThinking, text: thinking,
+				done: true, started: now, ended: now,
+			})
+			t.lastThinking = len(t.blocks) - 1
+			t.reflow()
+		}
+	} else {
+		t.closeThinking()
+	}
+	t.lastThinking = -1
 	text := agentcore.ContentToText(msg.Content)
 	if t.activeAssistant >= 0 {
 		if text != "" {
@@ -395,10 +497,62 @@ func (t transcript) renderBlock(blk transcriptBlock, streaming bool) string {
 		return t.theme.User.Render(WrapToWidth(blk.text, t.width))
 	case roleSystem:
 		return t.theme.System.Render(WrapToWidth(blk.text, t.width))
+	case roleThinking:
+		return t.renderThinking(blk)
 	default:
 		if streaming {
 			return t.theme.Assistant.Render(WrapToWidth(blk.text, t.width))
 		}
 		return renderMarkdown(blk.text, t.width)
 	}
+}
+
+// renderThinking renders a reasoning-model thinking block: the body dimmed
+// behind a left rule, collapsed by default to its first few lines with a
+// hidden-lines hint, full when expanded (Ctrl+T). A closed block ends with the
+// "Thought for Xs" footer, so a collapsed block still tells the user the model
+// reasoned and for how long. The raw text renders plain (not markdown): while
+// streaming the block is incomplete and markdown can only be laid out on the
+// whole block, and the collapsed view truncates anyway — the quiet treatment,
+// not formatting, is the point.
+func (t transcript) renderThinking(blk transcriptBlock) string {
+	body := WrapToWidth(blk.text, t.width-2)
+	lines := strings.Split(body, "\n")
+	visible := lines
+	hidden := 0
+	if !blk.expanded && len(lines) > thinkingCollapsedLines {
+		hidden = len(lines) - thinkingCollapsedLines
+		visible = lines[:thinkingCollapsedLines]
+	}
+	rule := t.theme.ThinkingBorder.Render("▌")
+	var b strings.Builder
+	for i, l := range visible {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(rule)
+		if l != "" {
+			b.WriteString(t.theme.Thinking.Render(l))
+		}
+	}
+	if hidden > 0 {
+		b.WriteString(t.theme.Thinking.Render(
+			fmt.Sprintf("\n… %d lines hidden (ctrl+t to expand)", hidden)))
+	}
+	if blk.done {
+		b.WriteString(t.theme.ThinkingFooter.Render(thinkingFooter(blk)))
+	}
+	return b.String()
+}
+
+// thinkingFooter builds the closed-state summary line: the reasoning duration
+// measured from the first thinking delta to the first reply text (or turn
+// end). A block whose stream never surfaced thinking has no measurable
+// duration (started == ended), so the footer degrades to a plain "Thought".
+func thinkingFooter(blk transcriptBlock) string {
+	d := blk.ended.Sub(blk.started)
+	if d <= 0 {
+		return "\n✻ Thought"
+	}
+	return fmt.Sprintf("\n✻ Thought for %.1fs", d.Seconds())
 }

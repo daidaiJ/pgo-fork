@@ -46,6 +46,9 @@ func newStreamHandler(ch chan tea.Msg, extra func(agentcore.AgentEvent)) runtime
 		OnText: func(delta string) {
 			ch <- textDeltaMsg{delta: delta}
 		},
+		OnThinking: func(delta string) {
+			ch <- thinkingDeltaMsg{delta: delta}
+		},
 		OnTurnEnd: func(msg agentcore.AssistantMessage, results []agentcore.ToolResultMessage) {
 			ch <- turnEndMsg{msg: msg, results: results}
 		},

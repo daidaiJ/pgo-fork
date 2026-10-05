@@ -50,6 +50,14 @@ type Theme struct {
 	// DiffCtx styles unchanged context lines and file headers in a rendered
 	// diff (dim gray).
 	DiffCtx lipgloss.Style
+	// Thinking styles the reasoning-model thinking region body: dimmed gray so
+	// the model's reasoning reads as secondary to the actual reply.
+	Thinking lipgloss.Style
+	// ThinkingBorder styles the thinking region's left rule.
+	ThinkingBorder lipgloss.Style
+	// ThinkingFooter styles the "Thought for Xs" summary line shown once the
+	// thinking block closes.
+	ThinkingFooter lipgloss.Style
 }
 
 // Palette color numbers use the ANSI 256-color cube so the theme renders
@@ -115,6 +123,13 @@ func DefaultTheme() Theme {
 			Foreground(lipgloss.Color(colorDiffMeta)),
 		DiffCtx: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorGray)),
+		Thinking: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorTrack)),
+		ThinkingBorder: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorTrack)),
+		ThinkingFooter: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorGray)).
+			Italic(true),
 	}
 }
 

@@ -358,6 +358,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.remoteEcho(msg.delta)
 		return m, m.pumpNext()
 
+	case thinkingDeltaMsg:
+		// Reasoning-model thinking stream (T1.3): append to the dimmed thinking
+		// block. Spinner token stats intentionally stay reply-only, and the
+		// remote echo intentionally skips thinking — the paired view shows the
+		// reply, not the reasoning.
+		m.transcript.appendThinking(msg.delta)
+		return m, m.pumpNext()
+
 	case turnEndMsg:
 		m.transcript.finalizeTurn(msg.msg)
 		// Surface a failed or empty turn so a provider/API error is never silent.
@@ -661,6 +669,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.lastToolCard.expanded = !m.lastToolCard.expanded
 			m.transcript.reflow()
 		}
+		return m, nil
+	case "ctrl+t":
+		// Toggle the most-recent thinking block between its collapsed view (first
+		// few lines + hidden-lines hint) and the full reasoning text (T1.3),
+		// mirroring Ctrl+O for tool cards.
+		m.transcript.toggleThinking()
 		return m, nil
 	case "ctrl+d":
 		// Ctrl+D quits only when idle; mid-run it is ignored so a run is never

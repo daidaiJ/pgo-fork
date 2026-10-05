@@ -20,6 +20,20 @@ func ContentToText(list ContentList) string {
 	return b.String()
 }
 
+// ContentToThinking flattens thinking blocks of a content list into a single
+// string, the view a reasoning-model UI renders in its thinking region.
+// Thinking blocks are never folded into text (ContentToText skips them), so
+// this is the counterpart accessors for the reasoning_content family.
+func ContentToThinking(list ContentList) string {
+	var b strings.Builder
+	for _, c := range list {
+		if tc, ok := c.(ThinkingContent); ok {
+			b.WriteString(tc.Thinking)
+		}
+	}
+	return b.String()
+}
+
 // LastAssistantOf returns a pointer to the last AssistantMessage in msgs, or nil.
 func LastAssistantOf(msgs []AgentMessage) *AssistantMessage {
 	for i := len(msgs) - 1; i >= 0; i-- {
