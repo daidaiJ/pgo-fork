@@ -261,6 +261,27 @@ func TestApplyFileConfigPrompts(t *testing.T) {
 	}
 }
 
+// The [shellguard] mode follows CLI > file > default-off (T2.1): the file
+// fills an unset flag, and an explicit --shellguard overrides it. shellguard
+// is an opt-in advanced feature, so the default tier is off.
+func TestApplyFileConfig_ShellguardMode(t *testing.T) {
+	var opts cliOptions
+	applyFileConfig(&opts, config.FileConfig{Shellguard: config.ShellguardConfig{Mode: "strict"}}, changedSet())
+	if opts.shellguardMode != "strict" {
+		t.Errorf("file shellguard mode not applied, got %q", opts.shellguardMode)
+	}
+	opts = cliOptions{shellguardMode: "ask"}
+	applyFileConfig(&opts, config.FileConfig{Shellguard: config.ShellguardConfig{Mode: "strict"}}, changedSet("shellguard"))
+	if opts.shellguardMode != "ask" {
+		t.Errorf("CLI --shellguard must win, got %q", opts.shellguardMode)
+	}
+	var empty cliOptions
+	applyFileConfig(&empty, config.FileConfig{}, changedSet())
+	if empty.shellguardMode != "" {
+		t.Errorf("empty config set shellguardMode = %q, want empty (resolved to off in run())", empty.shellguardMode)
+	}
+}
+
 // The tool boundary follows CLI > file > default like the other scalar flags,
 // rather than the additive treatment `prompts` gets: merging would prevent a CLI
 // flag from widening a boundary the config file narrowed.

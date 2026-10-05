@@ -41,6 +41,7 @@ import (
 	"github.com/smallnest/pigo/internal/dream"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/selfupdate"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/webhook"
 )
@@ -69,8 +70,17 @@ type cliOptions struct {
 	// API-key env var, ignoring the model-id heuristics.
 	provider     string
 	outputFmt    string
-	noTools      bool
-	listSessions bool
+	// shellguardMode is the bash-command static safety analysis mode
+	// (T2.1): "off" | "ask" | "strict", resolved flag > [shellguard] mode >
+	// "off" (shellguard is an opt-in advanced feature). Validated by
+	// shellguard.ParseMode in run().
+	shellguardMode string
+	// nonInteractiveDenial controls headless behavior when shellguard denies
+	// a bash command: "terminate" (default) aborts the run; "continue"
+	// turns the denial into a failed tool result the agent can route around.
+	nonInteractiveDenial string
+	noTools              bool
+	listSessions         bool
 	// GitHub review webhook mode (--github-review, issue #567): run an isolated
 	// webhook listener that turns PR ready-for-review events into read-only
 	// review sessions.
@@ -231,6 +241,8 @@ func main() {
 	flag.StringVar(&opts.githubWebhookAddr, "github-webhook-addr", "127.0.0.1:3081", "listen address for the GitHub review webhook (put a TLS reverse proxy/tunnel in front; the endpoint is plain HTTP)")
 	flag.StringVar(&opts.githubWebhookRepo, "github-webhook-repo", "", "restrict review to this repository (owner/name); empty accepts any repo")
 	flag.StringVarP(&opts.outputFmt, "output-format", "o", "text", "output format: text | stream-json")
+	flag.StringVar(&opts.shellguardMode, "shellguard", "", "bash command static safety analysis: off | ask | strict (default off; opt-in; config: [shellguard] mode)")
+	flag.StringVar(&opts.nonInteractiveDenial, "non-interactive-denial", "terminate", "headless behavior when shellguard denies a command: terminate | continue (continue converts the denial into a failed tool result and keeps the run going)")
 	flag.BoolVarP(&opts.noTools, "no-tools", "n", false, "disable the built-in file/shell tools")
 	flag.StringArrayVar(&opts.allowedTools, "allowed-tools", nil, "restrict the model to these tools (repeatable, comma-separated, case-insensitive); empty means no restriction and --disallowed-tools wins on conflict")
 	flag.StringArrayVar(&opts.disallowedTools, "disallowed-tools", nil, "remove these tools from the model's set (repeatable, comma-separated, case-insensitive); takes precedence over --allowed-tools")
@@ -288,6 +300,20 @@ func main() {
 	}
 	cfgLoad.End()
 
+	// Validate the shellguard mode tiers now (flag > file > default off): a
+	// bad value is a usage error (exit 2), matching --output-format, rather
+	// than a silently disabled safety feature.
+	if opts.shellguardMode == "" {
+		opts.shellguardMode = "off"
+	}
+	if _, err := shellguard.ParseMode(opts.shellguardMode); err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: %v\n", err)
+		os.Exit(2)
+	}
+	if opts.nonInteractiveDenial != "terminate" && opts.nonInteractiveDenial != "continue" {
+		fmt.Fprintf(os.Stderr, "pigo: unknown --non-interactive-denial %q (want terminate|continue)\n", opts.nonInteractiveDenial)
+		os.Exit(2)
+	}
 	// A bare provider name ("zai", "deepseek") means that provider's default
 	// model (issue #564): canonicalize once here so every downstream consumer —
 	// SetupEnv, the REPL/TUI live seeds, sub-agent children — carries a real
@@ -363,6 +389,9 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	if cfg.OutputFormat != "" && !changed("output-format") {
 		opts.outputFmt = cfg.OutputFormat
 	}
+	if cfg.Shellguard.Mode != "" && !changed("shellguard") {
+		opts.shellguardMode = cfg.Shellguard.Mode
+	}
 	if cfg.NoTools && !changed("no-tools") {
 		opts.noTools = true
 	}
@@ -409,6 +438,8 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 // headless, subagent-rpc) is reached from here, so the CLI's behavior can be
 // exercised without re-parsing flags. A returned code of 0 is success.
 func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
+	// opts.shellguardMode was validated in run() (flag > file > off).
+	sgMode := shellguard.Mode(opts.shellguardMode)
 	modeDispatch := spans.Begin("startup.mode_dispatch")
 
 	// --subagent-rpc is a fully separate mode: speak the sub-agent JSON-RPC
@@ -515,6 +546,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				SysPrompt:         env.SysPrompt,
 				ResumeID:          resumeID,
 				Approve:           opts.approve,
+				Shellguard:        sgMode,
 				Skills:            env.Skills,
 				Plugins:           env.Plugins,
 				ConfigPrompts:     opts.configPrompts,
@@ -542,6 +574,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			SysPrompt:         env.SysPrompt,
 			ResumeID:          resumeID,
 			Approve:           opts.approve,
+			Shellguard:        sgMode,
 			Skills:            env.Skills,
 			Plugins:           env.Plugins,
 			ConfigPrompts:     opts.configPrompts,
@@ -578,13 +611,15 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 	}
 	exitTotal := spans.Begin("exit.total")
 	code := headless.Run(ctx, headless.RunParams{
-		Mode:          mode,
-		Env:           env,
-		Prompt:        opts.prompt,
-		Model:         opts.model,
-		APIKey:        opts.apiKey,
-		ThinkingLevel: opts.thinkingLevel,
-		ResumeID:      resumeID,
+		Mode:                 mode,
+		Env:                  env,
+		Prompt:               opts.prompt,
+		Model:                opts.model,
+		APIKey:               opts.apiKey,
+		ThinkingLevel:        opts.thinkingLevel,
+		ResumeID:             resumeID,
+		Shellguard:           sgMode,
+		NonInteractiveDenial: opts.nonInteractiveDenial,
 	}, out, errOut)
 	exitTotal.End()
 	return code

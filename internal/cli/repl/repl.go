@@ -40,6 +40,7 @@ import (
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
@@ -79,6 +80,11 @@ type replDeps struct {
 	// trust is disabled (e.g. the store could not be loaded); when nil the
 	// BeforeToolCall hook is not installed and the first-run prompt is skipped.
 	trust *trust.Manager
+	// shellguard is the resolved bash-command static-analysis mode (T2.1).
+	// Off (default) leaves the seam uninstalled; ask/strict gate bash calls
+	// ahead of the trust confirmation (hazardous verdicts ask even in
+	// trusted directories — allow-lists never waive them).
+	shellguard shellguard.Mode
 	// cwd is the directory pigo was launched in, used as the trust key and as
 	// the directory side-effect tools are gated against. It does not change
 	// during a session (pigo does not cd).

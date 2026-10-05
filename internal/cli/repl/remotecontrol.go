@@ -12,6 +12,7 @@
 package repl
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -19,7 +20,9 @@ import (
 	"sync"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/remotecontrol"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -176,10 +179,55 @@ func remoteControlStatus(out io.Writer, deps *replDeps) {
 // non-remote path is byte-identical to before (#443).
 func beforeToolCall(deps replDeps, out io.Writer) agentcore.BeforeToolCallFunc {
 	local := trust.BeforeToolCall(deps.trust, deps.cwd, deps.in, out, deps.confirmMu)
+	var next agentcore.BeforeToolCallFunc
 	if deps.remote == nil {
-		return local
+		next = local
+	} else {
+		next = bridgeBeforeToolCall(deps.trust, deps.cwd, deps.remote, out, deps.confirmMu, local)
 	}
-	return bridgeBeforeToolCall(deps.trust, deps.cwd, deps.remote, out, deps.confirmMu, local)
+	// Shellguard (T2.1) runs AHEAD of the trust gate: a Hazardous verdict asks
+	// even in a trusted directory (allow-lists never waive it), and a Safe
+	// command falls through unchanged. Off mode installs nothing.
+	return agenttool.ChainBeforeToolCall(
+		agenttool.ShellguardSeam(deps.shellguard, askShellguard(deps.in, out, deps.confirmMu)),
+		next,
+	)
+}
+
+// askShellguard is the REPL's interactive shellguard approval callback: it
+// shows the verdict (findings carry fixed descriptions, never command text)
+// plus the command preview, and answers y/N on the shared stdin reader.
+// Denial (default) blocks the call; ctx cancellation denies.
+func askShellguard(in *bufio.Reader, out io.Writer, mu *sync.Mutex) agenttool.ShellguardAsk {
+	return func(ctx context.Context, call agentcore.AgentToolCall, d shellguard.Decision) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if mu != nil {
+			mu.Lock()
+			defer mu.Unlock()
+		}
+		switch d.Verdict {
+		case shellguard.Hazardous:
+			fmt.Fprintf(out, "\npigo shellguard flagged the %q command as hazardous.\n", call.Name)
+			for _, f := range d.Findings {
+				fmt.Fprintf(out, "  finding: %s — %s\n", f.Token, f.Description)
+			}
+		case shellguard.Incomplete:
+			fmt.Fprintf(out, "\npigo shellguard could not fully analyze the %q command (%s); it will not run without confirmation.\n", call.Name, d.Reason)
+		default:
+			return true
+		}
+		fmt.Fprintf(out, "  %s\n", trust.ToolCallSummary(call))
+		fmt.Fprint(out, "Allow? [y/N]: ")
+		line, _ := in.ReadString('\n')
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "y", "yes":
+			return true
+		default:
+			return false
+		}
+	}
 }
 
 // bridgeBeforeToolCall wraps the local stdin confirmation seam so that while a

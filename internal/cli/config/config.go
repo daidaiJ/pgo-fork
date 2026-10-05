@@ -67,6 +67,18 @@ type FileConfig struct {
 	// internal/dream (Config). See tasks/spec-dream-memory-consolidation.md
 	// §3.3.
 	Dream DreamConfig `toml:"dream"`
+	// Shellguard is the [shellguard] TOML table for the bash-command static
+	// safety analysis (T2.1). Pure config plumbing; mode resolution
+	// (flag > file > default "off") lives in cmd/pigo's applyFileConfig.
+	// shellguard is an opt-in advanced feature: the default is off.
+	Shellguard ShellguardConfig `toml:"shellguard"`
+}
+
+// ShellguardConfig is the [shellguard] TOML table. Mode is one of "off",
+// "ask", or "strict" (validated by shellguard.ParseMode); empty means unset
+// so the flag tier wins.
+type ShellguardConfig struct {
+	Mode string `toml:"mode"`
 }
 
 // DreamConfig is the [dream] TOML table for /dream memory consolidation.

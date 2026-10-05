@@ -14,11 +14,13 @@ import (
 	"strings"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/shellguard"
 )
 
 // RunParams carries the resolved inputs for one headless run. Mode and Env are
@@ -33,6 +35,14 @@ type RunParams struct {
 	APIKey        string
 	ThinkingLevel string
 	ResumeID      string
+	// Shellguard is the resolved bash-command static-analysis mode (T2.1).
+	// Off (the default) installs no seam. Headless has no interactive
+	// channel, so flagged commands follow NonInteractiveDenial.
+	Shellguard shellguard.Mode
+	// NonInteractiveDenial is "terminate" (default) or "continue"
+	// (--non-interactive-denial continue): a shellguard denial either aborts
+	// the run or becomes a failed tool result the agent can route around.
+	NonInteractiveDenial string
 }
 
 // Run executes one headless run over p.Prompt, writing agent output to out and
@@ -111,6 +121,19 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		baseOnEvent = n.Handle
 	}
 	d, onEvent := run.InstallDriverHooks(ctx, &runCfg, set, hookDeps, source, baseOnEvent)
+
+	// Shellguard denial seam (T2.1): headless has no interactive channel, so
+	// Hazardous/Incomplete bash commands follow --non-interactive-denial —
+	// terminate (default) cancels the run context so the loop stops after the
+	// denial lands, continue keeps the run going so the agent can route
+	// around the refusal. Chained after the hook seam: a hook block wins, an
+	// allow falls through to the analysis. A nil seam (mode off) is a no-op.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	sgSeam, sgTerminated := agenttool.ShellguardDenialSeam(p.Shellguard, p.NonInteractiveDenial == "continue", runCancel)
+	if sgSeam != nil {
+		runCfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(runCfg.Batch.ToolExecutorConfig.BeforeToolCall, sgSeam)
+	}
 	// UserPromptSubmit runs before the prompt is handed to the loop: a block aborts
 	// the headless run non-zero; additionalContext is injected into this run only.
 	if d != nil {
@@ -126,7 +149,7 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		Run:  runCfg,
 	}
 	cfg.OnEvent = onEvent
-	runErr := runtime.RunHeadless(ctx, agentCtx, cfg)
+	runErr := runtime.RunHeadless(runCtx, agentCtx, cfg)
 	// Persist the run's messages regardless of run outcome so a partial run is
 	// still resumable; a persistence failure is reported but does not mask a run
 	// error.
@@ -134,6 +157,10 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "pigo: warning: could not persist session %s: %v\n", hs.header.ID, perr)
 	}
 	if runErr != nil {
+		if sgTerminated != nil && sgTerminated() {
+			fmt.Fprintln(errOut, "pigo: run terminated by a shellguard denial (non-interactive; --non-interactive-denial continue lets the agent route around denials)")
+			return 1
+		}
 		fmt.Fprintf(errOut, "pigo: %v\n", runErr)
 		return 1
 	}

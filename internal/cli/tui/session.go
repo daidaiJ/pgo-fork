@@ -33,6 +33,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
@@ -60,6 +61,10 @@ type runSession struct {
 	// trust is disabled (store could not be loaded / no cwd); when nil /status
 	// reports "disabled" and the trust-gated hook layer is skipped.
 	trust *trust.Manager
+	// shellguard is the resolved bash-command static-analysis mode (T2.1).
+	// Off (default) leaves the seam uninstalled; with no per-call channel in
+	// the TUI, ask/strict deny flagged bash commands outright (fail closed).
+	shellguard shellguard.Mode
 	// slash is the shared slash-command registry the TUI consults exactly as the
 	// REPL does. It is assembled per-session against the live config (withSession
 	// rebinds the model's registry to this one) so /model switches reach it.
@@ -226,6 +231,7 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		creds:      creds,
 		cwd:        cwd,
 		trust:      mgr,
+		shellguard: opts.Shellguard,
 		slash:      newSlashRegistry(opts, live),
 		telemetry:  cli.NewTelemetryHolder(),
 		curLeaf:    curLeaf,
@@ -337,6 +343,13 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 		if mgr, err := trust.NewManager(trust.DefaultPath()); err == nil {
 			cfg.Batch.ToolExecutorConfig.BeforeToolCall = remoteConfirmSeam(s.remote, mgr, s.hookDeps.ProjectDir)
 		}
+	}
+	// Shellguard (T2.1): the TUI has no per-call confirmation channel, so
+	// ask and strict modes both deny flagged bash commands outright (fail
+	// closed). Off installs nothing. The seam runs ahead of the remote
+	// confirm seam so a Safe command falls through unchanged.
+	if sg := agenttool.ShellguardSeam(s.shellguard, nil); sg != nil {
+		cfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(sg, cfg.Batch.ToolExecutorConfig.BeforeToolCall)
 	}
 	return cfg
 }

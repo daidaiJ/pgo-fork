@@ -5,6 +5,7 @@ import (
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/shellguard"
 )
 
 // Options carries the resolved run configuration into Run. It deliberately
@@ -38,6 +39,11 @@ type Options struct {
 	// run so the first-launch trust prompt is skipped and side-effect tools run
 	// without per-call confirmation (mirrors pi's --approve/-a).
 	Approve bool
+	// Shellguard is the resolved bash-command static-analysis mode (T2.1).
+	// Off (the default) never installs the seam. The TUI has no per-call
+	// confirmation prompt, so ask and strict both deny flagged commands
+	// outright (fail closed; registered in the spec's deviation log).
+	Shellguard shellguard.Mode
 	// Skills is the pre-loaded skill set (loaded once by run.SetupEnv, shared with
 	// prompt injection). Each is registered as a /skill-name command. Empty under
 	// --no-skills, so nothing is registered.

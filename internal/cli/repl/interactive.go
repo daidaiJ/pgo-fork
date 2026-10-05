@@ -24,6 +24,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/trust"
 )
@@ -82,6 +83,11 @@ type Options struct {
 	// whether to launch the startup background consolidation; a zero value
 	// (Enabled false) disables the auto-trigger entirely.
 	Dream dream.Config
+
+	// Shellguard is the resolved bash-command static-analysis mode (T2.1).
+	// Off (the default) never installs the seam; ask consults the interactive
+	// confirmation prompt; strict denies outright.
+	Shellguard shellguard.Mode
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -252,6 +258,7 @@ func Run(opts Options) error {
 		notifier:   plugin.NewEventNotifier(opts.Plugins, os.Stderr),
 		goal:       agenttool.NewGoalState(),
 		telemetry:  cli.NewTelemetryHolder(),
+		shellguard: opts.Shellguard,
 	})
 }
 
