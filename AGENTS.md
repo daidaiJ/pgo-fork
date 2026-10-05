@@ -5,20 +5,21 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 2 期完成收口（2026-10-05）**——T2.1 shellguard +
-  T2.2 流式 markdown + T2.3 RemapANSI16 + T2.4 toolcard 注册表化四件全清，
-  期验收对账完成：危险命令表驱动全绿（全量 37 包复核）+ 截图回归真彩档
-  用户实测核验（**16 色档用户拍板豁免**）+ 流式 markdown 实跑正常，滚动
-  预览 tag `dev-preview` 已打。期验收随核验发现两笔小账待清（provider 兜底
-  报错误导 openai/openrouter + write 卡多行 input 缩进，见
-  tui-crush-components.md §12）；**TUI 视觉风格对齐 grok 已入待议**
-  （用户点名，见 implementation-plan）。下一步 = 第 3 期 T3.1 rewind
-  补齐四件（2–3d，rewind-branch-undo.md）或先清两笔小账，待用户排。
+- **当前阶段**：**第 2 期收口 + 期验收两笔小账当日清账（2026-10-05）**
+  ——T2.1–T2.4 四件全清、期验收对账完成（真彩档用户实测核验，16 色档
+  豁免），滚动预览 tag `dev-preview` 已打。两笔小账已清（用户拍板"只清
+  小账"，T3.1 后排）：① provider 报错误导 = `ResolveNamedProvider` openai
+  协议分支驱动名硬编码 "openai"，修复为按 spec.Name 构建（`bac4147`）；
+  ② write 卡多行 input 续行对齐值列（`b8425fc`）。测试陷阱新知：
+  **GOTMPDIR 只用于 go build**——加给 go test 会让 `t.TempDir()` 产出混
+  合斜杠路径打破 trust 测试（详见 handoff 最新卡 + R9）。下一步 = 第 3
+  期 T3.1 rewind 补齐四件（2–3d，rewind-branch-undo.md），待用户排。
   T2.4 偏差五条见 tui-crush-components.md §11；T2.3 偏差六条 §10；T2.2
-  偏差九条 §9；T2.1 = 三驱动接线**默认 off（用户拍板）**，偏差十一条 §7。
-  pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族仍待拍板；
-  用户点名待议：dynamic-workflow 编排器、code mode（goja 起步）、TUI
-  风格对齐 grok——见 implementation-plan 待议段；其余均见 handoff。
+  偏差九条 §9；T2.1 = 三驱动接线**默认 off（用户拍板）**，偏差十一条 §7；
+  小账清账记录 §12。pi-durable 切片 1、/ui 面板、skill-as-tool、供应商
+  韧性 S 件族仍待拍板；用户点名待议：dynamic-workflow 编排器、code mode
+  （goja 起步）、TUI 风格对齐 grok——见 implementation-plan 待议段；其余
+  均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
@@ -39,5 +40,7 @@
 - `wiki` 是指向 `D:\wiki\pandawiki\projects\pgo-fork\wiki` 的符号链接，已在
   `.gitignore`（`/wiki`）——**wiki 内容不进 git**，改 wiki 即改 pandawiki 侧文件。
 - Windows 开发机：`go build` 间歇被卡巴斯基锁 `%TEMP%`，构建统一加
-  `GOTMPDIR=<repo>/.gtmp`（R9）；全量测试后台跑、输出落文件（R6）。
+  `GOTMPDIR=<repo>/.gtmp`（R9）——**只用于 go build**：go test 不受卡巴
+  斯基影响，加了反而让 `t.TempDir()` 走 GOTMPDIR 产出混合斜杠路径打破
+  trust 测试；全量测试后台跑、输出落文件（R6）。
 - dev 分支本地开发，推送/PR 策略待用户拍板。
