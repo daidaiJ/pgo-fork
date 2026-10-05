@@ -62,6 +62,13 @@ const collapsedResponseLines = 5
 // and context around the actual change.
 const collapsedDiffLines = 12
 
+// narrowCardWidth is the content width below which a card degrades to a flat
+// layout (spec §3.3 窄宽度回退): the rounded border costs two of the scarce
+// columns and the Input arguments section crowds out the response payload, so
+// below the threshold the border is dropped and arguments are omitted while
+// the header and response stay.
+const narrowCardWidth = 20
+
 // statusIcon returns the header status glyph for the card's state. Running is a
 // spinner-like ellipsis, success a check, warn a bang.
 func (c toolCard) statusIcon() string {
@@ -99,9 +106,15 @@ func (c toolCard) render(theme Theme, width int) string {
 	if width < 4 {
 		width = 4
 	}
+	// Below the narrow threshold the card renders flat: no border (its two
+	// columns are reclaimed) and the whole width is usable content.
+	narrow := width < narrowCardWidth
 	// The rounded border consumes one column on each side; wrap everything to the
 	// inner width so nothing overflows the frame.
 	inner := width - 2
+	if narrow {
+		inner = width
+	}
 
 	var lines []string
 
@@ -117,7 +130,7 @@ func (c toolCard) render(theme Theme, width int) string {
 	header = TruncateToWidth(header, nameBudget)
 	lines = append(lines, icon+" "+theme.ToolHeader.Render(header))
 
-	if len(c.input) > 0 {
+	if len(c.input) > 0 && !narrow {
 		lines = append(lines, theme.ToolBody.Render("Input arguments"))
 		for _, k := range sortedKeys(c.input) {
 			kv := "  " + k + ": " + fmt.Sprintf("%v", c.input[k])
@@ -156,6 +169,10 @@ func (c toolCard) render(theme Theme, width int) string {
 		if truncated {
 			lines = append(lines, theme.System.Render("(Ctrl+O for more)"))
 		}
+	}
+
+	if narrow {
+		return strings.Join(lines, "\n")
 	}
 
 	border := lipgloss.NewStyle().

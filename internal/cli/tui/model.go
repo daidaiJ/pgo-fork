@@ -450,6 +450,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				card.diff = diff
 				result = stripDiffTail(result)
 			}
+			// Raw tool output can carry 16-color SGR codes and the cursor /
+			// screen-control sequences of progress bars; normalize both
+			// before the card parses it into the response tree (T2.3).
+			result = RemapANSI16(StripCursorControl(result), m.theme.ANSI)
 			card.response = parseToolResult(result)
 			m.transcript.reflow()
 		}

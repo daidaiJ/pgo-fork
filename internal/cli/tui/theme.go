@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -58,6 +59,12 @@ type Theme struct {
 	// ThinkingFooter styles the "Thought for Xs" summary line shown once the
 	// thinking block closes.
 	ThinkingFooter lipgloss.Style
+	// ANSI holds the 16 standard ANSI colors (0-7 normal, 8-15 bright) used
+	// by RemapANSI16 to rewrite raw 16-color SGR output from tools into
+	// truecolor from the theme palette (crush Styles.ANSI). Without it those
+	// codes fall through to the terminal's own palette, which is often
+	// illegible on the dark transcript background.
+	ANSI [16]color.Color
 }
 
 // Palette color numbers use the ANSI 256-color cube so the theme renders
@@ -75,6 +82,17 @@ const (
 	colorStatus   = "62"  // status bar background (violet)
 	colorSpinner  = "173" // spinner glyph/verb (warm coral, matches Claude Code)
 	colorDiffMeta = "37"  // diff @@ hunk markers (cyan, git convention)
+
+	// Extended palette slots that only the ANSI16 remap consumes. They keep
+	// the theme's saturation family (magenta/rose side) so raw tool output
+	// lands on-brand instead of on the terminal defaults.
+	colorMagenta       = "176" // ANSI 5 (plum)
+	colorBrightRed     = "210" // ANSI 9 (salmon)
+	colorBrightGreen   = "79"  // ANSI 10 (light green)
+	colorBrightYellow  = "220" // ANSI 11 (gold)
+	colorBrightBlue    = "75"  // ANSI 12 (sky blue)
+	colorBrightMagenta = "213" // ANSI 13 (orchid)
+	colorBrightCyan    = "80"  // ANSI 14 (turquoise)
 )
 
 // DefaultTheme returns the built-in palette described in the SPEC: success
@@ -130,6 +148,29 @@ func DefaultTheme() Theme {
 		ThinkingFooter: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorGray)).
 			Italic(true),
+		// ANSI 16-color palette (indices 0-7 normal, 8-15 bright) for the
+		// RemapANSI16 filter. Slots reuse the theme colors wherever one
+		// exists (red→error, green→success, blue→accent, ...); the rest pick
+		// 256-cube neighbors in the same saturation family so nothing maps
+		// to a color the terminal renders invisible on the dark background.
+		ANSI: [16]color.Color{
+			lipgloss.Color(colorTrack),         // 0 black → recessive dark gray
+			lipgloss.Color(colorError),         // 1 red
+			lipgloss.Color(colorSuccess),       // 2 green
+			lipgloss.Color(colorWarn),          // 3 yellow
+			lipgloss.Color(colorAccent),        // 4 blue
+			lipgloss.Color(colorMagenta),       // 5 magenta
+			lipgloss.Color(colorDiffMeta),      // 6 cyan
+			lipgloss.Color(colorAssist),        // 7 white
+			lipgloss.Color(colorGray),          // 8 bright black
+			lipgloss.Color(colorBrightRed),     // 9 bright red
+			lipgloss.Color(colorBrightGreen),   // 10 bright green
+			lipgloss.Color(colorBrightYellow),  // 11 bright yellow
+			lipgloss.Color(colorBrightBlue),    // 12 bright blue
+			lipgloss.Color(colorBrightMagenta), // 13 bright magenta
+			lipgloss.Color(colorBrightCyan),    // 14 bright cyan
+			lipgloss.Color(colorUser),          // 15 bright white
+		},
 	}
 }
 
