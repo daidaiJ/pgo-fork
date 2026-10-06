@@ -5,22 +5,23 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 5 期收官：T5.3 内置 skill 双件 + T5.4 角色路由评估落地
-  （2026-10-06，T5.3 = `f9bda6e`）**——①T5.3：`handoff`（交接台账）+
-  `defect-detective`（三轴深审）经 builtinskills 内置，manifest 新增
-  **dev-workflow 集合**（16→18 个），SKILL.md 已做 pigo 环境适配
-  （handoff 存项目根 `handoff/`；defect-detective 检索面改 pigo 工具 +
-  与 review-it 划界），repl 真实链路测试断言补两命令；②T5.4（零代码
-  书面件）：**结论 = 不独立立项 role 路由大件，per-role model 并入
-  skill-as-tool 完整体**（frontmatter `model` 消费 + SkillTool 接通，
-  实证 frontmatter model 已解析零消费 / SkillTool 机制 ready 无调用点）；
-  **T6.5 候选池更新：skill-as-tool 完整体升首位**。评估 =
-  [wiki/port/role-routing-assessment.md](wiki/port/role-routing-assessment.md)。
-  此前 T5.2（`9fc0470`）、T5.1（`ebdf2e3`）均 ✅（41 包 0 FAIL 基线）。
-  **下一步待用户拍板**：T5.2/T5.3 收口验收过目（自改面拒绝 + 沉淀免确认 +
-  TUI/headless fail-closed 行为变化 + skill 双件实跑）；第 6 期立项排序
-  （skill-as-tool ~1–1.5d 首批建议）；T4.1 token A/B 验收（需 API key）；
-  其余待议段小件见 implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**第 5 期收口验收完成 + T4.1 期验收 1（token A/B）收账 +
+  Windows 插件 bug 修复（2026-10-06，`300e2b1`/`ff100d8`）**——
+  ①T5.2/T5.3 收口验收过目 ✅：T5.2 行为变化知悉（判定序/自改面/deny 终局/
+  plugin 受 gate/fail-closed，实跑活样本两例），skill 双件实跑达标
+  （/handoff 产物合规并揪出 AGENTS.md 工期笔误已修；/defect-detective
+  行为达标）；②**T4.1 token A/B ✅**：hello 单轮实测 direct 9002 /
+  deferred 8561 inputTokens，净省 441 tok（插件面 811 tok 的 54%），
+  provider 确认 schema 计入 usage——deferred 档价值实证，数字见
+  implementation-plan T4.1 行；③**随实跑修复 Windows 插件加载 bug**
+  （`300e2b1`）：`internal/plugin` `isExecutable` 只看 execute 位 →
+  Windows os.Stat 对 .exe 报 0666 → Discover 静默跳过全部插件；修复 =
+  os/exec LookPath 式扩展名判定 + 单测锁行为。
+  **下一步待用户拍板**：第 6 期立项排序（**skill-as-tool 完整体
+  ~1–1.5d 首位**，T5.4 结论；handoff 产物建议首批 = skill-as-tool +
+  T6.7）；小改进项：handoff SKILL.md 补"自改面清单以 selfedit.go 为准"
+  （防实跑中出现的模型幻觉）；pigo 记忆库污染现象（两次实测）可议立项。
+  其余遗留与待议段小件见 implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
