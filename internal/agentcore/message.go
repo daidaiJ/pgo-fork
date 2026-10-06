@@ -18,6 +18,12 @@ const (
 	// RoleMicrocompact marks a microcompaction decision record (T3.3): cleared
 	// tool-result ids, projection metadata — never rendered into a request.
 	RoleMicrocompact = "microcompact"
+	// RoleContextEdit marks a canonical context edit record (T3.4): an explicit,
+	// model-requested visibility edit over earlier history (replace with a
+	// digest / hide from the view). Projection metadata like microcompact: it
+	// is persisted as a first-class tree entry — the edit is itself history —
+	// but never rendered into a request; the projection applies it.
+	RoleContextEdit = "contextEdit"
 )
 
 // Message is the sealed interface implemented by the three message roles.
@@ -182,6 +188,56 @@ type MicrocompactMessage struct {
 func (MicrocompactMessage) isMessage()       {}
 func (m MicrocompactMessage) Role() string   { return RoleMicrocompact }
 
+// Context edit modes (T3.4). ModeReplace swaps the target's visible content
+// for the model-supplied digest; ModeHide removes it from the view — for tool
+// results both keep a one-line placeholder so the tool_use/tool_result pairing
+// stays intact for strict providers.
+const (
+	ModeReplace = "replace"
+	ModeHide    = "hide"
+)
+
+// ContextEdit is one visibility edit inside a ContextEditMessage: it targets
+// one earlier history entry by tool-call id (exact, the primary handle — the
+// model knows its own call ids) or by seq (its 0-based index in the request
+// view it saw) plus a content hash anchoring the resolved entry.
+type ContextEdit struct {
+	// TargetSeq is the target's index in the request view at edit time. It
+	// doubles as the proximity hint when the projection re-locates the target
+	// by ContentHash after markers/edits shifted the list, and as the "#seq"
+	// shown in the placeholder text.
+	TargetSeq int `json:"targetSeq"`
+	// TargetCallID, when non-empty, is the tool-call id of a ToolResultMessage
+	// target — an exact, shift-proof anchor resolved by scanning the list.
+	TargetCallID string `json:"targetCallId,omitempty"`
+	// ContentHash is a short digest of the target's rendered text at edit
+	// time; the projection re-locates and re-verifies the target with it, so
+	// an edit whose target was folded away by a later compaction (or rewind)
+	// is skipped instead of misapplied.
+	ContentHash string `json:"contentHash,omitempty"`
+	// Mode is "replace" or "hide".
+	Mode string `json:"mode"`
+	// Digest is the model-supplied summary that replaces the target's visible
+	// content (replace mode only).
+	Digest string `json:"digest,omitempty"`
+}
+
+// ContextEditMessage is the durable record of one context_edit tool call
+// (T3.4 canonical context edit). Like MicrocompactMessage it is projection
+// metadata — appended to the live list (and thus persisted as a tree entry via
+// the next PersistTurn, so the edit is itself history: replay re-applies it,
+// forked branches inherit it) — but it never renders into a request: the
+// compaction projection resolves and applies each edit to the view. The raw
+// history is never touched (canonical: append-only, lossless).
+type ContextEditMessage struct {
+	RoleField string        `json:"role"`
+	Edits     []ContextEdit `json:"edits"`
+	Timestamp int64         `json:"timestamp"`
+}
+
+func (ContextEditMessage) isMessage()     {}
+func (m ContextEditMessage) Role() string { return RoleContextEdit }
+
 // StopReason values, matching pi.
 const (
 	StopReasonEndTurn = "end_turn"
@@ -250,6 +306,12 @@ func decodeMessage(raw json.RawMessage) (Message, error) {
 		return m, nil
 	case RoleMicrocompact:
 		var m MicrocompactMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		return m, nil
+	case RoleContextEdit:
+		var m ContextEditMessage
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, err
 		}
