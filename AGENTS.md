@@ -5,26 +5,25 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T3.4 canonical context edit 完成（2026-10-06，当日落地，
-  四 commit）**——`541289a`（S1 agentcore `ContextEditMessage` 编辑条目：
-  编辑即历史，随树持久/重放幂等/分支继承）→ `b3c570e`（S2 投影第四级 +
-  **随件修复 D-6**：投影全程 view→raw 映射 `ProjectViewMapped`/`ViewRawOf`
-  替换漂移的 marker 锚公式）→ `a4e4c82`（S3 `context_edit` 工具：call-id/
-  seq 双句柄，loop 注入 AgentContext 零驱动接线）→ `10525c7`（docs）。
-  全量 38 包 exit=0。规格偏差 D-1/2/3/5/6 登记 =
-  **wiki/port/canonical-context-edit.md §8**。
-  **下一步 = T3.5（2026-10-06 用户拍板，下个会话优先）**：①readCache
-  最小基座 + edit 新鲜度守卫（readFileState + edit 前校验 + 微压缩
-  evictedPaths 联动失效，独立小件）+ 随件②闲置触发时间戳实测验证、
-  ③reminder 重注入升级内容快照档（micro-compaction D-3/D-5 收口）；
-  之后第 3 期收口评估（期验收 = 真实会话 token 曲线留档 + rewind 全闭环
-  回归）。T3.1 遗留
-  flake（TestREPLExportImportRoundTrip 整包偶发）未动。待拍板项
-  （**T3.3.1 压缩策略管线抽象——用户点名，趁热切片 0.5–1d**、pi-durable
-  切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
-  code mode、TUI 风格对齐 grok——**风格迁移需求已按用户截图提取为
-  tui-grok-style.md，14 条 S 需求待拍板排期**）见 implementation-plan
-  待议段；其余均见 handoff。
+- **当前阶段**：**T3.5 readFileState + edit 新鲜度守卫完成（2026-10-06，
+  当日落地，四 commit）**——`7b31072`（S1 `agentcore.ReadFileState` 账本：
+  指纹/快照/per-call residency/反查表，挂 `AgentContext.ReadFiles` 进程内
+  不持久化 + edit 三拒绝态守卫 + read/write/edit 接线）→ `914c2bb`（S2
+  微压缩驱逐联动 `RevokeEvicted`：#4239 收口，不可反查退全清）→ `502aac8`
+  （S3 时间戳修复：实测实锤生产路径零打点、60min 闲置闸门此前静默失效，
+  loop 五追加点统一补打）→ `e78da66`（S4 post-compaction reminder 内容
+  快照档，zcode 上限表，D-5 收口）。全量 38 包 exit=0。规格偏差 D-1~D-5
+  终稿 = **wiki/port/read-file-state.md**（micro-compaction.md D-3/D-5
+  已就地标注收口）。
+  **下一步 = 第 3 期收口评估**：期验收 = ①真实会话 token 曲线留档
+  （context edit §5 验收 1 + 微压缩曲线一并）+ ②rewind 全闭环回归；通过后
+  进第 4 期，或按用户拍板先切 **T3.3.1 压缩策略管线抽象**（用户点名，
+  Pipeline.RequestView/AfterTurn 归位方案 0.5–1d 见 implementation-plan
+  待议段）。T3.1 遗留 flake（TestREPLExportImportRoundTrip 整包偶发）未动。
+  其余待拍板项（pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性
+  S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移
+  需求已按用户截图提取为 tui-grok-style.md，14 条 S 需求待拍板排期**）
+  见 implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
