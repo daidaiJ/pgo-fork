@@ -128,3 +128,63 @@ func TestMaybeMicrocompactNoopBelowLine(t *testing.T) {
 		t.Fatalf("low-pressure context must stay untouched")
 	}
 }
+
+func TestPostCompactReminderSetAndConsumed(t *testing.T) {
+	cfg := RunConfig{LoopConfig: LoopConfig{
+		ContextWindow: 2_000,
+		Compaction:    compaction.CompactionSettings{Enabled: true, ReserveTokens: 500, KeepRecentTokens: 100},
+	}}
+	cfg.SummaryStream = summaryStream(padSummary("## Goal\ncompacted"))
+	// Summarized range: a read of a.go, then filler; kept tail plain.
+	agentCtx := &agentcore.AgentContext{Messages: agentcore.MessageList{
+		agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("go")}},
+		agentcore.AssistantMessage{
+			RoleField: agentcore.RoleAssistant,
+			Content: agentcore.ContentList{
+				agentcore.NewTextContent("reading"),
+				agentcore.ToolCallContent{Type: "toolCall", ID: "c1", Name: "read", Arguments: []byte(`{"path":"a.go"}`)},
+			},
+			StopReason: agentcore.StopReasonToolUse,
+		},
+		agentcore.ToolResultMessage{
+			RoleField:  agentcore.RoleToolResult,
+			ToolCallID: "c1",
+			ToolName:   "read",
+			Content:    agentcore.ContentList{agentcore.NewTextContent("package a")},
+		},
+	}}
+	agentCtx.Messages = append(agentCtx.Messages, bigUserMessages(6, 1600)...)
+	cmp := &compactor{}
+	var events []agentcore.AgentEvent
+	emit := func(_ agentcore.AgentEvent) error { return nil }
+	_ = events
+	maybeAutoCompact(context.Background(), agentCtx, &cfg, emit, nil, cmp)
+	if cmp.postCompactReminder == "" {
+		t.Fatal("expected a post-compaction reminder after a compaction with reads")
+	}
+	if !strings.Contains(cmp.postCompactReminder, "a.go") || !strings.Contains(cmp.postCompactReminder, "<system-reminder>") {
+		t.Fatalf("reminder should list a.go inside system-reminder tags: %q", cmp.postCompactReminder)
+	}
+	// One-shot: the first take clears it.
+	if got := cmp.takePostCompactReminder(); got == "" {
+		t.Fatal("first take should return the reminder")
+	}
+	if got := cmp.takePostCompactReminder(); got != "" {
+		t.Fatalf("reminder must be one-shot, got %q", got)
+	}
+}
+
+func TestPostCompactReminderEmptyWithoutReads(t *testing.T) {
+	cfg := RunConfig{LoopConfig: LoopConfig{
+		ContextWindow: 2_000,
+		Compaction:    compaction.CompactionSettings{Enabled: true, ReserveTokens: 500, KeepRecentTokens: 100},
+	}}
+	cfg.SummaryStream = summaryStream(padSummary("## Goal\ncompacted"))
+	agentCtx := &agentcore.AgentContext{Messages: bigUserMessages(8, 600)}
+	cmp := &compactor{}
+	emit := func(_ agentcore.AgentEvent) error { return nil }
+	maybeAutoCompact(context.Background(), agentCtx, &cfg, emit, nil, cmp)
+	if cmp.postCompactReminder != "" {
+		t.Fatalf("no reads in range ⇒ no reminder, got %q", cmp.postCompactReminder)
+	}
+}

@@ -21,9 +21,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -150,10 +152,30 @@ func StartRun(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConf
 // runLoop is the producer: it drives the two-layer loop, emitting events onto
 // stream and setting the stream result to the messages produced during the run.
 func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfig, stream *LoopEventStream) {
+	// cmp carries the run-scoped compaction circuit breaker and the one-shot
+	// post-compaction reminder (T3.3 随件).
+	cmp := &compactor{}
 	// Wire per-turn system-reminder injection (US-002) onto the TransformContext
 	// seam. Reminders are appended to the request-shaped copy only, so they stay
 	// ephemeral: never written back to agentCtx.Messages, never persisted, never
 	// swept into a compaction summary.
+	// Post-compaction live-state re-injection (T3.3 随件): the one-shot
+	// reminder set by the last auto-compaction rides the next request as an
+	// ephemeral <system-reminder>, ahead of the standing reminder registry
+	// (so reminders still land last at the tail).
+	inner := cfg.TransformContext
+	cfg.TransformContext = func(ctx context.Context, msgs agentcore.MessageList) agentcore.MessageList {
+		if inner != nil {
+			msgs = inner(ctx, msgs)
+		}
+		if note := cmp.takePostCompactReminder(); note != "" {
+			msgs = append(msgs, agentcore.UserMessage{
+				RoleField: agentcore.RoleUser,
+				Content:   agentcore.ContentList{agentcore.NewTextContent(note)},
+			})
+		}
+		return msgs
+	}
 	if !cfg.Reminders.Empty() {
 		cfg.TransformContext = cfg.Reminders.wrapTransform(cfg.TransformContext)
 	}
@@ -162,8 +184,6 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 	// truncation count, compaction count, latest context-utilization ratio) from
 	// the events emitted below, surfaced as a TelemetryEvent at run end.
 	tel := newTelemetry()
-	// cmp carries the run-scoped compaction circuit breaker (T3.3 随件).
-	cmp := &compactor{}
 	// newMessages returns the messages appended since the run began.
 	newMessages := func() []agentcore.AgentMessage {
 		if len(agentCtx.Messages) <= startIdx {
@@ -360,6 +380,22 @@ func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunCo
 // failed run already terminates, so a fresh run starts with a clean breaker.
 type compactor struct {
 	failures int
+	// postCompactReminder, when non-empty, is a one-shot ephemeral
+	// system-reminder injected into the next turn's request (and only that
+	// one) after a successful full compaction: the recently-read file paths
+	// whose results the summary replaced (zcode's post-compaction live-state
+	// re-injection, reference-hint form).
+	postCompactReminder string
+}
+
+// takePostCompactReminder pops the pending post-compaction reminder (one-shot).
+func (c *compactor) takePostCompactReminder() string {
+	if c == nil || c.postCompactReminder == "" {
+		return ""
+	}
+	t := c.postCompactReminder
+	c.postCompactReminder = ""
+	return t
 }
 
 // circuitBreakerLimit is how many consecutive compaction failures open the
@@ -485,6 +521,11 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	}
 	marker.TokensAfter = after
 	newList[insertAt] = marker
+	// Live-state re-injection (zcode 随件): surface the recently-read files the
+	// summary replaced so the model re-reads before trusting stale memory.
+	if cmp != nil {
+		cmp.postCompactReminder = postCompactReminder(view[max(prevIdx+1, 0):cut])
+	}
 	// Persist a checkpoint of the collapsed prefix before inserting the marker so
 	// a later run can reload it (infinite context, #480/#481). It reuses the
 	// summary compaction just produced — no extra LLM call — and is best-effort.
@@ -687,4 +728,49 @@ func maybeMicrocompact(ctx context.Context, agentCtx *agentcore.AgentContext, cf
 		ClearedCount: len(dec.ClearedCallIDs),
 		SavedTokens:  dec.SavedTokens,
 	})
+}
+
+// postCompactReminder renders the one-shot system-reminder body listing the
+// files read in the compacted range (newest first, capped at 5 — zcode's cap
+// table; pigo has no readFileState content snapshots, so this is the
+// reference-hint form, spec deviation D-5). Returns "" when the range read
+// nothing.
+func postCompactReminder(rangeMsgs []agentcore.Message) string {
+	var paths []string
+	seen := make(map[string]bool)
+	for i := len(rangeMsgs) - 1; i >= 0 && len(paths) < 5; i-- {
+		a, ok := rangeMsgs[i].(agentcore.AssistantMessage)
+		if !ok {
+			continue
+		}
+		for _, call := range a.ToolCalls() {
+			if call.Name != "read" || len(paths) >= 5 {
+				continue
+			}
+			if p := readToolPath(call.Arguments); p != "" && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files, whose exact contents may no longer be in context — re-read them before relying on precise details:\n")
+	for _, p := range paths {
+		b.WriteString("- " + p + "\n")
+	}
+	return WrapSystemReminder(strings.TrimRight(b.String(), "\n"))
+}
+
+// readToolPath extracts the string "path" argument from a read tool call.
+func readToolPath(args json.RawMessage) string {
+	var decoded struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &decoded); err != nil {
+		return ""
+	}
+	return decoded.Path
 }
