@@ -156,7 +156,7 @@ func TestSetupEnvSkillsGatedOnFilteredReadTool(t *testing.T) {
 		t.Fatal("unconstrained run must advertise skills; the fixture or gate is wrong")
 	}
 
-	withoutRead, err := SetupEnv("openrouter/free", "", "", "", "", false, false, "", nil, false, NewToolPolicy(nil, []string{"read"}))
+	withoutRead, err := SetupEnv("openrouter/free", "", "", "", "", false, false, "", nil, false, config.MaxContext{}, NewToolPolicy(nil, []string{"read"}))
 	if err != nil {
 		t.Fatalf("SetupEnv (read denied): %v", err)
 	}
@@ -200,7 +200,7 @@ func TestSetupEnvNoToolsWithPolicyWarns(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		// A deliberately misspelled name: with tools present this would abort with
 		// exit code 2, but --no-tools skips validation, so it must not error.
-		env, err = SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false, NewToolPolicy([]string{"raed"}, nil))
+		env, err = SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false, config.MaxContext{}, NewToolPolicy([]string{"raed"}, nil))
 	})
 	if err != nil {
 		t.Fatalf("SetupEnv(--no-tools + policy) = %v, want nil (validation is skipped, not failed)", err)
