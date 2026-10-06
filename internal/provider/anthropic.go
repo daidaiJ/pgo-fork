@@ -275,6 +275,10 @@ func (d *AnthropicDecoder) finishDone() []StreamEvent {
 	if msg.StopReason == "" {
 		msg.StopReason = agentcore.StopReasonEndTurn
 	}
+	// T6.7 length salvage: a max_tokens cut that already carries complete tool
+	// calls is rewritten into an executable tool-call turn (stop=tool_use)
+	// instead of a dead-end length stop.
+	SalvageLengthTruncation(&msg)
 	return []StreamEvent{StreamDoneEvent{Message: msg}}
 }
 
