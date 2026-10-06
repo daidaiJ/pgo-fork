@@ -22,9 +22,13 @@
   `Repair` 显式修复（**未接线**）；根治 Windows"残留锁文件使目录不可删 →
   挂掉不相干测试"的 flake（runtime 17.5s→5.1s）。规格 =
   [session-write-lease.md](wiki/port/session-write-lease.md)。
-  **下一步**：**T6.4 pstack skill 盘点**（用户拍板"先收口再盘点"）；之后
-  第 6 期第三批排序待拍板。本机跑测试带 `TMP/TEMP/TMPDIR=D:\tmp`。其余见
-  handoff。
+  ③**T6.4 pstack 盘点完成**（只出清单）：pstack 作者集合 50 个技能 = 23 条
+  `principle-*` + 23 个 playbook + `setup-pstack`（已被 T6.5 吸收，不立项）
+  + benny 3 件（依赖 headless 续跑，不立项）；**49/50 是 slash-only，内置不
+  增每轮工具面 token**；建议精选 4+3 件待拍板。清单 =
+  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)。
+  **下一步**：T6.4 精选清单拍板；之后第 6 期第三批排序待拍板。本机跑测试
+  带 `TMP/TEMP/TMPDIR=D:\tmp`。其余见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
