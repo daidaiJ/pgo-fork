@@ -35,6 +35,7 @@ import (
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
+	"github.com/smallnest/pigo/internal/tooldecl"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -53,6 +54,9 @@ type runSession struct {
 	reminders *runtime.ReminderRegistry
 	schedule  *agenttool.Schedule
 	creds     *provider.CredentialStore
+	// toolPlan is the run's deferred tool declaration plan (T4.1); nil keeps
+	// declaration direct. buildConfig mounts it on every turn's RunConfig.
+	toolPlan *tooldecl.Plan
 
 	// cwd is the directory pigo was launched in, captured once at session
 	// assembly. It is the trust key and the /status environment display.
@@ -223,6 +227,7 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		reg:        run.ToolRegistry(opts.Tools),
 		reminders:  run.WithRunawayGuard(run.TodoReminders(opts.Tools)),
 		schedule:   agenttool.ScheduleFromTools(opts.Tools),
+		toolPlan:   opts.ToolPlan,
 		creds:      creds,
 		cwd:        cwd,
 		trust:      mgr,
@@ -320,6 +325,8 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 		Reminders:  s.reminders,
 		SessionID:  s.header.ID,
 		MemoryRoot: s.memoryRoot,
+		// Deferred tool declaration (T4.1): nil plan = direct, zero overhead.
+		ToolDeclaration: s.toolPlan,
 	}
 	// T3.3: compaction needs the persisted-message cursor to place its marker at
 	// the branch tip (after the last persisted entry), keeping the tree

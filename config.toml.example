@@ -93,3 +93,28 @@ no_skills = false
 # percentage ("50%"), a token count (300000), or a K/M suffix ("300K", "1M").
 # It only lowers the trigger point and is always clamped by the window.
 # max_context = "0.80"
+
+# --- [tools] deferred tool declaration (T4.1) ---
+
+# The [tools] table controls which tools are DECLARED to the model. Three
+# exposure tiers: direct (declared, today's default), deferred (withheld from
+# the declaration, discoverable and claimable via the search_tools tool — it
+# enters the declared face the turn after a claim), and hidden (not declared
+# and not discoverable; connectivity preserved).
+#
+# A deferred declaration slims the prompt's tool-face tokens (they grow with
+# every plugin) and curbs tool misuse on large faces. It only helps models
+# that can handle dynamic tool loading: a model without the capability bit
+# falls back to direct declaration with an info log (we adapt the request to
+# the model instead of waiting for the upstream error). BYOK/custom endpoints
+# not in the capability catalog can force the bit with deferred_capable.
+#
+# [tools]
+# declaration_mode = "direct"   # "direct" (default) | "deferred"
+#                               # "deferred" puts every plugin tool into the
+#                               # deferred tier
+# deferred = []                 # names to defer even in direct mode
+# direct = []                   # explicit per-tool exemption (wins over deferred)
+# hidden = []                   # names to hide entirely (silent tools)
+# deferred_capable = false      # force-enable for BYOK/custom models
+# subagent_defer = false        # task sub-agents inherit the deferred face too

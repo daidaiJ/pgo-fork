@@ -23,6 +23,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/spans"
+	"github.com/smallnest/pigo/internal/tooldecl"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -68,6 +69,12 @@ type Env struct {
 	// model's catalog window (fallback cli.DefaultContextWindow) lowered by this
 	// explicit cap — the config is the highest-priority source for the trigger.
 	MaxContext config.MaxContext
+
+	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil when
+	// declaration is direct (default, capability-gate fallback, or nothing to
+	// defer). Drivers pass it into run.NewConfig so the loop mounts the
+	// declaration machinery; search_tools is already in Tools when non-nil.
+	ToolPlan *tooldecl.Plan
 }
 
 // SetupEnv resolves the provider for model/baseURL, builds the tool set rooted
@@ -81,9 +88,12 @@ type Env struct {
 // dispatched task children authenticate the same way the parent does. policy is
 // the --allowed-tools/--disallowed-tools boundary; it is validated against the
 // fully assembled tool set and then applied, so an unknown tool name is a usage
-// error rather than a silently ineffective boundary. It returns an error rather
+// error rather than a silently ineffective boundary. toolsCfg carries the
+// [tools] declaration settings (T4.1); the capability gate resolves here so an
+// uncapable model falls back to direct declaration before any request is
+// built. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, policy ToolPolicy) (env Env, err error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, policy ToolPolicy) (env Env, err error) {
 	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
 	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
 	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
@@ -121,6 +131,12 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		}
 		memorySpan.End()
 	}
+	// toolPlan is declared up front so the task-tool factory can capture it
+	// (sub-agent declaration is opt-in via [tools] subagent_defer); it is
+	// assigned after the tool policy is applied, which is what bounds the
+	// deferrable set (a policy-deny removes the tool from the face entirely,
+	// so a claimed deferred tool can never widen the boundary — 验收 5).
+	var toolPlan *tooldecl.Plan
 	// Wire the generic task tool (US-002, #454) unless tools are disabled. It
 	// dispatches general-purpose sub-agents that reuse the resolved provider
 	// stream/model. Each spawn gets a fresh child RunConfig whose registry is the
@@ -136,6 +152,21 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		childCreds.SetOverride(resolvedName, apiKey)
 		factory := func() runtime.RunConfig {
 			childTools := ChildToolSet(cwd, policy)
+			// Sub-agent deferred declaration (T4.1, spec §3.4): opt-in via
+			// [tools] subagent_defer. The child's plan is the parent plan
+			// intersected with the child's registry names (capability 只减不增);
+			// search_tools joins the child set only when something defers.
+			var childPlan *tooldecl.Plan
+			if toolPlan != nil && toolsCfg.SubagentDefer {
+				childNames := make(map[string]bool, len(childTools))
+				for _, t := range childTools {
+					childNames[t.Name()] = true
+				}
+				childPlan = toolPlan.Intersect(childNames)
+				if childPlan.HasDeferred() {
+					childTools = append(childTools, &agenttool.SearchToolsTool{})
+				}
+			}
 			return runtime.RunConfig{
 				LoopConfig: runtime.LoopConfig{
 					Model:     model,
@@ -143,7 +174,8 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 					Stream:    provider.StreamFnFromProvider(prov),
 					GetAPIKey: childCreds.GetAPIKey,
 				},
-				Batch: agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: ToolRegistry(childTools)}},
+				Batch:           agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: ToolRegistry(childTools)}},
+				ToolDeclaration: childPlan,
 				// Child runs are unattended, exactly where a runaway loop burns
 				// tokens unobserved, so they carry the sentinel too (T3.2).
 				Reminders: WithRunawayGuard(nil),
@@ -165,12 +197,17 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	}
 	// Discover external plugins (US-016) and append their tools. Plugin loading
 	// is fault-tolerant: a plugin that fails to start is logged and skipped, and
-	// disabling tools (--no-tools) skips plugin discovery entirely.
+	// disabling tools (--no-tools) skips plugin discovery entirely. The plugin
+	// face is tracked separately: it is the default deferred tier when the run
+	// declares deferred (T4.1 — pigo has no MCP client yet, so plugins ARE the
+	// external tool surface the spec's MCP face maps onto; deviation D-1).
 	var mgr *plugin.Manager
+	var pluginTools []agentcore.AgentTool
 	if !noTools {
 		pluginsSpan := spans.Begin("startup.setup_env.plugins")
 		if m, err := plugin.Discover(PluginsDir(), os.Stderr, os.Stderr); err == nil {
-			tools = append(tools, m.Tools()...)
+			pluginTools = m.Tools()
+			tools = append(tools, pluginTools...)
 			mgr = m
 		} else {
 			fmt.Fprintf(os.Stderr, "pigo: plugin discovery failed: %v\n", err)
@@ -197,6 +234,25 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// rather than letting the user believe a boundary is in force.
 	if noTools && !policy.IsZero() {
 		fmt.Fprintln(os.Stderr, "pigo: warning: --no-tools disables all tools; --allowed-tools/--disallowed-tools are ignored (and unvalidated)")
+	}
+	// Deferred tool declaration (T4.1): resolve the capability gate, then build
+	// the plan over the post-policy face. A model without the capability bit
+	// falls back to direct declaration with an info log — "按能力裁剪请求，
+	// 而不是发出去等上游报错" (spec §2.3); BYOK/custom endpoints force the bit
+	// via [tools] deferred_capable. search_tools joins the set AFTER the policy
+	// application on purpose: it is run infrastructure, not a user-admitted
+	// tool, and it must survive a narrow --allowed-tools for the deferred face
+	// to be usable at all. Policy-deny of a concrete tool still holds (the
+	// removed tool never enters the plan → never claimable).
+	if !noTools && (toolsCfg.DeclarationMode == config.ToolDeclarationDeferred || len(toolsCfg.Deferred) > 0) {
+		if deferredCapable(prov, model, toolsCfg.DeferredCapable) {
+			toolPlan = tooldecl.BuildPlan(toolsCfg.DeclarationMode, toolsCfg.Deferred, toolsCfg.Direct, toolsCfg.Hidden, tools, pluginTools)
+			if toolPlan != nil {
+				tools = append(tools, &agenttool.SearchToolsTool{})
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "pigo: info: deferred tool declaration requested but model %q does not advertise the capability; falling back to direct declaration (force with [tools] deferred_capable = true)\n", model)
+		}
 	}
 	// Load skills once (shared between prompt injection and /skill-name
 	// registration). A partial parse error still yields the skills that DID load,
@@ -231,7 +287,26 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		Memory:       memStore,
 		Schedule:     sched,
 		MaxContext:   maxCtx,
+		ToolPlan:     toolPlan,
 	}, nil
+}
+
+// deferredCapable resolves the capability gate for the deferred tool
+// declaration protocol (T4.1, spec §2.3): the model's catalog entry decides
+// (SupportsToolSearch), with the [tools] deferred_capable config as the BYOK /
+// custom-endpoint force-on. An unknown model id is NOT capable — the default
+// false is the safe failure (kosong UNKNOWN semantics: uncatalogued models
+// fall back to direct declaration).
+func deferredCapable(prov provider.Provider, model string, force bool) bool {
+	if force {
+		return true
+	}
+	for _, m := range prov.Models() {
+		if m.ID == model {
+			return m.SupportsToolSearch
+		}
+	}
+	return false
 }
 
 // hasReadTool reports whether the read tool is present in the tool set. Skills
@@ -645,7 +720,9 @@ func Trusted(cwd string) bool {
 // stream, the dynamic API-key resolver, and the tool registry. It is the single
 // definition of "how a run is wired", so the REPL (streamRun) and the headless
 // driver cannot drift apart.
-func NewConfig(model, providerName string, thinking agentcore.ThinkingLevel, prov provider.Provider, creds *provider.CredentialStore, reg *agenttool.ToolRegistry, reminders *runtime.ReminderRegistry, sched *agenttool.Schedule) runtime.RunConfig {
+// toolPlan, when non-nil, mounts the deferred tool declaration machinery in the
+// loop (T4.1) — the plan from Env.ToolPlan; nil keeps declaration direct.
+func NewConfig(model, providerName string, thinking agentcore.ThinkingLevel, prov provider.Provider, creds *provider.CredentialStore, reg *agenttool.ToolRegistry, reminders *runtime.ReminderRegistry, sched *agenttool.Schedule, toolPlan *tooldecl.Plan) runtime.RunConfig {
 	cfg := runtime.RunConfig{
 		LoopConfig: runtime.LoopConfig{
 			Model:         model,
@@ -657,7 +734,8 @@ func NewConfig(model, providerName string, thinking agentcore.ThinkingLevel, pro
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: reg},
 		},
-		Reminders: WithRunawayGuard(reminders),
+		ToolDeclaration: toolPlan,
+		Reminders:       WithRunawayGuard(reminders),
 	}
 	// Due session-local reminders ride the follow-up seam (issue #565): when the
 	// run is about to settle, the loop consults the scheduler and queues each due

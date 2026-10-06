@@ -72,6 +72,53 @@ type FileConfig struct {
 	// (flag > file > default "off") lives in cmd/pigo's applyFileConfig.
 	// shellguard is an opt-in advanced feature: the default is off.
 	Shellguard ShellguardConfig `toml:"shellguard"`
+	// Tools is the [tools] TOML table for the deferred tool declaration (T4.1).
+	// Pure config plumbing; plan assembly + the capability gate live in
+	// internal/cli/run (SetupEnv).
+	Tools ToolsConfig `toml:"tools"`
+}
+
+// ToolDeclarationMode values for ToolsConfig.DeclarationMode.
+const (
+	// ToolDeclarationDirect is the default: the full face is declared.
+	ToolDeclarationDirect = "direct"
+	// ToolDeclarationDeferred defers the external tool face; the model claims
+	// tools via search_tools (T4.1).
+	ToolDeclarationDeferred = "deferred"
+)
+
+// ToolsConfig is the [tools] TOML table for deferred tool declaration (T4.1).
+//
+//	declaration_mode "deferred" puts every external tool (plugin tools today,
+//	the MCP face later) into the deferred tier: not declared to the model, but
+//	discoverable and claimable via search_tools. The default "direct" keeps
+//	today's full-declaration behavior; per-tool opt-in stays possible via the
+//	deferred list even in direct mode.
+//
+// Lists match tool names case-insensitively; unknown names are ignored
+// (admission stays ValidateToolPolicy's job — a deferred entry can never
+// widen a tool-policy boundary).
+type ToolsConfig struct {
+	// DeclarationMode is "direct" (default) or "deferred".
+	DeclarationMode string `toml:"declaration_mode"`
+	// Deferred names tools that start in the deferred tier (in addition to
+	// the whole external face under declaration_mode="deferred").
+	Deferred []string `toml:"deferred"`
+	// Direct exempts named tools from deferral (explicit per-tool override;
+	// wins over Deferred).
+	Direct []string `toml:"direct"`
+	// Hidden hides named tools entirely: not declared, not discoverable
+	// (connectivity preserved, e.g. a plugin whose tools should stay silent).
+	Hidden []string `toml:"hidden"`
+	// DeferredCapable force-enables the model capability bit for the deferred
+	// protocol (BYOK/custom endpoints not in the capability catalog). Without
+	// it (or a catalog bit) a deferred-mode run falls back to direct
+	// declaration with an info log (spec §2.3: 按能力裁剪请求).
+	DeferredCapable bool `toml:"deferred_capable"`
+	// SubagentDefer defers the task sub-agent's tool face the same way: the
+	// child's registry keeps its policy-filtered direct face and records the
+	// rest of the parent plan as deferred (能力只减不增, spec §3.4).
+	SubagentDefer bool `toml:"subagent_defer"`
 }
 
 // ShellguardConfig is the [shellguard] TOML table. Mode is one of "off",

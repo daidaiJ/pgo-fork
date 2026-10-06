@@ -21,6 +21,10 @@
 //     never enter the view. They apply after microcompact (spec §7.2: the
 //     automatic regenerable-output pass first, the semantic layer above it).
 //
+//  3b. Tool claims (T4.1): search_tools claim records (ToolClaimMessage tree
+//     entries) drop from the view — the claim rebuilds the declared face at the
+//     tools parameter, it is not itself a request message.
+//
 //  4. Half-pair repair (grok ④): a trailing assistant message with tool calls
 //     lacking results gets a synthetic error result per unanswered call, so a
 //     mid-run abort never produces a provider 400 for unpaired tool_use.
@@ -98,8 +102,38 @@ func ProjectView(msgs agentcore.MessageList) agentcore.MessageList {
 func ProjectViewMapped(msgs agentcore.MessageList) (agentcore.MessageList, []int) {
 	view, rawOf := projectCompactionMarkerMapped(msgs)
 	view, rawOf = projectMicrocompactMapped(view, rawOf)
+	view, rawOf = projectToolClaimsMapped(view, rawOf)
 	view, rawOf = projectContextEditsMapped(view, rawOf)
 	return repairDanglingToolCallsMapped(view, rawOf)
+}
+
+// projectToolClaimsMapped drops ToolClaimMessage entries from the view (T4.1):
+// a search_tools claim record is history (it persists and replays) but never a
+// request message — the loop rebuilds the declared face from the declaration
+// state instead. Dropping here keeps the claim record from ever reaching a
+// provider, exactly like the microcompact/context-edit metadata markers.
+func projectToolClaimsMapped(msgs agentcore.MessageList, rawOf []int) (agentcore.MessageList, []int) {
+	has := false
+	for _, m := range msgs {
+		if _, ok := m.(agentcore.ToolClaimMessage); ok {
+			has = true
+			break
+		}
+	}
+	if !has {
+		return msgs, rawOf
+	}
+	out := make(agentcore.MessageList, 0, len(msgs))
+	idx := concreteIdx(rawOf, len(msgs))
+	outIdx := make([]int, 0, len(msgs))
+	for i, m := range msgs {
+		if _, ok := m.(agentcore.ToolClaimMessage); ok {
+			continue // projection metadata, never a request message
+		}
+		out = append(out, m)
+		outIdx = append(outIdx, idx[i])
+	}
+	return out, outIdx
 }
 
 // identityIdx reports whether rawOf is the nil-encoded identity map.

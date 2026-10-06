@@ -27,6 +27,7 @@ import (
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
+	"github.com/smallnest/pigo/internal/tooldecl"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -69,6 +70,10 @@ type Options struct {
 	// Plugins holds the loaded plugin manager so the REPL can deliver lifecycle
 	// events to subscribed plugins (US-017, #133). It may be nil (no plugins).
 	Plugins *plugin.Manager
+
+	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil for
+	// direct declaration. Passed through from run.SetupEnv's Env.ToolPlan.
+	ToolPlan *tooldecl.Plan
 
 	// ConfigPrompts holds prompt-template paths from the config.toml `prompts`
 	// array (settings tier); each is a file or dir loaded non-recursively.
@@ -271,6 +276,7 @@ func Run(opts Options) error {
 		goal:       agenttool.NewGoalState(),
 		telemetry:  cli.NewTelemetryHolder(),
 		shellguard: opts.Shellguard,
+		toolPlan:   opts.ToolPlan,
 	})
 }
 

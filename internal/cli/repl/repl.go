@@ -45,6 +45,7 @@ import (
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/spans"
+	"github.com/smallnest/pigo/internal/tooldecl"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -65,6 +66,10 @@ type replDeps struct {
 	// when the schedule_* tools are not wired in (e.g. --no-tools); when set,
 	// streamRun wires it so due reminders are delivered as follow-up user turns.
 	schedule *agenttool.Schedule
+
+	// toolPlan is the run's deferred tool declaration plan (T4.1); nil keeps
+	// declaration direct. streamRun mounts it on every turn's RunConfig.
+	toolPlan *tooldecl.Plan
 
 	// uiInit closes the startup.ui_init span at the first prompt print (T1.1):
 	// repl.Run seeds it, runREPL ends it once the editor is up and the loop is
@@ -624,6 +629,8 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 		Reminders:  deps.reminders,
 		SessionID:  deps.header.ID,
 		MemoryRoot: deps.memoryRoot,
+		// Deferred tool declaration (T4.1): nil plan = direct, zero overhead.
+		ToolDeclaration: deps.toolPlan,
 	}
 	// T3.3: compaction needs the persisted-message cursor to place its marker at
 	// the branch tip (after the last persisted entry), keeping the tree

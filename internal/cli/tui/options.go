@@ -7,6 +7,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/shellguard"
+	"github.com/smallnest/pigo/internal/tooldecl"
 )
 
 // Options carries the resolved run configuration into Run. It deliberately
@@ -53,6 +54,10 @@ type Options struct {
 	// Plugins holds the loaded plugin manager so the TUI can deliver lifecycle
 	// events to subscribed plugins (US-017, #133). It may be nil (no plugins).
 	Plugins *plugin.Manager
+
+	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil for
+	// direct declaration. Passed through from run.SetupEnv's Env.ToolPlan.
+	ToolPlan *tooldecl.Plan
 
 	// ConfigPrompts holds prompt-template paths from the config.toml `prompts`
 	// array (settings tier); each is a file or dir loaded non-recursively.

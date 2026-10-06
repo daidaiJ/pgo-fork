@@ -29,6 +29,16 @@ import (
 // context. Override per-executor via ToolExecutorConfig.MaxResultBytes.
 const toolResultMaxBytes = 100_000
 
+// ToolGate is the executor-side declaration gate (T4.1): consulted before the
+// registry lookup so a call against an unclaimed deferred tool gets the
+// guidance text instead of a bare "unknown tool", and a hidden tool looks
+// exactly unknown. tooldecl.State implements it.
+type ToolGate interface {
+	// CheckTool returns (guidance, true) when the call must be blocked, or
+	// ("", false) to let the normal registry path proceed.
+	CheckTool(name string) (guidance string, blocked bool)
+}
+
 // ToolExecutorConfig holds the registry and the optional per-phase hooks. Every
 // hook is optional (nil = default behavior).
 type ToolExecutorConfig struct {
@@ -36,6 +46,12 @@ type ToolExecutorConfig struct {
 	PrepareArguments agentcore.PrepareArgumentsFunc
 	BeforeToolCall   agentcore.BeforeToolCallFunc
 	AfterToolCall    agentcore.AfterToolCallFunc
+	// ToolGate, when non-nil, gates dispatch on the declaration state (T4.1):
+	// an unclaimed deferred tool is blocked with a search_tools guidance, a
+	// hidden tool is reported as unknown. The declared face shapes what the
+	// model SEES; the gate shapes what it can REACH — together they make
+	// deferred declaration structural rather than advisory.
+	ToolGate ToolGate
 	// MaxResultBytes overrides the executor-layer per-result text budget. Zero
 	// (the default) uses toolResultMaxBytes; a negative value disables the
 	// budget entirely.
@@ -79,6 +95,18 @@ func prepareToolCall(ctx context.Context, cfg ToolExecutorConfig, call agentcore
 	if ctx.Err() != nil {
 		r := errorResult(fmt.Sprintf("tool %q aborted before execution", call.Name))
 		return nil, nil, &r, true
+	}
+
+	// Declaration gate (T4.1) before the registry lookup: an unclaimed
+	// deferred tool gets the search_tools guidance (kimi's intercept copy),
+	// a hidden tool looks exactly unknown. The registry still contains the
+	// tool — registration is never pruned — so without the gate a model could
+	// reach what it was never shown.
+	if cfg.ToolGate != nil {
+		if guidance, blocked := cfg.ToolGate.CheckTool(call.Name); blocked {
+			r := errorResult(guidance)
+			return nil, nil, &r, true
+		}
 	}
 
 	// Registry lookup.

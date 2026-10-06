@@ -24,6 +24,12 @@ const (
 	// is persisted as a first-class tree entry — the edit is itself history —
 	// but never rendered into a request; the projection applies it.
 	RoleContextEdit = "contextEdit"
+	// RoleToolClaim marks one search_tools claim record (T4.1 deferred tool
+	// declaration): the tool names the model claimed, persisted as a first-class
+	// tree entry so resume restores the declared face without a re-search
+	// (spec deferred-tool-exposure.md §2.4). Projection metadata like
+	// microcompact: it is history, but never rendered into a request.
+	RoleToolClaim = "toolClaim"
 )
 
 // Message is the sealed interface implemented by the three message roles.
@@ -238,6 +244,25 @@ type ContextEditMessage struct {
 func (ContextEditMessage) isMessage()     {}
 func (m ContextEditMessage) Role() string { return RoleContextEdit }
 
+// ToolClaimMessage is the durable record of one search_tools claim (T4.1
+// deferred tool declaration). Like MicrocompactMessage/ContextEditMessage it is
+// projection metadata — appended to the live list (and thus persisted as a tree
+// entry via the next PersistTurn, so a claim is itself history: replay restores
+// it, forked branches inherit it) — but it never renders into a request: the
+// compaction projection drops it and the loop rebuilds the declared face from
+// the declaration state instead. The claim record is what makes resume atomic
+// (spec §2.4): replaying these entries rebuilds claims and face in one batch,
+// so a claimed tool is directly callable after resume without a re-search.
+type ToolClaimMessage struct {
+	RoleField string   `json:"role"`
+	// Tools are the registry names claimed by this record, in claim order.
+	Tools     []string `json:"tools"`
+	Timestamp int64    `json:"timestamp"`
+}
+
+func (ToolClaimMessage) isMessage()     {}
+func (m ToolClaimMessage) Role() string { return RoleToolClaim }
+
 // StopReason values, matching pi.
 const (
 	StopReasonEndTurn = "end_turn"
@@ -312,6 +337,12 @@ func decodeMessage(raw json.RawMessage) (Message, error) {
 		return m, nil
 	case RoleContextEdit:
 		var m ContextEditMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		return m, nil
+	case RoleToolClaim:
+		var m ToolClaimMessage
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, err
 		}

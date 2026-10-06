@@ -60,7 +60,7 @@ func New(opts ...Option) (*Session, error) {
 	env, err := run.SetupEnv(
 		c.model, c.baseURL, c.protocol, c.provider, c.apiKey,
 		c.noTools, !c.skills, c.systemPrompt, c.appendSystemPrompt, c.memory,
-		cliconfig.MaxContext{}, policy,
+		cliconfig.MaxContext{}, cliconfig.ToolsConfig{}, policy,
 	)
 	if err != nil {
 		return nil, err
@@ -89,6 +89,7 @@ func New(opts ...Option) (*Session, error) {
 	runCfg := run.NewConfig(
 		c.model, env.ProviderName, thinking, env.Provider, creds,
 		run.ToolRegistry(env.Tools), run.TodoReminders(env.Tools), env.Schedule,
+		env.ToolPlan,
 	)
 
 	return &Session{

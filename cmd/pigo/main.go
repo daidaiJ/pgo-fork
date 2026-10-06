@@ -180,6 +180,10 @@ type cliOptions struct {
 	// but can never widen the boundary.
 	allowedTools    []string
 	disallowedTools []string
+	// toolsCfg is the [tools] table (T4.1 deferred tool declaration). It has no
+	// CLI flags, so applyFileConfig overlays it unconditionally and SetupEnv
+	// resolves the plan (capability gate + deferrable set) from it.
+	toolsCfg config.ToolsConfig
 }
 
 func main() {
@@ -427,6 +431,10 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	// are resolved (with defaults) and overlaid unconditionally — an absent set
 	// of tables yields the default-safe MemorySettings.
 	opts.memory = cfg.ResolveMemorySettings()
+	// The [tools] table (T4.1 deferred tool declaration) also has no CLI flags;
+	// overlay it unconditionally. Plan resolution (capability gate + deferrable
+	// set) lives in run.SetupEnv.
+	opts.toolsCfg = cfg.Tools
 	// The [dream] table also has no CLI flags; normalize it (defaults applied when
 	// the table is absent) so the interactive startup trigger has a resolved
 	// Config. NewConfig treats a nil enabled as true, so dream is on by default.
@@ -510,7 +518,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			return 2
 		}
 		modeDispatch.End()
-		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
@@ -548,6 +556,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				Approve:           opts.approve,
 				Shellguard:        sgMode,
 				Skills:            env.Skills,
+				ToolPlan:          env.ToolPlan,
 				Plugins:           env.Plugins,
 				ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
@@ -578,6 +587,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			Shellguard:        sgMode,
 			Skills:            env.Skills,
 			Plugins:           env.Plugins,
+			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
 			ConfigPrompts:     opts.configPrompts,
 			CliPrompts:        opts.promptTemplates,
@@ -600,7 +610,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		return 2
 	}
 
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
@@ -665,7 +675,7 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		fmt.Fprintf(errOut, "pigo: --github-review requires a webhook secret in $%s\n", opts.githubWebhookSecretEnv)
 		return 2
 	}
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)

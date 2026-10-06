@@ -40,6 +40,13 @@ type Model struct {
 	// When false, an image block in the request is reported as a hard error
 	// rather than silently dropped, so the user learns the model cannot see it.
 	SupportsImages bool `json:"supportsImages,omitempty"`
+	// SupportsToolSearch reports whether the model can handle the deferred
+	// tool-declaration protocol (T4.1): it can call search_tools to claim tools
+	// that were withheld from its declared face. Default false = the
+	// capability gate falls a deferred-mode run back to direct declaration
+	// ("按能力裁剪请求，而不是发出去等上游报错", spec deferred-tool-exposure.md
+	// §2.3); BYOK/custom models force it on via [tools] deferred_capable.
+	SupportsToolSearch bool `json:"supportsToolSearch,omitempty"`
 	// ThinkingLevels maps unified thinking levels to this model's wire values.
 	// nil when the model does not support thinking (decision #10).
 	ThinkingLevels agentcore.ThinkingLevelMap `json:"-"`

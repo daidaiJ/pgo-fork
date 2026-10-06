@@ -95,7 +95,7 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	// An explicit --api-key overrides env/config for the resolved provider.
 	creds := provider.NewCredentialStore(nil)
 	creds.SetOverride(env.ProviderName, p.APIKey)
-	runCfg := run.NewConfig(p.Model, env.ProviderName, thinking, env.Provider, creds, run.ToolRegistry(env.Tools), run.TodoReminders(env.Tools), env.Schedule)
+	runCfg := run.NewConfig(p.Model, env.ProviderName, thinking, env.Provider, creds, run.ToolRegistry(env.Tools), run.TodoReminders(env.Tools), env.Schedule, env.ToolPlan)
 	// Compaction parity with the interactive drivers (T3.3 closeout finding):
 	// run.NewConfig leaves ContextWindow and Compaction zero, and the REPL/TUI
 	// seed both on their live config themselves — headless print did neither,

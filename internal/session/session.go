@@ -310,6 +310,8 @@ func entrySummary(e Entry) string {
 		return "tool result: " + treeOneLine(agentcore.ContentToText(m.Content))
 	case agentcore.ContextEditMessage:
 		return fmt.Sprintf("context edit: %d edit(s)", len(m.Edits))
+	case agentcore.ToolClaimMessage:
+		return fmt.Sprintf("tool claim: %s", strings.Join(m.Tools, ", "))
 	case agentcore.CompactionMessage:
 		return "compaction: " + treeOneLine(m.Summary)
 	default:

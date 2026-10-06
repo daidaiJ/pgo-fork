@@ -5,21 +5,20 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T4.4 全清（2026-10-06，本会话）**——前置切片（`264ac17`
-  窗口感知 + max_context 阈值）之上，余项当日落地（`81f2f17`）：①触发线
-  通用公式 `internal/compaction/trigger.go` `CompactionLine`（per-model
-  override 表 kimi 0.85/minimax 0.90 优先，否则 minimax A 线
-  `w−max(reserve, perTurn+margin)` + B 线三重 min 前置防线；perTurn=0 严格
-  退化 pi 基线）；②动态 maxTokens = `min(cap, max(4096, w−est−margin−thinking))`
-  逐请求 stamp（共享 Extra 不变异）+ openai/resp_api hint 通路；③五驱动
-  `LiveConfig.MaxOutputTokens` 接线 + `/model` 重解析。偏差四条登记 =
-  **context-compaction-comparison.md §6.2**（kimi 自愈挂供应商韧性 S 族、
-  preset 输出上限数据留 0 → stamp 生产默认不激活）。
-  **下一步待用户拍板**：进第 4 期主件 T4.1（延迟工具声明，5–6d）或先收
-  待议段小件（T3.3.1 管线抽象 0.5–1d 等）。SDK 库压缩装配、其余待拍板项
-  （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
-  dynamic-workflow、code mode、TUI 风格对齐 grok——tui-grok-style.md
-  14 条 S 需求待排期）见 implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**T4.1 延迟工具声明实作落地（2026-10-06）**——
+  三档 exposure + `search_tools` 按名认领（下一轮进声明面）+ ephemeral
+  公告（字节稳定）+ 能力门回落 + resume 原子性 + 子代理 defer。内核 =
+  `internal/tooldecl` 叶子包 + `agentcore.ToolClaimMessage`（role
+  `toolClaim`，随树持久）+ 投影第五阶段 + executor ToolGate；
+  配置 = `[tools]` 表 + `provider.Model.SupportsToolSearch`；五驱动接线。
+  偏差 D-1~D-10 登记规格 §7（pigo 无 MCP，外部面 = plugin 工具族）。
+  基线 39 包 0 FAIL。**期验收 1（token A/B）待低成本实测**。
+  此前 T3.3.1（`1768d08`）、T4.4（`264ac17`+`81f2f17`）均清。
+  **下一步待用户拍板**：T4.2 问卷（2–3d）/ T4.3 BTW（1–2d）。
+  其余待拍板项（pi-durable 切片 1、/ui 面板、skill-as-tool、
+  供应商韧性 S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——
+  tui-grok-style.md 14 条 S 需求待排期）见 implementation-plan 待议段；
+  其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)

@@ -30,6 +30,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/compaction"
 	"github.com/smallnest/pigo/internal/provider"
+	"github.com/smallnest/pigo/internal/tooldecl"
 )
 
 // nowMillis returns the current Unix time in milliseconds, the timestamp unit
@@ -151,6 +152,15 @@ type RunConfig struct {
 	// (side runs, tests) is treated as 0: the marker always lands in the
 	// unpersisted tail, which is conservative and still correct.
 	PersistedCount func() int
+
+	// ToolDeclaration, when non-nil with at least one deferred tool, activates
+	// the deferred tool declaration machinery (T4.1): the declared face is
+	// filtered per the plan, search_tools claims enter on the next turn, and
+	// the announcement rides the request as an ephemeral system-reminder.
+	// nil (or a plan with no deferred tools) = direct declaration, zero
+	// overhead — the capability gate resolves at assembly time, so a run that
+	// reaches the loop with a plan already passed it.
+	ToolDeclaration *tooldecl.Plan
 }
 
 // LoopEventStream is the stream returned by the loop entry points: it carries
@@ -222,6 +232,52 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 			writeCompactionCheckpoint(ctx, view, res, &cfg)
 		},
 	})
+	// Deferred tool declaration (T4.1): when a plan is wired, restore claims
+	// from persisted history and rebuild the declared face in the same batch —
+	// the resume-atomicity contract (spec deferred-tool-exposure.md §2.4):
+	// replaying the ToolClaimMessage entries and mounting the face happen
+	// together, so a claimed tool is directly callable after resume with no
+	// observable "claims exist, tools absent" intermediate. The executor gate
+	// makes the dispatch side structural (an unclaimed deferred call gets the
+	// search_tools guidance instead of executing; a hidden call looks unknown),
+	// and every request re-checks the claim revision so a claim made this turn
+	// enters the face on the next one ("下一轮进声明面").
+	var declState *tooldecl.State
+	declRev := int64(0)
+	declAll := agentCtx.Tools
+	if cfg.ToolDeclaration != nil && cfg.ToolDeclaration.Len() > 0 {
+		declState = tooldecl.NewState(*cfg.ToolDeclaration)
+		for _, m := range agentCtx.Messages {
+			if c, ok := m.(agentcore.ToolClaimMessage); ok {
+				declState.Restore(c.Tools)
+			}
+		}
+		declRev = declState.Revision()
+		agentCtx.Tools = tooldecl.DeclaredTools(declAll, declState)
+		cfg.Batch.ToolGate = declState
+		// Bind the state into the search_tools instance(s) so the claim path
+		// can reach the shared state (the tool is a direct face member — it
+		// must always stay declared for the model to claim anything). The
+		// registry holds its own instance from the executor's lookups, so bind
+		// both surfaces.
+		bindSearchTools := func(tools []agentcore.AgentTool) {
+			for _, t := range tools {
+				if st, ok := t.(*agenttool.SearchToolsTool); ok {
+					st.Bind(declState)
+				}
+			}
+		}
+		bindSearchTools(agentCtx.Tools)
+		if cfg.Batch.Registry != nil {
+			bindSearchTools(cfg.Batch.Registry.List())
+		}
+	}
+	refreshDeclaredFace := func() {
+		if declState != nil && declState.Revision() != declRev {
+			declRev = declState.Revision()
+			agentCtx.Tools = tooldecl.DeclaredTools(declAll, declState)
+		}
+	}
 	// Wire per-turn system-reminder injection (US-002) onto the TransformContext
 	// seam. Reminders are appended to the request-shaped copy only, so they stay
 	// ephemeral: never written back to agentCtx.Messages, never persisted, never
@@ -240,6 +296,18 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				RoleField: agentcore.RoleUser,
 				Content:   agentcore.ContentList{agentcore.NewTextContent(note)},
 			})
+		}
+		// Deferred-tool announcement (T4.1): the unclaimed deferred set rides
+		// the request as an ephemeral system-reminder. The body is a pure
+		// function of the unclaimed set, so a turn with no claims produces a
+		// byte-identical announcement — the cache-friendly contract (验收 6).
+		if declState != nil {
+			if ann := declState.Announcement(); ann != "" {
+				msgs = append(msgs, agentcore.UserMessage{
+					RoleField: agentcore.RoleUser,
+					Content:   agentcore.ContentList{agentcore.NewTextContent(agentcore.WrapSystemReminder(ann))},
+				})
+			}
 		}
 		return msgs
 	}
@@ -288,6 +356,9 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 
 	for { // outer loop: pending / follow-up messages
 		for { // inner loop: turns until no tool calls
+			// A search_tools claim from the previous turn swaps the declared
+			// face before this request (T4.1: "命中者下一轮进声明面").
+			refreshDeclaredFace()
 			// RequestView (T3.3.1) runs just before the request: one
 			// microcompaction pass — the double gate (token pressure on the
 			// derived line, or the 60-minute cache-cold idle window) evicts old
