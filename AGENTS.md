@@ -22,8 +22,17 @@
   此前 T4.3（`4b84390`，BTW peek 会话 + uniqueID 根治既有 flake）、
   T4.1（`58aedec`）、T3.3.1（`1768d08`）、T4.4 均清——**第 4 期
   T4.1/T4.2/T4.3/T4.4 实作面全部 ✅**。
+  **第 5/6 期重排（2026-10-06，用户要求按重要性×收益拆分）**：依据 =
+  [wiki/port/phase5-split-assessment.md](wiki/port/phase5-split-assessment.md)
+  （双轴 AX/CX 评分矩阵 + 四条现状纠偏 + 降级台账）。新第 5 期 =
+  **agent 自主性与决策质量**（T5.1 子代理信封 / T5.2 副作用契约+权限规则层
+  打包 / T5.3 内置 skill 双件 / T5.4 多模型路由评估 / T5.5 供应商韧性 /
+  T5.6 截断挽救）；新第 6 期 = **生态耐久**（T6.1 会话租约 / T6.2 MCP
+  先评估（pigo 无 client，原 2d 估漏地基）/ T6.3 usage 缩 MVP / T6.4 pstack
+  只盘点 / T6.5 候选池）。
   **下一步待用户拍板**：第 4 期收口验收（T4.1 期验收 1 defer 档 token A/B
-  仍未做，需 API key 可随时插入）；第 5 期排期；其余待拍板项
+  仍未做，需 API key 可随时插入）；T5.5/T5.6 是否进第 5 期、T6.2 MCP 是否
+  补 client、T6.5 候选池排序；其余待拍板项
   （pi-durable 切片 1、/ui 面板、skill-as-tool、
   供应商韧性 S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——
   tui-grok-style.md 14 条 S 需求待排期）见 implementation-plan 待议段；
