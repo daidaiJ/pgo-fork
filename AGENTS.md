@@ -12,8 +12,13 @@
   替换漂移的 marker 锚公式）→ `a4e4c82`（S3 `context_edit` 工具：call-id/
   seq 双句柄，loop 注入 AgentContext 零驱动接线）→ `10525c7`（docs）。
   全量 38 包 exit=0。规格偏差 D-1/2/3/5/6 登记 =
-  **wiki/port/canonical-context-edit.md §8**。下一步 = 第 3 期收口评估
-  （期验收 = 真实会话 token 曲线留档 + rewind 全闭环回归）；T3.1 遗留
+  **wiki/port/canonical-context-edit.md §8**。
+  **下一步 = T3.5（2026-10-06 用户拍板，下个会话优先）**：①readCache
+  最小基座 + edit 新鲜度守卫（readFileState + edit 前校验 + 微压缩
+  evictedPaths 联动失效，独立小件）+ 随件②闲置触发时间戳实测验证、
+  ③reminder 重注入升级内容快照档（micro-compaction D-3/D-5 收口）；
+  之后第 3 期收口评估（期验收 = 真实会话 token 曲线留档 + rewind 全闭环
+  回归）。T3.1 遗留
   flake（TestREPLExportImportRoundTrip 整包偶发）未动。待拍板项
   （**T3.3.1 压缩策略管线抽象——用户点名，趁热切片 0.5–1d**、pi-durable
   切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
