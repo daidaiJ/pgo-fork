@@ -66,6 +66,14 @@ func newTestDeps(t *testing.T, p provider.Provider) (replDeps, *session.Store) {
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
+	return newTestDepsOnStore(t, p, store, session.NewID(time.Now().UTC())), store
+}
+
+// newTestDepsOnStore builds the same replDeps on a caller-supplied store and
+// session id, so a test can drive a second "process" against the same session
+// files — which is how the /btw peek reopen is exercised (T4.3).
+func newTestDepsOnStore(t *testing.T, p provider.Provider, store *session.Store, id string) replDeps {
+	t.Helper()
 	live := &cli.LiveConfig{Model: "faux", ProviderName: "faux", Provider: p}
 	reg := runtime.NewSlashRegistry()
 	reg.AddBuiltin(runtime.SlashCommand{
@@ -78,14 +86,14 @@ func newTestDeps(t *testing.T, p provider.Provider) (replDeps, *session.Store) {
 	})
 	deps := replDeps{
 		store:    store,
-		header:   session.SessionHeader{ID: session.NewID(time.Now().UTC()), Model: "faux", Provider: "faux"},
+		header:   session.SessionHeader{ID: id, Model: "faux", Provider: "faux"},
 		agentCtx: &agentcore.AgentContext{},
 		live:     live,
 		reg:      agenttool.NewToolRegistry(),
 		slash:    reg,
 		creds:    provider.NewCredentialStore(nil),
 	}
-	return deps, store
+	return deps
 }
 
 // TestREPLExitCommand verifies /exit ends the loop cleanly with no error and no
@@ -547,6 +555,7 @@ func TestREPLExportImportRoundTrip(t *testing.T) {
 			foundNew = true
 		}
 	}
+
 	if !foundNew {
 		t.Errorf("expected an imported session with ParentSession=%q, headers=%+v", origID, headers)
 	}

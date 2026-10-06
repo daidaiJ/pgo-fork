@@ -113,6 +113,10 @@ type runSession struct {
 	// run /btw today, so they stay nil/0.
 	lastBtw     *agentcore.AgentContext
 	lastBtwBase int
+	// peek is the persisted /btw side-thread session (T4.3). The TUI does not
+	// run /btw today, so it stays nil; the field exists for Host parity with
+	// the REPL.
+	peek *session.PeekSession
 
 	// remote owns the running remote-control server+bridge (remotecontrol.go),
 	// nil when /remote-control is off. buildConfig reads it to install the remote

@@ -80,8 +80,11 @@ func (s *Store) Import(inPath string, now time.Time) (SessionHeader, []Entry, er
 	if err != nil {
 		return SessionHeader{}, nil, err
 	}
+	// uniqueID guards the microsecond collision that would silently overwrite
+	// the source session (and it advances now along with the id).
+	newID, now := s.uniqueID(now, "", srcHeader.ID)
 	newHeader := SessionHeader{
-		ID:            NewID(now),
+		ID:            newID,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         srcHeader.Model,

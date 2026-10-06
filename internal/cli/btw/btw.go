@@ -11,10 +11,18 @@
 //
 // Isolation contract (the whole point of the feature): a side thread runs on a
 // COPY of the main conversation as background, and its question/answer are only
-// ever appended to that copy — never to host.AgentCtx().Messages. Nothing is
-// persisted: no store.Save, no change to the persisted cursor / current leaf /
-// header timestamp. Closing the side thread, switching sessions or restarting
-// pigo discards everything.
+// ever appended to that copy — never to host.AgentCtx().Messages. The MAIN
+// session is never written: no store.Save against it, no change to the persisted
+// cursor / current leaf / header timestamp. Switching sessions discards the
+// in-process side thread.
+//
+// Persistence (T4.3): since a side thread is worth keeping, its own Q&A is
+// appended to a peek session — a separate peek_* session file that Store.List()
+// hides, so it is durable and reopenable after a restart without ever showing up
+// in --list-sessions / --continue / /dream / the TUI picker. Only the side Q&A
+// lands there, never a copy of the main background, and a bare "/btw" in a later
+// process recovers the thread from that file. When no store is available the
+// pre-T4.3 behavior (memory-only, discarded on exit) still applies.
 //
 // Scope: /btw is intercepted in the REPL loop and runs a side question against a
 // copy of the main context (#279); it supports multi-turn follow-ups in the same
@@ -29,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
@@ -39,6 +48,7 @@ import (
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -76,34 +86,92 @@ func RunBtw(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, ed
 	// edit takes effect next time with no restart.
 	settings := ResolveBtwSettings(out, host)
 	if question == "" {
-		// Bare /btw: reopen the most recent side thread if one exists this process,
-		// replaying its history; otherwise guide the user to supply a question.
-		if host.LastBtw() == nil {
+		// Bare /btw: reopen the most recent side thread — from this process if it
+		// is still live, otherwise from its peek session file on disk (T4.3) —
+		// replaying its history; when there is none, guide the user to ask one.
+		side, peek, ok := reopenSideThread(out, host)
+		if !ok {
 			fmt.Fprintln(out, "usage: /btw <question> — ask a quick side question without touching the main conversation")
 			return
 		}
 		printBtwHeader(out)
-		replaySideHistory(out, host.LastBtw(), host.LastBtwBase())
+		replaySideHistory(out, side, host.LastBtwBase())
 		if editor != nil {
-			btwFollowUpLoop(setCancel, out, host, editor, host.LastBtw(), settings)
+			btwFollowUpLoop(setCancel, out, host, editor, side, settings, peek)
 		}
 		return
 	}
 
 	side := NewSideContext(host.AgentCtx())
+	// The side thread's durable home (nil when there is no store: memory-only).
+	peek := openPeekFor(out, host)
 	// Remember this thread so a later bare /btw can reopen it. LastBtwBase marks
 	// where the copied background ends and the side Q&A begins, so a reopen only
 	// replays the side turns, not the whole main transcript.
 	host.SetLastBtw(side)
 	host.SetLastBtwBase(len(side.Messages))
+	host.SetPeek(peek)
 	printBtwHeader(out)
-	AskSide(setCancel, out, host, side, settings, question)
+	askSide(setCancel, out, host, side, settings, question, peek)
 	// Follow-up loop: keep answering in the same ephemeral thread until the user
 	// exits. A nil editor (direct test callers that only ask one question) skips
 	// the loop entirely, so a single /btw asks exactly one question and returns.
 	if editor != nil {
-		btwFollowUpLoop(setCancel, out, host, editor, side, settings)
+		btwFollowUpLoop(setCancel, out, host, editor, side, settings, peek)
 	}
+}
+
+// openPeekFor creates the peek session that will hold this side thread's own
+// Q&A. It returns nil (memory-only side thread, the pre-T4.3 behavior) when the
+// driver has no store or the session has no id yet, and when creating the peek
+// file fails — persistence is best-effort and must never break the question.
+func openPeekFor(out io.Writer, host cli.Host) *session.PeekSession {
+	store := host.Store()
+	if store == nil || host.Header().ID == "" {
+		return nil
+	}
+	peek, err := session.OpenPeek(store, host.Header(), time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(out, "pigo: side thread will not be saved: %v\n", err)
+		return nil
+	}
+	return peek
+}
+
+// reopenSideThread resolves a bare "/btw": the live in-process side thread when
+// there is one, else the most recent peek session branched from the current
+// session, whose persisted Q&A is replayed onto a fresh background copy. It
+// reports false when no side thread exists at all; the caller then prints usage.
+func reopenSideThread(out io.Writer, host cli.Host) (*agentcore.AgentContext, *session.PeekSession, bool) {
+	if side := host.LastBtw(); side != nil {
+		return side, host.Peek(), true
+	}
+	store := host.Store()
+	if store == nil || host.Header().ID == "" {
+		return nil, nil, false
+	}
+	peek, err := store.LatestPeek(host.Header().ID)
+	if err != nil {
+		fmt.Fprintf(out, "pigo: reopen side thread: %v\n", err)
+		return nil, nil, false
+	}
+	if peek == nil {
+		return nil, nil, false
+	}
+	history, err := peek.Messages()
+	if err != nil {
+		fmt.Fprintf(out, "pigo: reopen side thread: %v\n", err)
+		return nil, nil, false
+	}
+	// The background is re-seeded from the LIVE main context, so a peek file
+	// never carries (and can never resurrect) a stale copy of it.
+	side := NewSideContext(host.AgentCtx())
+	base := len(side.Messages)
+	side.Messages = append(side.Messages, history...)
+	host.SetLastBtw(side)
+	host.SetLastBtwBase(base)
+	host.SetPeek(peek)
+	return side, peek, true
 }
 
 // replaySideHistory prints the side thread's own Q&A (everything after the
@@ -136,30 +204,41 @@ func replaySideHistory(out io.Writer, side *agentcore.AgentContext, base int) {
 // /quit, EOF, or an idle Ctrl+C (errLineInterrupted) — the same exit affordances
 // as the main REPL, but confined to the side thread (FR-5). A blank line is
 // ignored (stays in the thread). Nothing here touches the main context.
-func btwFollowUpLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, editor cli.Editor, side *agentcore.AgentContext, settings BtwRunSettings) {
+func btwFollowUpLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, editor cli.Editor, side *agentcore.AgentContext, settings BtwRunSettings, peek *session.PeekSession) {
 	for {
 		raw, err := editor.ReadLine(btwPrompt)
 		if errors.Is(err, cli.ErrLineInterrupted) {
 			// Idle Ctrl+C at the side prompt leaves the thread (a Ctrl+C during a
 			// run is handled inside askSide via the SIGINT cancel plumbing).
-			fmt.Fprintln(out, "left side thread")
+			leaveSideThread(out, peek)
 			return
 		}
 		q := strings.TrimSpace(raw)
 		if err != nil && q == "" {
 			// EOF or read error with no partial line: leave the thread.
-			fmt.Fprintln(out, "left side thread")
+			leaveSideThread(out, peek)
 			return
 		}
 		if q == "/exit" || q == "/quit" {
-			fmt.Fprintln(out, "left side thread")
+			leaveSideThread(out, peek)
 			return
 		}
 		if q == "" {
 			continue
 		}
-		AskSide(setCancel, out, host, side, settings, q)
+		askSide(setCancel, out, host, side, settings, q, peek)
 	}
+}
+
+// leaveSideThread closes the side thread, naming the peek session it was saved
+// to when there is one (so the user can find it again with a bare /btw even
+// though the session list hides it).
+func leaveSideThread(out io.Writer, peek *session.PeekSession) {
+	if peek != nil {
+		fmt.Fprintf(out, "left side thread (saved as %s)\n", peek.ID())
+		return
+	}
+	fmt.Fprintln(out, "left side thread")
 }
 
 // NewSideContext builds the side thread's private AgentContext. Its Messages are
@@ -184,11 +263,22 @@ func printBtwHeader(out io.Writer) {
 
 // AskSide appends the question to the side context and streams one answer,
 // mirroring streamRun's rendering but targeting the side context so nothing is
-// written back to the main conversation or to disk. It reuses the REPL's SIGINT
-// cancel plumbing via setCancel. The model/provider/thinking come from settings
+// written back to the main conversation. It reuses the REPL's SIGINT cancel
+// plumbing via setCancel. The model/provider/thinking come from settings
 // (session defaults overlaid with btw.json, #282), never from host.Live(), so a
 // /btw override cannot leak into the main session.
+//
+// AskSide is the memory-only entry point: it keeps no peek session, so direct
+// callers (tests, drivers without a store) get the pre-T4.3 behavior.
 func AskSide(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, side *agentcore.AgentContext, settings BtwRunSettings, question string) {
+	askSide(setCancel, out, host, side, settings, question, nil)
+}
+
+// askSide is AskSide with the peek session this turn's Q&A is appended to (T4.3,
+// nil = memory-only). Only the messages the side run produced are persisted, so
+// the peek file stays a pure side transcript.
+func askSide(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, side *agentcore.AgentContext, settings BtwRunSettings, question string, peek *session.PeekSession) {
+	start := len(side.Messages)
 	content, err := ui.BuildUserContent(question)
 	if err != nil {
 		fmt.Fprintf(out, "pigo: %v\n", err)
@@ -236,6 +326,12 @@ func AskSide(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, s
 	}
 	stream := runtime.StartRun(runCtx, side, cfg)
 	drainSideStream(runCtx, out, host, stream)
+	// Persist exactly what this turn produced — the question and the answer —
+	// into the side thread's peek session. Nothing here touches the main
+	// session, and a nil peek (no store) is a silent no-op.
+	if err := peek.Append(side.Messages[start:]); err != nil {
+		fmt.Fprintf(out, "pigo: side thread not saved: %v\n", err)
+	}
 }
 
 // chainBtwEvent returns the OnEvent observer for a /btw side run: the plugin

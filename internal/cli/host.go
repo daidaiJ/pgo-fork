@@ -81,6 +81,13 @@ type Host interface {
 	SetLastBtw(ctx *agentcore.AgentContext)
 	LastBtwBase() int
 	SetLastBtwBase(n int)
+	// Peek is the persisted /btw side-thread session (T4.3): the peek_* session
+	// file the side thread's own Q&A is appended to, or nil when the side thread
+	// is memory-only (no store, or the session has no id yet). It is nil-ed out
+	// together with LastBtw on a session switch, since a side thread branched
+	// from another conversation no longer applies.
+	Peek() *session.PeekSession
+	SetPeek(p *session.PeekSession)
 }
 
 // Editor is the line-input contract a control command uses to read a follow-up

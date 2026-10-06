@@ -5,16 +5,20 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T4.1 延迟工具声明实作落地（2026-10-06）**——
-  三档 exposure + `search_tools` 按名认领（下一轮进声明面）+ ephemeral
-  公告（字节稳定）+ 能力门回落 + resume 原子性 + 子代理 defer。内核 =
-  `internal/tooldecl` 叶子包 + `agentcore.ToolClaimMessage`（role
-  `toolClaim`，随树持久）+ 投影第五阶段 + executor ToolGate；
-  配置 = `[tools]` 表 + `provider.Model.SupportsToolSearch`；五驱动接线。
-  偏差 D-1~D-10 登记规格 §7（pigo 无 MCP，外部面 = plugin 工具族）。
-  基线 39 包 0 FAIL。**期验收 1（token A/B）待低成本实测**。
-  此前 T3.3.1（`1768d08`）、T4.4（`264ac17`+`81f2f17`）均清。
-  **下一步待用户拍板**：T4.2 问卷（2–3d）/ T4.3 BTW（1–2d）。
+- **当前阶段**：**T4.3 BTW 侧会话落地（2026-10-06，用户拍板先于 T4.2）**——
+  `/btw` 侧线程从纯内存升级为**持久 peek 会话**：`peek_` purpose 前缀（不改
+  schema，SchemaVersion 保持 3）+ `internal/session/peek.go`
+  （`PeekSession` 落盘句柄 / `Store.LatestPeek` 跨进程 reopen / `List()`
+  单点过滤 peek、`ListAll()` 放行）+ `cli.Host` 增 `Peek/SetPeek`（repl
+  实现、TUI parity，`/fork`·`/clone`·`/import` 随 `lastBtw` 置 nil）+ btw
+  包每轮落盘侧 Q&A（**不复制主背景**、主会话零写入）。随件修 `NewID` 微秒
+  冲突（新增 `Store.uniqueID`，Import/Fork/OpenPeek 接线）——根治既有 flake
+  `TestREPLExportImportRoundTrip`（经 worktree HEAD 基线对比确认为既有偶发）。
+  偏差 D-1~D-9 登记 [btw-peek-session.md](wiki/port/btw-peek-session.md) §7。
+  基线 **39 包 0 FAIL**（`.gtmp/t43-test.txt`）。
+  此前 T4.1（`58aedec`）、T3.3.1（`1768d08`）、T4.4 均清。
+  **下一步待用户拍板**：第 4 期余下 **T4.2 问卷（2–3d）**；可随时插入
+  **T4.1 期验收 1（defer 档 token A/B，需 API key）**。
   其余待拍板项（pi-durable 切片 1、/ui 面板、skill-as-tool、
   供应商韧性 S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——
   tui-grok-style.md 14 条 S 需求待排期）见 implementation-plan 待议段；

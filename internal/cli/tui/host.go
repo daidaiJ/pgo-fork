@@ -56,6 +56,8 @@ func (s *runSession) LastBtw() *agentcore.AgentContext       { return s.lastBtw 
 func (s *runSession) SetLastBtw(ctx *agentcore.AgentContext) { s.lastBtw = ctx }
 func (s *runSession) LastBtwBase() int                       { return s.lastBtwBase }
 func (s *runSession) SetLastBtwBase(n int)                   { s.lastBtwBase = n }
+func (s *runSession) Peek() *session.PeekSession             { return s.peek }
+func (s *runSession) SetPeek(p *session.PeekSession)         { s.peek = p }
 
 // renderSession writes the /session summary (US-009, #125) to out — the same
 // format the REPL's runSession prints: session id, message count, estimated

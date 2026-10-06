@@ -138,6 +138,12 @@ type replDeps struct {
 	// is everything from this index on. Reopening replays only Messages[base:] so
 	// the whole main transcript is not reprinted.
 	lastBtwBase int
+	// peek is the persisted home of the current /btw side thread (T4.3): a
+	// peek_* session file holding only the side Q&A, hidden from the session
+	// list. It is nil until the first /btw of the session and is dropped with
+	// lastBtw on a session switch; a fresh process recovers it from disk on a
+	// bare /btw via Store.LatestPeek.
+	peek *session.PeekSession
 
 	// telemetry holds the retained per-run telemetry events (US-001, #291) and
 	// the cumulative accumulator that sums metrics across all runs in the session.
@@ -894,9 +900,10 @@ func runForkClone(out io.Writer, deps *replDeps, line string) {
 		deps.curLeaf = path[len(path)-1].ID
 	}
 	// A side thread branched from the old conversation is meaningless against the
-	// new branch, so drop it (#281).
+	// new branch, so drop it (#281) along with its peek session (T4.3).
 	deps.lastBtw = nil
 	deps.lastBtwBase = 0
+	deps.peek = nil
 	// Reset telemetry for the new session, since cumulative stats should not bleed
 	// across conversations.
 	if deps.telemetry != nil {
@@ -1032,9 +1039,10 @@ func runImport(out io.Writer, deps *replDeps, line string) {
 		deps.curLeaf = entries[len(entries)-1].ID
 	}
 	// A side thread branched from the previous conversation no longer applies to
-	// the imported one, so drop it (#281).
+	// the imported one, so drop it (#281) along with its peek session (T4.3).
 	deps.lastBtw = nil
 	deps.lastBtwBase = 0
+	deps.peek = nil
 	// Reset telemetry for the imported session, since cumulative stats should not
 	// bleed across conversations.
 	if deps.telemetry != nil {

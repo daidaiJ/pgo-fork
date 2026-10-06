@@ -340,6 +340,39 @@ func NewID(now time.Time) string {
 	return fmt.Sprintf("%s-%06d", now.UTC().Format("20060102-150405"), now.UTC().Nanosecond()/1000%1_000_000)
 }
 
+// uniqueID returns a session id for now that collides with neither the reserved
+// ids nor an existing file in the store, plus the (possibly advanced) timestamp
+// the id was derived from so the caller can stamp CreatedAt/UpdatedAt with it.
+//
+// NewID's resolution is the microsecond, which two calls on a fast path can
+// share — observable on Windows, where the clock granularity coarsens it. A
+// collision is silent and destructive: importing or forking a session would
+// overwrite the very file it was derived from. Advancing by a millisecond until
+// the id is free keeps every id derived from a timestamp (so it still sorts by
+// creation time) while making the collision impossible.
+// prefix is prepended to the generated stem before the collision check (peek
+// sessions pass PeekPrefix, ordinary sessions pass "").
+func (s *Store) uniqueID(now time.Time, prefix string, reserved ...string) (string, time.Time) {
+	taken := func(id string) bool {
+		for _, r := range reserved {
+			if id == r {
+				return true
+			}
+		}
+		if s == nil {
+			return false
+		}
+		_, err := os.Stat(s.path(id))
+		return err == nil
+	}
+	id := prefix + NewID(now)
+	for i := 0; i < 1000 && taken(id); i++ {
+		now = now.Add(time.Millisecond)
+		id = NewID(now)
+	}
+	return id, now
+}
+
 // Store persists sessions as JSONL files under a directory (typically
 // ~/.pigo/sessions). The zero value is unusable; construct with NewStore.
 type Store struct {
@@ -556,11 +589,27 @@ func readSession(r io.Reader) (SessionHeader, []Entry, error) {
 	return header, entries, nil
 }
 
-// List returns the headers of all sessions in the store, sorted by UpdatedAt
+// List returns the headers of the store's conversations, sorted by UpdatedAt
 // descending (most recently used first). Files that fail to parse are skipped
 // rather than failing the whole listing, so one corrupt session does not hide
 // the rest.
+//
+// Peek side-thread sessions (T4.3, see peek.go) are omitted: a /btw side thread
+// must never appear in the surfaces that enumerate real conversations
+// (--list-sessions, --continue/--resume, /dream distillation, the TUI picker).
+// Use ListAll when the peek sessions themselves are wanted.
 func (s *Store) List() ([]SessionHeader, error) {
+	return s.listHeaders(false)
+}
+
+// ListAll is List without the peek filter: every session in the store, side
+// threads included. It backs the peek lookups that need to see their own kind.
+func (s *Store) ListAll() ([]SessionHeader, error) {
+	return s.listHeaders(true)
+}
+
+// listHeaders is the shared implementation behind List/ListAll.
+func (s *Store) listHeaders(includePeek bool) ([]SessionHeader, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, fmt.Errorf("session: read store dir: %w", err)
@@ -571,6 +620,9 @@ func (s *Store) List() ([]SessionHeader, error) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".jsonl")
+		if !includePeek && IsPeek(id) {
+			continue // side thread: not a conversation the user resumes
+		}
 		h, err := s.loadHeader(id)
 		if err != nil {
 			continue // skip unreadable/corrupt session
@@ -688,8 +740,10 @@ func (s *Store) Fork(sourceID, leafID string, now time.Time) (SessionHeader, []E
 		return SessionHeader{}, nil, err
 	}
 	path := PathToLeaf(entries, leafID)
+	// A fork must never land on the source's own id (see uniqueID).
+	newID, now := s.uniqueID(now, "", sourceID)
 	newHeader := SessionHeader{
-		ID:            NewID(now),
+		ID:            newID,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         srcHeader.Model,

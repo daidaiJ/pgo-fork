@@ -51,3 +51,5 @@ func (d *replDeps) LastBtw() *agentcore.AgentContext       { return d.lastBtw }
 func (d *replDeps) SetLastBtw(ctx *agentcore.AgentContext) { d.lastBtw = ctx }
 func (d *replDeps) LastBtwBase() int                       { return d.lastBtwBase }
 func (d *replDeps) SetLastBtwBase(n int)                   { d.lastBtwBase = n }
+func (d *replDeps) Peek() *session.PeekSession             { return d.peek }
+func (d *replDeps) SetPeek(p *session.PeekSession)         { d.peek = p }

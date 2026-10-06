@@ -11,7 +11,7 @@
 //	internal/cli/run        — run assembly and tool wiring
 //	internal/cli/headless   — headless session and subagent RPC drivers
 //	internal/cli/goal       — /goal state machine
-//	internal/cli/btw        — /btw side thread
+//	internal/cli/btw        — /btw side thread (persisted as a peek session)
 //	internal/cli/status     — /status command
 //	internal/cli/repl       — interactive REPL and line editor
 //	internal/cli/pkgcmd     — package-manager subcommands
