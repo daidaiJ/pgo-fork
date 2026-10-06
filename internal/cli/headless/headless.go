@@ -15,8 +15,10 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
+	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/cli/ui"
+	"github.com/smallnest/pigo/internal/compaction"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -94,6 +96,14 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	creds := provider.NewCredentialStore(nil)
 	creds.SetOverride(env.ProviderName, p.APIKey)
 	runCfg := run.NewConfig(p.Model, env.ProviderName, thinking, env.Provider, creds, run.ToolRegistry(env.Tools), run.TodoReminders(env.Tools), env.Schedule)
+	// Compaction parity with the interactive drivers (T3.3 closeout finding):
+	// run.NewConfig leaves ContextWindow and Compaction zero, and the REPL/TUI
+	// seed both on their live config themselves — headless print did neither,
+	// so both microcompaction (ContextWindow<=0 short-circuits) and full
+	// compaction (Enabled=false) were silently off in print mode. Seed the
+	// same defaults the interactive drivers use.
+	runCfg.ContextWindow = cli.DefaultContextWindow
+	runCfg.Compaction = compaction.DefaultCompactionSettings
 	runCfg.SessionID = hs.header.ID
 	// Route auto-compaction checkpoints to the shared memory root so a rebuild can
 	// recover the pre-watermark prefix (no-op when memory is disabled → empty root).
