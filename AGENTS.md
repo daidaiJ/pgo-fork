@@ -29,6 +29,12 @@
   [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)。
   **下一步**：T6.4 精选清单拍板；之后第 6 期第三批排序待拍板。本机跑测试
   带 `TMP/TEMP/TMPDIR=D:\tmp`。其余见 handoff。
+- **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
+  ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
+  表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
+  进 deferred/hidden 面（不得默认 direct，实测 18 个 model-invocable 内置
+  全物化已 +5435 token/轮）；code mode 须先钉死沙箱边界与 T5.2 副作用契约，
+  脚本不得比工具拿到更宽的口子。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
