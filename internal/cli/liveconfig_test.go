@@ -74,3 +74,24 @@ func TestResolveContextWindow_NilProvider(t *testing.T) {
 		t.Errorf("nil provider with 0.25 cap = %d, want %d", got, DefaultContextWindow/4)
 	}
 }
+
+// TestResolveMaxOutputTokens covers the output-cap resolution chain (T4.4 余项):
+// the model's catalog cap when declared, 0 (inert) when unknown — never a guess.
+func TestResolveMaxOutputTokens(t *testing.T) {
+	prov := fakeProvider{models: []provider.Model{
+		{Provider: "anthropic", ID: "claude-x", MaxOutputTokens: 12000},
+		{Provider: "openai", ID: "gpt-y", MaxOutputTokens: 0},
+	}}
+	if got := ResolveMaxOutputTokens(prov, "claude-x"); got != 12000 {
+		t.Errorf("declared cap = %d, want 12000", got)
+	}
+	if got := ResolveMaxOutputTokens(prov, "gpt-y"); got != 0 {
+		t.Errorf("undeclared cap = %d, want 0", got)
+	}
+	if got := ResolveMaxOutputTokens(prov, "totally/unlisted"); got != 0 {
+		t.Errorf("unknown model cap = %d, want 0", got)
+	}
+	if got := ResolveMaxOutputTokens(nil, "claude-x"); got != 0 {
+		t.Errorf("nil provider cap = %d, want 0", got)
+	}
+}

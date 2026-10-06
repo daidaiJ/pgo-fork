@@ -290,6 +290,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 				// the new model's catalog window (the explicit [compaction]
 				// max_context cap stays applied, config still wins).
 				live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
+				live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
 				return fmt.Sprintf("model switched to %s (provider: %s, from fetched catalog)", id, name)
 			}
 			model := provider.CanonicalizeModel(id)
@@ -304,6 +305,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			// new model's catalog window (the explicit [compaction]
 			// max_context cap stays applied, config still wins).
 			live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
+			live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
 			return fmt.Sprintf("model switched to %s (provider: %s)", model, providerName)
 		},
 	})

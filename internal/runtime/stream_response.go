@@ -95,6 +95,10 @@ type LoopConfig struct {
 	// is disabled (ShouldCompact returns false), so the loop behaves exactly as
 	// before for callers that do not plumb it through.
 	ContextWindow int
+	// MaxOutputTokens is the model's declared per-response output cap (0 =
+	// unknown). It feeds the per-model compaction trigger line and the dynamic
+	// max_tokens budget stamp (T4.4); both are inert while it stays 0.
+	MaxOutputTokens int
 	// Compaction holds the thresholds/retention knobs for auto-compaction. Its
 	// Enabled flag gates the feature independently of ContextWindow.
 	Compaction compaction.CompactionSettings
@@ -146,11 +150,32 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 			key = dyn
 		}
 	}
+	// 6.5 dynamic max_tokens (T4.4, minimax resolveDynamicMaxTokens): when the
+	// model's output cap is known, stamp the request with
+	// min(cap, max(floor, window − estimate − margin − thinking)) so a long
+	// context cannot ask for an output that no longer fits. Computed fresh per
+	// request and carried on a copied Extra map — the consume-once snapshot is
+	// the per-request computation itself (minimax recomputes per call the same
+	// way); the shared cfg.Extra map is never mutated, so the summarizer and
+	// other consumers of cfg.Extra are untouched.
+	extra := cfg.Extra
+	if cfg.ContextWindow > 0 && cfg.MaxOutputTokens > 0 {
+		est := compaction.EstimateContextTokens(msgs).Tokens
+		dyn := compaction.ResolveDynamicMaxTokens(cfg.ContextWindow, est, cfg.MaxOutputTokens,
+			provider.ThinkingBudget(cfg.ThinkingLevel), cfg.Compaction.MarginTokens)
+		if dyn > 0 {
+			extra = make(map[string]any, len(cfg.Extra)+1)
+			for k, v := range cfg.Extra {
+				extra[k] = v
+			}
+			extra["max_tokens"] = dyn
+		}
+	}
 	// 7. build the provider stream.
 	stream, err := cfg.Stream(ctx, cfg.Model, llm, provider.StreamConfig{
 		APIKey:        key,
 		ThinkingLevel: cfg.ThinkingLevel,
-		Extra:         cfg.Extra,
+		Extra:         extra,
 	})
 	if err != nil {
 		// Early "cannot build stream" failure: synthesize a terminal message so

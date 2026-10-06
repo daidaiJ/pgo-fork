@@ -123,6 +123,12 @@ func encodeOpenAIRequest(req CompletionRequest) ([]byte, error) {
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
 	}
+	// max_tokens hint (T4.4): the loop stamps a dynamic output budget into
+	// Config.Extra; forward it only when present so the default wire shape
+	// (no max_tokens) is unchanged.
+	if maxTok := maxOutputTokensFor(req); maxTok > 0 {
+		body["max_tokens"] = maxTok
+	}
 	// Reasoning effort: when a thinking level is requested, forward it as the
 	// OpenAI `reasoning_effort` field. Reasoning models (o-series, DeepSeek-R1,
 	// GLM-thinking, …) read this to open their reasoning channel; omitting it
@@ -380,6 +386,13 @@ func anthropicDefaultMaxTokens(model string, models []Model) int {
 		}
 	}
 	return 8192
+}
+
+// ThinkingBudget exposes the unified thinking-budget mapping (the Anthropic
+// budget_tokens table) so callers can deduct the reasoning reserve from an
+// output budget (T4.4 dynamic max_tokens). off/unset yields 0.
+func ThinkingBudget(level agentcore.ThinkingLevel) int {
+	return anthropicThinkingBudget(level)
 }
 
 // anthropicThinkingBudget maps a unified ThinkingLevel onto an Anthropic

@@ -306,6 +306,11 @@ func buildResponsesParams(req CompletionRequest) responses.ResponseNewParams {
 		// can render it as a thinking block, matching the chat driver.
 		params.Reasoning = shared.ReasoningParam{Effort: effort, Summary: shared.ReasoningSummaryAuto}
 	}
+	// max_output_tokens hint (T4.4): the loop stamps a dynamic output budget
+	// into Config.Extra; forward it only when present.
+	if maxTok := maxOutputTokensFor(req); maxTok > 0 {
+		params.MaxOutputTokens = openai.Int(int64(maxTok))
+	}
 	if tools := buildResponsesTools(req.Context.Tools); len(tools) > 0 {
 		params.Tools = tools
 	}

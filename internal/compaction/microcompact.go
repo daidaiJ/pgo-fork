@@ -58,11 +58,18 @@ var microcompactWhitelist = map[string]bool{
 }
 
 // MicrocompactPressureLine derives the microcompaction trigger line from the
-// full-compaction line (zcode model: the micro line must fire first):
-// min(0.9×autoLine, autoLine−2K) with autoLine = contextWindow − reserveTokens.
-// Returns 0 when the window is unknown or the derivation is degenerate.
+// full-compaction line computed the pi way (window − reserveTokens). Newer
+// callers should resolve the full line via CompactionLine (T4.4 model-aware
+// formula + per-model overrides) and pass it to MicrocompactPressureLineFor.
 func MicrocompactPressureLine(contextWindow, reserveTokens int) int {
-	autoLine := contextWindow - reserveTokens
+	return MicrocompactPressureLineFor(contextWindow - reserveTokens)
+}
+
+// MicrocompactPressureLineFor derives the microcompaction trigger line from an
+// already-resolved full-compaction line (zcode model: the micro line must fire
+// first): min(0.9×autoLine, autoLine−2K). Returns 0 when the derivation is
+// degenerate.
+func MicrocompactPressureLineFor(autoLine int) int {
 	if autoLine <= microPressureMarginK {
 		return 0
 	}

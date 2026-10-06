@@ -262,3 +262,23 @@ func TestOpenAIReasoningContentDecoding(t *testing.T) {
 		t.Error("expected at least one StreamThinkingEvent")
 	}
 }
+
+// TestOpenAIMaxTokensHint verifies the OpenAI-compatible driver honors the
+// max_tokens Extra hint only when present (T4.4): the default wire shape (no
+// max_tokens) is unchanged, a stamped budget is forwarded.
+func TestOpenAIMaxTokensHint(t *testing.T) {
+	req := CompletionRequest{Model: "m", Context: LlmContext{}}
+
+	// No hint → no max_tokens on the wire.
+	b, _ := encodeOpenAIRequest(req)
+	if v, ok := decodeBody(t, b)["max_tokens"]; ok {
+		t.Errorf("default wire max_tokens = %v, want absent", v)
+	}
+
+	// Hint present → forwarded.
+	req.Config.Extra = map[string]any{"max_tokens": 4096}
+	b, _ = encodeOpenAIRequest(req)
+	if got := decodeBody(t, b)["max_tokens"].(float64); got != 4096 {
+		t.Errorf("hinted max_tokens = %v, want 4096", got)
+	}
+}

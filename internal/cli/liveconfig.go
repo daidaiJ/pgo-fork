@@ -38,6 +38,11 @@ type LiveConfig struct {
 	// the session so a mid-session /model switch re-resolves the effective
 	// window against the same explicit cap (config stays highest priority).
 	MaxContext config.MaxContext
+	// MaxOutputTokens is the selected model's declared per-response output cap
+	// (0 = unknown). It feeds the per-model compaction trigger line and the
+	// dynamic max_tokens budget stamp (T4.4); re-resolved on /model switches
+	// together with ContextWindow.
+	MaxOutputTokens int
 
 	// FetchedModels is the online model catalog pulled from the live provider's
 	// endpoint by an explicit "/models fetch" (issue #566), sorted and
@@ -80,4 +85,21 @@ func ResolveContextWindow(prov provider.Provider, model string, maxCtx config.Ma
 		return v
 	}
 	return base
+}
+
+// ResolveMaxOutputTokens resolves the selected model's declared per-response
+// output cap from the provider's model catalog (0 = unknown). Same discipline
+// as ResolveContextWindow: only catalog-declared values are used — an unknown
+// cap leaves the dynamic max_tokens stamp and the trigger-line perTurn term
+// inert instead of guessing.
+func ResolveMaxOutputTokens(prov provider.Provider, model string) int {
+	if prov == nil {
+		return 0
+	}
+	for _, m := range prov.Models() {
+		if m.ID == model && m.MaxOutputTokens > 0 {
+			return m.MaxOutputTokens
+		}
+	}
+	return 0
 }

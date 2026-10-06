@@ -606,13 +606,14 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 	})
 	cfg := runtime.RunConfig{
 		LoopConfig: runtime.LoopConfig{
-			Model:         deps.live.Model,
-			Provider:      deps.live.ProviderName,
-			ThinkingLevel: deps.live.ThinkingLevel,
-			Stream:        provider.StreamFnFromProvider(deps.live.Provider),
-			GetAPIKey:     deps.creds.GetAPIKey,
-			ContextWindow: deps.live.ContextWindow,
-			Compaction:    compaction.DefaultCompactionSettings,
+			Model:           deps.live.Model,
+			Provider:        deps.live.ProviderName,
+			ThinkingLevel:   deps.live.ThinkingLevel,
+			Stream:          provider.StreamFnFromProvider(deps.live.Provider),
+			GetAPIKey:       deps.creds.GetAPIKey,
+			ContextWindow:   deps.live.ContextWindow,
+			MaxOutputTokens: deps.live.MaxOutputTokens,
+			Compaction:      compaction.DefaultCompactionSettings,
 		},
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{
@@ -1196,12 +1197,13 @@ func runManualRebuild(out io.Writer, deps replDeps) {
 	// loop's compaction path). The checkpoint path itself is pure/local.
 	cfg := runtime.RunConfig{
 		LoopConfig: runtime.LoopConfig{
-			Model:         deps.live.Model,
-			Provider:      deps.live.ProviderName,
-			ThinkingLevel: deps.live.ThinkingLevel,
-			Stream:        provider.StreamFnFromProvider(deps.live.Provider),
-			ContextWindow: deps.live.ContextWindow,
-			Compaction:    compaction.DefaultCompactionSettings,
+			Model:           deps.live.Model,
+			Provider:        deps.live.ProviderName,
+			ThinkingLevel:   deps.live.ThinkingLevel,
+			Stream:          provider.StreamFnFromProvider(deps.live.Provider),
+			ContextWindow:   deps.live.ContextWindow,
+			MaxOutputTokens: deps.live.MaxOutputTokens,
+			Compaction:      compaction.DefaultCompactionSettings,
 		},
 	}
 	if deps.creds != nil {

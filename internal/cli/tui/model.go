@@ -190,7 +190,8 @@ func NewModel(opts Options) Model {
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
 		MaxContext:    opts.MaxContext,
-		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
 	}
 	return Model{
 		opts:       opts,

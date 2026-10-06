@@ -105,6 +105,7 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	// window (fallback cli.DefaultContextWindow) lowered by an explicit
 	// [compaction] max_context.
 	runCfg.ContextWindow = cli.ResolveContextWindow(env.Provider, p.Model, env.MaxContext)
+	runCfg.MaxOutputTokens = cli.ResolveMaxOutputTokens(env.Provider, p.Model)
 	runCfg.Compaction = compaction.DefaultCompactionSettings
 	runCfg.SessionID = hs.header.ID
 	// Route auto-compaction checkpoints to the shared memory root so a rebuild can

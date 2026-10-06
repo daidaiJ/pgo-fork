@@ -178,8 +178,10 @@ func Run(opts Options) error {
 		MaxContext:    opts.MaxContext,
 		// The effective window follows the selected model's catalog window
 		// (fallback DefaultContextWindow), lowered by an explicit
-		// [compaction] max_context — re-derived on /model switches.
-		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		// [compaction] max_context — re-derived on /model switches. The
+		// output cap feeds the trigger line and the dynamic max_tokens stamp.
+		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the

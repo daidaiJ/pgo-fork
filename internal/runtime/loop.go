@@ -478,7 +478,12 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	if tel != nil {
 		tel.recordContext(before, cfg.ContextWindow)
 	}
-	if !compaction.ShouldCompact(before, cfg.ContextWindow, cfg.Compaction) {
+	// T4.4: the trigger line is model-aware — per-model ratio override
+	// (kimi/minimax) or the generic A/B formula (window − max(reserve,
+	// perTurn+margin), B-line pre-defense). With no output cap seeded and an
+	// unmatched model id this is pi's baseline window − reserve.
+	line := compaction.CompactionLine(cfg.ContextWindow, cfg.MaxOutputTokens, cfg.Compaction, cfg.Model)
+	if before <= line {
 		return
 	}
 	if cmp != nil && cmp.failures >= circuitBreakerLimit {
@@ -573,7 +578,7 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 		SummarizedCount:       max(0, cut-1),
 		KeptCount:             len(view) - cut,
 		SummaryUsage:          &res.SummaryUsage,
-		WillRetriggerNextTurn: compaction.ShouldCompact(after, cfg.ContextWindow, cfg.Compaction),
+		WillRetriggerNextTurn: after > line,
 	})
 }
 
@@ -742,7 +747,11 @@ func maybeMicrocompact(ctx context.Context, agentCtx *agentcore.AgentContext, cf
 	}
 	view := compaction.ProjectView(agentCtx.Messages)
 	tokens := compaction.EstimateContextTokens(view).Tokens
-	line := compaction.MicrocompactPressureLine(cfg.ContextWindow, cfg.Compaction.ReserveTokens)
+	// T4.4: derive the micro line from the model-aware full-compaction line
+	// (zcode derivation), so per-model override lines propagate to the
+	// microcompaction gate too.
+	line := compaction.MicrocompactPressureLineFor(
+		compaction.CompactionLine(cfg.ContextWindow, cfg.MaxOutputTokens, cfg.Compaction, cfg.Model))
 	idle := compaction.IdleMillis(view, time.Now().UnixMilli()) >= compaction.MicrocompactIdleMillis
 	if line <= 0 && !idle {
 		return

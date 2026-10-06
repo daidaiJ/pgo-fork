@@ -213,9 +213,10 @@ func runGoalLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Hos
 			Provider:      host.Live().ProviderName,
 			ThinkingLevel: host.Live().ThinkingLevel,
 			Stream:        provider.StreamFnFromProvider(host.Live().Provider),
-			GetAPIKey:     host.Creds().GetAPIKey,
-			ContextWindow: host.Live().ContextWindow,
-			Compaction:    compaction.DefaultCompactionSettings,
+			GetAPIKey:       host.Creds().GetAPIKey,
+			ContextWindow:   host.Live().ContextWindow,
+			MaxOutputTokens: host.Live().MaxOutputTokens,
+			Compaction:      compaction.DefaultCompactionSettings,
 		},
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{

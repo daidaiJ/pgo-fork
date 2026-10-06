@@ -197,7 +197,8 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
 		MaxContext:    opts.MaxContext,
-		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
+		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the
@@ -306,9 +307,10 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 			Provider:      s.live.ProviderName,
 			ThinkingLevel: s.live.ThinkingLevel,
 			Stream:        provider.StreamFnFromProvider(s.live.Provider),
-			GetAPIKey:     s.creds.GetAPIKey,
-			ContextWindow: s.live.ContextWindow,
-			Compaction:    compaction.DefaultCompactionSettings,
+			GetAPIKey:       s.creds.GetAPIKey,
+			ContextWindow:   s.live.ContextWindow,
+			MaxOutputTokens: s.live.MaxOutputTokens,
+			Compaction:      compaction.DefaultCompactionSettings,
 		},
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{

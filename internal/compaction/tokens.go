@@ -26,13 +26,20 @@ type CompactionSettings struct {
 	// KeepRecentTokens is the approximate recent-context token budget to retain
 	// after compaction (consumed by FindCutPoint in US-002).
 	KeepRecentTokens int
+	// MarginTokens is the safety margin applied next to the per-turn output
+	// budget when deriving the trigger line (minimax margin, T4.4). With no
+	// output budget in play the line is pi's flat window − ReserveTokens and
+	// the margin is inert.
+	MarginTokens int
 }
 
-// DefaultCompactionSettings matches pi's DEFAULT_COMPACTION_SETTINGS.
+// DefaultCompactionSettings matches pi's DEFAULT_COMPACTION_SETTINGS plus the
+// T4.4 minimax margin.
 var DefaultCompactionSettings = CompactionSettings{
 	Enabled:          true,
 	ReserveTokens:    16384,
 	KeepRecentTokens: 20000,
+	MarginTokens:     DefaultMarginTokens,
 }
 
 // estimatedImageChars is the fixed character budget attributed to an image
