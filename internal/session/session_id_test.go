@@ -26,7 +26,7 @@ func TestImportNeverOverwritesSource(t *testing.T) {
 	if err := s.Save(src, agentcore.MessageList{userMsg("hello"), assistantMsg("hi")}); err != nil {
 		t.Fatalf("Save source: %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "sess.jsonl")
+	path := filepath.Join(testDir(t), "sess.jsonl")
 	if _, err := s.Export(src.ID, path); err != nil {
 		t.Fatalf("Export: %v", err)
 	}

@@ -67,7 +67,7 @@ func TestRedactText(t *testing.T) {
 // material in every message class, for the golden and redaction tests.
 func shareFixture(t *testing.T) (*Store, SessionHeader, []Entry) {
 	t.Helper()
-	store, err := NewStore(t.TempDir())
+	store, err := NewStore(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestWriteMarkdownGolden(t *testing.T) {
 // of it redacted, and the system prompt is dropped unless requested.
 func TestExportShareRedaction(t *testing.T) {
 	store, header, _ := shareFixture(t)
-	out := filepath.Join(t.TempDir(), "share.md")
+	out := filepath.Join(testDir(t), "share.md")
 
 	if _, err := store.ExportShare(header.ID, out, "md", ShareOptions{Redact: true}); err != nil {
 		t.Fatalf("ExportShare: %v", err)
@@ -162,7 +162,7 @@ func TestExportShareRedaction(t *testing.T) {
 	}
 
 	// IncludeSystemPrompt restores the header section (still redacted).
-	out2 := filepath.Join(t.TempDir(), "share-sys.md")
+	out2 := filepath.Join(testDir(t), "share-sys.md")
 	if _, err := store.ExportShare(header.ID, out2, "md", ShareOptions{Redact: true, IncludeSystemPrompt: true}); err != nil {
 		t.Fatalf("ExportShare with sys prompt: %v", err)
 	}
@@ -176,14 +176,14 @@ func TestExportShareRedaction(t *testing.T) {
 // combination errors before writing, and unknown formats are rejected.
 func TestExportShareFormatValidation(t *testing.T) {
 	store, header, _ := shareFixture(t)
-	out := filepath.Join(t.TempDir(), "out.jsonl")
+	out := filepath.Join(testDir(t), "out.jsonl")
 	if _, err := store.ExportShare(header.ID, out, "json", ShareOptions{Redact: true}); err == nil {
 		t.Fatal("redacted JSONL succeeded, want an error")
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Error("output file created despite validation error, want no file")
 	}
-	if _, err := store.ExportShare(header.ID, filepath.Join(t.TempDir(), "o.xyz"), "xyz", ShareOptions{}); err == nil {
+	if _, err := store.ExportShare(header.ID, filepath.Join(testDir(t), "o.xyz"), "xyz", ShareOptions{}); err == nil {
 		t.Fatal("unknown format succeeded, want an error")
 	}
 }

@@ -16,6 +16,7 @@ package session
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,13 @@ import (
 // synthesizing ids and chaining parentId to the previous entry, so old sessions
 // still load and resume.
 const SchemaVersion = 3
+
+// fsyncWrites controls whether atomicWrite fsync's the temp file before renaming
+// it. It exists so tests can opt out: the durability it buys is the point of
+// T6.1, but a call costs ~40ms on this machine and a test run performs hundreds
+// of writes, which turns a sub-second package into a five-second one. A normal
+// run writes a session once per turn, where that cost is invisible.
+var fsyncWrites = true
 
 // sessionScanBufInit / sessionScanBufMax bound the line scanner used to read a
 // session file. A single line holds one message, which can be large (a long
@@ -405,8 +413,10 @@ func (s *Store) Save(header SessionHeader, messages agentcore.MessageList) error
 	if header.ID == "" {
 		return fmt.Errorf("session: header ID must not be empty")
 	}
-	return s.atomicWrite(header.ID, func(w io.Writer) error {
-		return writeSession(w, header, messages)
+	return s.withLease(header.ID, func() error {
+		return s.atomicWrite(header.ID, func(w io.Writer) error {
+			return writeSession(w, header, messages)
+		})
 	})
 }
 
@@ -421,23 +431,40 @@ func (s *Store) SaveEntries(header SessionHeader, entries []Entry) error {
 	if header.ID == "" {
 		return fmt.Errorf("session: header ID must not be empty")
 	}
-	return s.atomicWrite(header.ID, func(w io.Writer) error {
-		return writeSessionEntries(w, header, entries)
+	return s.withLease(header.ID, func() error {
+		return s.atomicWrite(header.ID, func(w io.Writer) error {
+			return writeSessionEntries(w, header, entries)
+		})
 	})
 }
 
 // atomicWrite writes a session file for id by streaming through write into a
 // temp file and atomically renaming it into place, so a concurrent reader never
 // sees a half-written file. It is the shared write plumbing behind Save and
-// SaveEntries.
+// SaveEntries; callers hold the write lease (see withLease), which is what makes
+// two writers mutually exclusive rather than merely atomic.
+//
+// T6.1 adds three properties on top of temp+rename:
+//
+//   - the temp name is unique per writer (pid + nanosecond), so two processes
+//     can never share — and therefore clobber — one temp file;
+//   - the temp file is fsync'd before the rename, so a crash mid-write leaves
+//     the previous session intact instead of a truncated one;
+//   - the written bytes are sha256'd into a sidecar (<id>.jsonl.sha256). A write
+//     whose digest matches the sidecar while the target already exists is a
+//     no-op (the idempotent sentinel): repeated saves of identical content never
+//     churn the file, and a reader can later detect content that changed
+//     underneath it.
 func (s *Store) atomicWrite(id string, write func(w io.Writer) error) error {
-	tmp := s.path(id) + ".tmp"
+	dst := s.path(id)
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", dst, os.Getpid(), time.Now().UnixNano())
 	f, err := os.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("session: create %s: %w", tmp, err)
 	}
 	w := bufio.NewWriter(f)
-	if err := write(w); err != nil {
+	digest := sha256.New()
+	if err := write(io.MultiWriter(w, digest)); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err
@@ -447,16 +474,63 @@ func (s *Store) atomicWrite(id string, write func(w io.Writer) error) error {
 		os.Remove(tmp)
 		return fmt.Errorf("session: flush %s: %w", tmp, err)
 	}
+	// Flush to disk before the rename: the rename itself is atomic, but without a
+	// sync a crash can leave the renamed file's blocks unwritten. Tests opt out
+	// (see fsyncWrites) because this machine pays ~40ms per call and a test run
+	// performs hundreds of writes — in production it is one call per turn.
+	if fsyncWrites {
+		if err := f.Sync(); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return fmt.Errorf("session: sync %s: %w", tmp, err)
+		}
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("session: stat %s: %w", tmp, err)
+	}
+	size := fi.Size()
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("session: close %s: %w", tmp, err)
 	}
+	sum := hex.EncodeToString(digest.Sum(nil))
+	// Idempotent sentinel: identical content already committed at the same size —
+	// keep the existing file (and its mtime) rather than rewriting it.
+	if s.digestMatches(id, sum) {
+		if cur, serr := os.Stat(dst); serr == nil && cur.Size() == size {
+			os.Remove(tmp)
+			return nil
+		}
+	}
 	// Atomic replace so a reader never sees a half-written file.
-	if err := os.Rename(tmp, s.path(id)); err != nil {
+	if err := os.Rename(tmp, dst); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("session: commit %s: %w", id, err)
 	}
+	// Best-effort sidecar: the session is already committed, so a failure to
+	// record its digest must not turn a successful write into an error.
+	_ = os.WriteFile(s.digestPath(id), []byte(sum+"\n"), 0o644)
 	return nil
+}
+
+// digestPath is the sidecar holding the sha256 of a session file's bytes:
+// <id>.jsonl.sha256, a name listHeaders never enumerates.
+func (s *Store) digestPath(id string) string {
+	return s.path(id) + ".sha256"
+}
+
+// digestMatches reports whether the recorded digest for id equals sum. A missing
+// or malformed sidecar simply does not match, which keeps the idempotence check
+// opt-in: first writes and hand-edited sessions always go through.
+func (s *Store) digestMatches(id, sum string) bool {
+	data, err := os.ReadFile(s.digestPath(id))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == sum
 }
 
 // writeSession emits the header line followed by one entry line per message.
@@ -519,19 +593,70 @@ func (s *Store) Load(id string) (SessionHeader, agentcore.MessageList, error) {
 // ParentID chained to the previous entry, so old sessions load and resume
 // exactly as they did before (US-005 acceptance criterion b/d).
 func (s *Store) LoadEntries(id string) (SessionHeader, []Entry, error) {
+	header, entries, _, err := s.loadTolerant(id)
+	return header, entries, err
+}
+
+// loadTolerant is LoadEntries plus the truncation signal: it reports whether the
+// session file's LAST line was cut off mid-write and was therefore dropped. The
+// entries returned are always the recoverable prefix, so a truncated session is
+// still resumable — only the torn final turn is lost (T6.1).
+func (s *Store) loadTolerant(id string) (SessionHeader, []Entry, bool, error) {
 	f, err := os.Open(s.path(id))
 	if err != nil {
-		return SessionHeader{}, nil, fmt.Errorf("session: open %s: %w", id, err)
+		return SessionHeader{}, nil, false, fmt.Errorf("session: open %s: %w", id, err)
 	}
 	defer f.Close()
-	return readSession(f)
+	return decodeSession(f, true)
+}
+
+// Repair rewrites a session whose last line was torn mid-write, dropping the
+// incomplete line and keeping the rest. It reports whether anything was
+// repaired, so a caller can log "recovered session X" rather than silently
+// changing a file. A session that already parses cleanly is left untouched (and
+// false is returned) — Repair never rewrites a healthy file.
+//
+// The rewrite goes through SaveEntries, which takes the write lease, so a repair
+// cannot race an in-flight append.
+func (s *Store) Repair(id string) (bool, error) {
+	header, entries, truncated, err := s.loadTolerant(id)
+	if err != nil {
+		return false, err
+	}
+	if !truncated {
+		return false, nil
+	}
+	if err := s.SaveEntries(header, entries); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // readSession decodes a session stream: header line first, then entries. For
 // schema v3 each line is an Entry ({id,parentId,timestamp,message}). For older
 // v1/v2 files each line is a bare message; readSession migrates them by
 // synthesizing ids and chaining parentId to the previous entry.
+//
+// It is the STRICT decoder: a line that does not parse is an error. It backs the
+// import path (ReadJSONL), where a malformed upload must be rejected rather than
+// quietly truncated. LoadEntries uses the tolerant variant instead.
 func readSession(r io.Reader) (SessionHeader, []Entry, error) {
+	header, entries, _, err := decodeSession(r, false)
+	return header, entries, err
+}
+
+// decodeSession is the shared decoder behind readSession (strict) and
+// loadTolerant (tolerant).
+//
+// truncated reports whether the file's final line was torn mid-write. Detection
+// is positional, not heuristic: a line that fails to parse is only treated as
+// truncation when nothing follows it. A bad line with more content after it is
+// real corruption and stays an error in both modes — otherwise a bit flip in the
+// middle of a transcript would silently delete the rest of the session.
+//
+// A torn header (line 1) remains a hard error in both modes: without a version
+// there is nothing to recover.
+func decodeSession(r io.Reader, tolerant bool) (SessionHeader, []Entry, bool, error) {
 	sc := bufio.NewScanner(r)
 	// Session lines can be large (long tool results); grow the buffer well past
 	// the default 64KB token cap.
@@ -539,44 +664,55 @@ func readSession(r io.Reader) (SessionHeader, []Entry, error) {
 
 	if !sc.Scan() {
 		if err := sc.Err(); err != nil {
-			return SessionHeader{}, nil, fmt.Errorf("session: read header: %w", err)
+			return SessionHeader{}, nil, false, fmt.Errorf("session: read header: %w", err)
 		}
-		return SessionHeader{}, nil, fmt.Errorf("session: empty file (no header)")
+		return SessionHeader{}, nil, false, fmt.Errorf("session: empty file (no header)")
 	}
 	var header SessionHeader
 	if err := json.Unmarshal(sc.Bytes(), &header); err != nil {
-		return SessionHeader{}, nil, fmt.Errorf("session: parse header: %w", err)
+		return SessionHeader{}, nil, false, fmt.Errorf("session: parse header: %w", err)
 	}
 	if header.Version == 0 {
-		return SessionHeader{}, nil, fmt.Errorf("session: header missing version")
+		return SessionHeader{}, nil, false, fmt.Errorf("session: header missing version")
 	}
 	if header.Version > SchemaVersion {
-		return SessionHeader{}, nil, fmt.Errorf("session: file schema version %d newer than supported %d", header.Version, SchemaVersion)
+		return SessionHeader{}, nil, false, fmt.Errorf("session: file schema version %d newer than supported %d", header.Version, SchemaVersion)
 	}
 	// v3+ lines are wrapped entries; v1/v2 lines are bare messages that we migrate.
 	wrapped := header.Version >= 3
 
 	var entries []Entry
 	parentID := ""
+	// A line that fails to parse is held here instead of failing immediately: it
+	// is only truncation if nothing follows it (see decodeSession's contract).
+	var badLine int
+	var badErr error
 	for line := 2; sc.Scan(); line++ {
 		raw := sc.Bytes()
 		if len(strings.TrimSpace(string(raw))) == 0 {
 			continue // tolerate blank lines
 		}
+		if badErr != nil {
+			// Damage with content after it is corruption in the middle, which no
+			// mode recovers from.
+			return SessionHeader{}, nil, false, fmt.Errorf("session: parse entry line %d: %w", badLine, badErr)
+		}
 		var e Entry
 		if wrapped {
 			if err := json.Unmarshal(raw, &e); err != nil {
-				return SessionHeader{}, nil, fmt.Errorf("session: parse entry line %d: %w", line, err)
+				badLine, badErr = line, err
+				continue
 			}
 		} else {
 			// Migrate a bare v1/v2 message line: reuse MessageList's discriminated
 			// decoding, then synthesize the tree metadata (id + parentId chain).
 			var one agentcore.MessageList
 			if err := json.Unmarshal([]byte("["+string(raw)+"]"), &one); err != nil {
-				return SessionHeader{}, nil, fmt.Errorf("session: parse message line %d: %w", line, err)
+				badLine, badErr = line, err
+				continue
 			}
 			if len(one) != 1 {
-				return SessionHeader{}, nil, fmt.Errorf("session: message line %d decoded to %d messages, want 1", line, len(one))
+				return SessionHeader{}, nil, false, fmt.Errorf("session: message line %d decoded to %d messages, want 1", line, len(one))
 			}
 			e = Entry{ID: newEntryID(), ParentID: parentID, Timestamp: header.UpdatedAt, Message: one[0]}
 		}
@@ -584,9 +720,17 @@ func readSession(r io.Reader) (SessionHeader, []Entry, error) {
 		parentID = e.ID
 	}
 	if err := sc.Err(); err != nil {
-		return SessionHeader{}, nil, fmt.Errorf("session: scan: %w", err)
+		return SessionHeader{}, nil, false, fmt.Errorf("session: scan: %w", err)
 	}
-	return header, entries, nil
+	if badErr != nil {
+		if !tolerant {
+			return SessionHeader{}, nil, false, fmt.Errorf("session: parse entry line %d: %w", badLine, badErr)
+		}
+		// Torn tail: the prefix is intact, so the session stays resumable minus
+		// the interrupted turn.
+		return header, entries, true, nil
+	}
+	return header, entries, false, nil
 }
 
 // List returns the headers of the store's conversations, sorted by UpdatedAt
@@ -668,13 +812,21 @@ func (s *Store) loadHeader(id string) (SessionHeader, error) {
 // load-modify-save under the hood, which is simple and correct for the session
 // sizes pigo produces.
 func (s *Store) Append(id string, updatedAt time.Time, messages agentcore.MessageList) error {
-	header, existing, err := s.Load(id)
-	if err != nil {
-		return err
-	}
-	header.UpdatedAt = updatedAt
-	existing = append(existing, messages...)
-	return s.Save(header, existing)
+	// The whole load-modify-save runs under the write lease (T6.1). Reading
+	// outside the lease would reintroduce the lost-update window it exists to
+	// close: two writers could each read N turns and the second save would drop
+	// the first's turn even though the writes themselves were serialized.
+	return s.withLease(id, func() error {
+		header, existing, err := s.Load(id)
+		if err != nil {
+			return err
+		}
+		header.UpdatedAt = updatedAt
+		existing = append(existing, messages...)
+		return s.atomicWrite(id, func(w io.Writer) error {
+			return writeSession(w, header, existing)
+		})
+	})
 }
 
 // AppendBranch appends messages as a chain descending from parentLeafID,
@@ -694,22 +846,33 @@ func (s *Store) AppendBranch(header SessionHeader, parentLeafID string, messages
 	if header.ID == "" {
 		return "", fmt.Errorf("session: header ID must not be empty")
 	}
-	var entries []Entry
-	if _, existing, err := s.LoadEntries(header.ID); err == nil {
-		entries = existing
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	now := time.Now().UTC()
-	parent := parentLeafID
+	// SaveEntries forced the version; now that AppendBranch writes through
+	// atomicWrite directly it must do so itself, or a header built without one
+	// would persist as version 0 and fail to load.
+	header.Version = SchemaVersion
 	leaf := parentLeafID
-	for _, m := range messages {
-		e := Entry{ID: newEntryID(), ParentID: parent, Timestamp: now, Message: m}
-		entries = append(entries, e)
-		parent = e.ID
-		leaf = e.ID
-	}
-	if err := s.SaveEntries(header, entries); err != nil {
+	// The read-modify-write happens under the write lease so a concurrent
+	// AppendBranch cannot lose a branch (T6.1).
+	err := s.withLease(header.ID, func() error {
+		var entries []Entry
+		if _, existing, _, err := s.loadTolerant(header.ID); err == nil {
+			entries = existing
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		now := time.Now().UTC()
+		parent := parentLeafID
+		for _, m := range messages {
+			e := Entry{ID: newEntryID(), ParentID: parent, Timestamp: now, Message: m}
+			entries = append(entries, e)
+			parent = e.ID
+			leaf = e.ID
+		}
+		return s.atomicWrite(header.ID, func(w io.Writer) error {
+			return writeSessionEntries(w, header, entries)
+		})
+	})
+	if err != nil {
 		return "", err
 	}
 	return leaf, nil

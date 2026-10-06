@@ -3,7 +3,7 @@ package session
 // Tests for local JSONL session persistence and resume (US-024, #43). They
 // cover the write→read round-trip, listing order, resume into an AgentContext,
 // schema-version guarding, and append — driving the real filesystem via
-// t.TempDir(), the standard Go pattern for behavior tests.
+// testDir(t), the standard Go pattern for behavior tests.
 
 import (
 	"os"
@@ -46,7 +46,7 @@ func sampleMessages() agentcore.MessageList {
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := NewStore(t.TempDir())
+	s, err := NewStore(testDir(t))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

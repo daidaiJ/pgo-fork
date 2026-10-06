@@ -16,7 +16,7 @@ import (
 // newTestStore returns a Store rooted at a fresh temp dir.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := NewStore(t.TempDir())
+	s, err := NewStore(testDir(t))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

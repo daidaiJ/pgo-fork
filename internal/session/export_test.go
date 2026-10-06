@@ -42,7 +42,7 @@ func TestExportImportJSONLRoundTrip(t *testing.T) {
 	s := newStore(t)
 	header := seedSession(t, s)
 
-	out := filepath.Join(t.TempDir(), "export.jsonl")
+	out := filepath.Join(testDir(t), "export.jsonl")
 	n, err := s.Export(header.ID, out)
 	if err != nil {
 		t.Fatalf("Export: %v", err)
@@ -148,7 +148,7 @@ func TestExportHTMLSelfContained(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	out := filepath.Join(t.TempDir(), "export.html")
+	out := filepath.Join(testDir(t), "export.html")
 	if _, err := s.Export(header.ID, out); err != nil {
 		t.Fatalf("Export html: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestExportHTMLSelfContained(t *testing.T) {
 func TestImportRejectsHTML(t *testing.T) {
 	s := newStore(t)
 	header := seedSession(t, s)
-	out := filepath.Join(t.TempDir(), "export.html")
+	out := filepath.Join(testDir(t), "export.html")
 	if _, err := s.Export(header.ID, out); err != nil {
 		t.Fatalf("Export html: %v", err)
 	}
