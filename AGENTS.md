@@ -5,25 +5,22 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T5.2 工具副作用契约 + 权限规则层实作落地（2026-10-06，
-  第 5 期第二件，原 T5.1+T5.2 打包件当日收）**——内核三件：
-  ①`agentcore.ToolEffect` 契约（`effect.go`：ReadOnly/Destructive/Scope/
-  Timeout，可选接口 EffectAware，未声明=保守默认；21 内置工具全量声明+
-  快照测试；executor 执行阶段 WithTimeout 消费）；②`internal/toolrules`
-  叶子包（Rule/Store=permissions.json/词边界前缀 Match/**Engine 七步判定
-  次序**/SelfEdit symlink 穿透/AskPort 零 IO seam）——deny 规则终局
-  （trusted/bypass 不放行）+ ProposedRule 沉淀（REPL `s` 选项）+ 自改面
-  强制 ask（trust.json/permissions.json/config.toml 精确文件级）；
-  `[permissions]` 配置表；③接线：REPL engine 取代 trust 直连（remote
-  前置 RuleSeam 保 deny 终局）/TUI ask 走配对浏览器无浏览器 fail-closed
-  （**行为变化**）/headless nil ask fail-closed 可绕行；goal/btw 保留旧
-  seam（D-6）。规格 = [wiki/port/tool-rules-layer.md](wiki/port/tool-rules-layer.md)
-  （六参照融合 + 偏差 D-1~D-10 = §7）。全量基线 **41 包 0 FAIL**
-  （`.gtmp/t52-full2.txt`）。此前 T5.1 信封（`ebdf2e3`）、第 4 期四件均 ✅。
-  **下一步待用户拍板**：T5.2/T5.1 收口验收；第 5 期余件（T5.3 内置 skill
-  双件 1d + T5.4 路由评估 0.5d，建议连做收期）；T4.1 期验收 1（需 API
-  key）；T6.5 候选池排序（随 T5.4 结论）；其余待议段小件见
-  implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**第 5 期收官：T5.3 内置 skill 双件 + T5.4 角色路由评估落地
+  （2026-10-06，T5.3 = `f9bda6e`）**——①T5.3：`handoff`（交接台账）+
+  `defect-detective`（三轴深审）经 builtinskills 内置，manifest 新增
+  **dev-workflow 集合**（16→18 个），SKILL.md 已做 pigo 环境适配
+  （handoff 存项目根 `handoff/`；defect-detective 检索面改 pigo 工具 +
+  与 review-it 划界），repl 真实链路测试断言补两命令；②T5.4（零代码
+  书面件）：**结论 = 不独立立项 role 路由大件，per-role model 并入
+  skill-as-tool 完整体**（frontmatter `model` 消费 + SkillTool 接通，
+  实证 frontmatter model 已解析零消费 / SkillTool 机制 ready 无调用点）；
+  **T6.5 候选池更新：skill-as-tool 完整体升首位**。评估 =
+  [wiki/port/role-routing-assessment.md](wiki/port/role-routing-assessment.md)。
+  此前 T5.2（`9fc0470`）、T5.1（`ebdf2e3`）均 ✅（41 包 0 FAIL 基线）。
+  **下一步待用户拍板**：T5.2/T5.3 收口验收过目（自改面拒绝 + 沉淀免确认 +
+  TUI/headless fail-closed 行为变化 + skill 双件实跑）；第 6 期立项排序
+  （skill-as-tool ~1–1.5d 首批建议）；T4.1 token A/B 验收（需 API key）；
+  其余待议段小件见 implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
