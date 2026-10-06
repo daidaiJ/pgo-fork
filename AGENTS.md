@@ -5,18 +5,19 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 3 期 T3.2 防打转哨兵完成（2026-10-05）**
-  ——叶子包 `internal/runaway`：repeat-key（name+args 规范化哈希）连续
-  streak≥3 + 结果 sha256 指纹佐证（args 同结果在变=有效轮询不触发），
-  注入 system-reminder **不硬停**；无状态现算挂 ReminderRegistry
-  （US-002 管道），窗口边界 = user/compaction/纯文本 assistant；
-  `run.WithRunawayGuard` 幂等接线，六驱动全覆盖（REPL/TUI/SDK/headless/
-  task 子代理/goal）。偏差八条见 runaway-sentinel.md §5（D1 注入挂
-  reminder 而非 prepareNextTurn、D2 无硬停档）。T3.1 遗留 flake 未动：
-  TestREPLExportImportRoundTrip 整包偶发（疑似 NewID 微秒碰撞），待排查。
-  下一步 = T3.3 微压缩 / T3.4 canonical context edit，待用户排（**T3.3 施工
-  前置：先按 context-compaction-comparison.md 十维对比各原型压缩实现再动手，
-  2026-10-05 用户指令**）；待拍板项
+- **当前阶段**：**T3.3 施工前置完成：十维压缩跨原型对比（2026-10-06，只读
+  未动工）**——七原型（qwen/zcode/minimax/grok/step/kimi/crush + pigo
+  基线）十维全 file:line 实测对比，结论在
+  context-compaction-comparison.md §5。三要点：①持久模型定稿 = append-only
+  树 + marker entry + 请求组装投影（五家原型收敛，**推翻"qwen 原位占位"
+  预设**，R11 互斥已登记）；②qwen"三层压缩"修正为两层；③B 表勘误
+  （grok 无 InsufficientReduction，实为 degenerate 摘要地板）。**实锤
+  pigo 基线 6 缺陷**（§5.4）：最重 = 二次自动压缩丢旧摘要 + PersistTurn
+  压扁 v3 树毁弃分支（T3.1 G3 隐患实锤），均为 T3.3 必修前置。T3.3 范围
+  按 §5.5 定稿（3–4d，含基线结构件），T4.4 触发线公式定稿（implementation-
+  plan T4.4 行）。T3.1 遗留 flake 未动：TestREPLExportImportRoundTrip
+  整包偶发（疑似 NewID 微秒碰撞），待排查。下一步 = T3.3 微压缩动工
+  （前置已满足）；待拍板项
   （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
   dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移需求已按
   用户截图提取为 tui-grok-style.md，14 条 S 需求待拍板排期**）见
