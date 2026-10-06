@@ -238,6 +238,13 @@ func eventEnvelope(ev agentcore.AgentEvent) map[string]any {
 		if e.ErrorMessage != "" {
 			env["error"] = e.ErrorMessage
 		}
+	case agentcore.MicrocompactEvent:
+		env["reason"] = e.Reason
+		env["clearedCount"] = e.ClearedCount
+		env["savedTokens"] = e.SavedTokens
+		if e.SkipReason != "" {
+			env["skipReason"] = e.SkipReason
+		}
 	case agentcore.TelemetryEvent:
 		// The run-end telemetry summary: structured metrics a script can read
 		// directly from the stream-json output (observability -- structured telemetry collection). Per-tool
@@ -246,6 +253,7 @@ func eventEnvelope(ev agentcore.AgentEvent) map[string]any {
 		env["turns"] = e.Turns
 		env["truncationCount"] = e.TruncationCount
 		env["compactionCount"] = e.CompactionCount
+		env["microcompactCount"] = e.MicrocompactCount
 		env["contextUtilization"] = e.ContextUtilization
 		env["contextTokens"] = e.ContextTokens
 		env["contextWindow"] = e.ContextWindow

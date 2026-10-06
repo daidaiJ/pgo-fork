@@ -24,10 +24,11 @@ import (
 // parallel tool-batch goroutines (ExecuteToolCalls), so all mutation goes
 // through mu.
 type telemetry struct {
-	mu              sync.Mutex
-	turns           int
-	truncationCount int
-	compactionCount int
+	mu                sync.Mutex
+	turns             int
+	truncationCount   int
+	compactionCount   int
+	microcompactCount int
 
 	// toolStarts maps an in-flight tool call id to the wall-clock time its
 	// execution began, so the matching end event can compute a duration. Keying
@@ -130,6 +131,7 @@ func (t *telemetry) summary() agentcore.TelemetryEvent {
 		ToolDurationsMs:    timings,
 		TruncationCount:    t.truncationCount,
 		CompactionCount:    t.compactionCount,
+		MicrocompactCount:  t.microcompactCount,
 		ContextUtilization: utilization,
 		ContextTokens:      t.contextTokens,
 		ContextWindow:      t.contextWindow,

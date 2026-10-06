@@ -216,6 +216,11 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 
 	for { // outer loop: pending / follow-up messages
 		for { // inner loop: turns until no tool calls
+			// Microcompaction (T3.3) runs just before the request: the double
+			// gate (token pressure on the derived line, or the 60-minute
+			// cache-cold idle window) evicts old regenerable tool results via a
+			// durable marker; the projection turns them into placeholders.
+			maybeMicrocompact(ctx, agentCtx, &cfg, emit)
 			if err := emit(agentcore.TurnStartEvent{}); err != nil {
 				finishErr(err)
 				return
@@ -644,4 +649,42 @@ func toAgentToolCalls(blocks []agentcore.ToolCallContent) []agentcore.AgentToolC
 		calls[i] = agentcore.AgentToolCall{ID: b.ID, Name: b.Name, Arguments: b.Arguments}
 	}
 	return calls
+}
+
+// maybeMicrocompact runs one microcompaction pass before a turn's request
+// (T3.3): the zcode double gate — token pressure on the derived line
+// min(0.9×autoLine, autoLine−2K), or the 60-minute idle window where the
+// prompt cache is cold and eviction is free — decides whether to run; the
+// decision evicts old regenerable tool results by appending one durable
+// MicrocompactMessage marker (sticky: cleared results never resurrect, and
+// the next PersistTurn carries the marker into the tree). Everything is
+// decided on the request view; the raw list only ever grows. A pass is a
+// no-op when compaction is disabled or the window is unknown.
+func maybeMicrocompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, emit func(agentcore.AgentEvent) error) {
+	if !cfg.Compaction.Enabled || cfg.ContextWindow <= 0 {
+		return
+	}
+	view := compaction.ProjectView(agentCtx.Messages)
+	tokens := compaction.EstimateContextTokens(view).Tokens
+	line := compaction.MicrocompactPressureLine(cfg.ContextWindow, cfg.Compaction.ReserveTokens)
+	idle := compaction.IdleMillis(view, time.Now().UnixMilli()) >= compaction.MicrocompactIdleMillis
+	if line <= 0 && !idle {
+		return
+	}
+	if tokens < line && !idle {
+		return
+	}
+	dec := compaction.DecideMicrocompact(view, tokens, line, idle)
+	if len(dec.ClearedCallIDs) == 0 {
+		if dec.SkipReason != "" {
+			_ = emit(agentcore.MicrocompactEvent{Reason: dec.Reason, SkipReason: string(dec.SkipReason)})
+		}
+		return
+	}
+	agentCtx.Messages = append(agentCtx.Messages, dec.Marker(nowMillis()))
+	_ = emit(agentcore.MicrocompactEvent{
+		Reason:       dec.Reason,
+		ClearedCount: len(dec.ClearedCallIDs),
+		SavedTokens:  dec.SavedTokens,
+	})
 }

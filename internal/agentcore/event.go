@@ -24,6 +24,7 @@ const (
 	EventToolExecutionEnd    = "tool_execution_end"
 	EventCompaction          = "compaction"
 	EventCompactionStart     = "compaction_start"
+	EventMicrocompact        = "microcompact"
 	EventTelemetry           = "telemetry"
 	EventSubAgentProgress    = "subagent_progress"
 )
@@ -125,6 +126,22 @@ type CompactionEvent struct {
 	ErrorMessage string
 }
 
+// MicrocompactEvent is emitted when a microcompaction pass evicts old tool
+// results from the request view (T3.3), or when a triggered pass evicted
+// nothing (SkipReason set, Reason empty). The evictions are recorded durably
+// by a MicrocompactMessage marker; this event is the observable surface.
+type MicrocompactEvent struct {
+	// Reason is why the pass ran: "pressure" (token line) or "idle" (the
+	// 60-minute cache-cold window). Empty when nothing was evicted.
+	Reason string
+	// ClearedCount is how many tool results were evicted.
+	ClearedCount int
+	// SavedTokens is the estimated token footprint removed from the view.
+	SavedTokens int
+	// SkipReason is the typed reason a triggered pass evicted nothing.
+	SkipReason string
+}
+
 // CompactionStartEvent is emitted immediately before the loop runs compaction,
 // so a front-end can show an in-progress "Compacting conversation…" indicator
 // while the summarization request is in flight. The matching CompactionEvent is
@@ -188,6 +205,9 @@ type TelemetryEvent struct {
 	TruncationCount int
 	// CompactionCount is how many successful context compactions occurred.
 	CompactionCount int
+	// MicrocompactCount is how many microcompaction passes evicted results
+	// (T3.3).
+	MicrocompactCount int
 	// ContextUtilization is the latest used/window ratio in [0,1], or 0 when the
 	// context window is unknown. Computed as ContextTokens / ContextWindow.
 	ContextUtilization float64
@@ -209,6 +229,7 @@ func (ToolExecutionUpdateEvent) isAgentEvent() {}
 func (ToolExecutionEndEvent) isAgentEvent()    {}
 func (CompactionEvent) isAgentEvent()          {}
 func (CompactionStartEvent) isAgentEvent()     {}
+func (MicrocompactEvent) isAgentEvent()        {}
 func (TelemetryEvent) isAgentEvent()           {}
 func (SubAgentProgressEvent) isAgentEvent()    {}
 
@@ -223,6 +244,7 @@ func (ToolExecutionStartEvent) EventType() string  { return EventToolExecutionSt
 func (ToolExecutionUpdateEvent) EventType() string { return EventToolExecutionUpdate }
 func (ToolExecutionEndEvent) EventType() string    { return EventToolExecutionEnd }
 func (CompactionEvent) EventType() string          { return EventCompaction }
+func (MicrocompactEvent) EventType() string        { return EventMicrocompact }
 func (CompactionStartEvent) EventType() string     { return EventCompactionStart }
 func (TelemetryEvent) EventType() string           { return EventTelemetry }
 func (SubAgentProgressEvent) EventType() string    { return EventSubAgentProgress }
