@@ -5,22 +5,26 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 6 期首批实作收口：T6.5 skill-as-tool 完整体 +
-  T6.7 截断挽救（2026-10-06，`5f8a1e8`/`19df959`/`58d940a`，全量测试
-  全绿）**——
-  ①**T6.7 截断挽救**：`internal/provider/salvage.go` grok 默认态
-  （CompleteToolCalls）——length 停 + 全部 tool_calls 完整 → 改写
-  stop=tool_use 丢弃残尾；openai/anthropic 两解码器 finishDone 接线；
-  ②**T6.5 skill-as-tool**：技能物化为子 Agent 工具（可失败工厂
-  `NewRunConfigE`，spawn 期失败走信封 D-7）；frontmatter `model` 消费 =
-  子代理重解析 provider/凭证（铁律两条兑现）；子面 = ChildToolSet +
-  共享信号量；README 已对齐。**遗留**：skill-as-tool 未真链路实跑（19
-  内置技能均无 frontmatter model，钉模型路径待低成本实测——sensenova
-  flash-lite + 隔离 PIGO_HOME）；skill 工具面 token 成本（18 技能全物化）
-  与 T4.1 deferred 理念的张力可议。
-  **下一步待拍板**：T6.5 实跑验收方式；第 6 期第二批排序（上卡建议 =
-  T6.3 usage MVP + T6.1 写租约，T6.6 最后单独收）；记忆库污染现象立项
-  与否。其余见 handoff。
+- **当前阶段**：**第 6 期第二批：T6.5 真链路实跑验收 + T6.1 会话写租约
+  实作收口（2026-10-06，全量 41 包 0 FAIL）**——
+  ①**T6.5 实跑验收（上卡遗留①关闭）**：用户提供 sensenova key，隔离环境
+  在 `.gtmp/t65env/`（XDG_CONFIG_HOME/PIGO_HOME/PIGO_SKILLS_DIR；key 落在
+  被 gitignore 的 `config.toml`）→ 钉模型路由**成立**（frontmatter
+  `model: deepseek-v4-flash` → `PINNED_OK`），反证：钉不存在模型时上游 404
+  经 **D-7 信封**返回（不静默降级）；**踩坑**：skill 物化工具非 ReadOnly，
+  headless 未信任目录 fail-closed，`[permissions]` allow 规则的 **pattern
+  必须为空**（其他工具 = 整个工具，非 glob）；**实测**18 内置技能全物化 →
+  首轮 input 6074→11509（+89%，单技能 ≈300 token），是否并入 deferred 面
+  待拍板。②**T6.1 会话写租约**：锁 = **内核锁**（`flock`/`LockFileEx`，
+  常驻 `<id>.jsonl.lock` 不删）+ 同进程带超时信号量，acquire+release
+  **76μs vs O_EXCL 版 429μs**；`atomicWrite` 补 temp 名唯一/fsync/sha256
+  幂等 sentinel；截断恢复**只认末行**（中间损坏仍报错），`Append` 自愈、
+  `Repair` 显式修复（**未接线**）；根治 Windows"残留锁文件使目录不可删 →
+  挂掉不相干测试"的 flake（runtime 17.5s→5.1s）。规格 =
+  [session-write-lease.md](wiki/port/session-write-lease.md)。
+  **下一步**：**T6.4 pstack skill 盘点**（用户拍板"先收口再盘点"）；之后
+  第 6 期第三批排序待拍板。本机跑测试带 `TMP/TEMP/TMPDIR=D:\tmp`。其余见
+  handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
