@@ -137,6 +137,21 @@ func (t *ReadTool) Execute(ctx context.Context, id string, args json.RawMessage,
 	if truncated {
 		text += fmt.Sprintf("\n... (output truncated at %d lines; use offset to read more)", readToolMaxLines)
 	}
+	// Ledger the read (T3.5): fingerprint + content snapshot + residency for
+	// this call id, so the edit guard can vouch for (or refuse) later edits and
+	// microcompaction can revoke the residency when it evicts this result.
+	// Truncated reads arm residency too: pigo's edit matches old_string against
+	// the real file, so a partial view carries no stale-edit risk (spec D-2).
+	if st := ReadFileStateFromContext(ctx); st != nil {
+		st.RecordRead(agentcore.ReadRecord{
+			CallID:       id,
+			ArgPath:      a.Path,
+			ResolvedPath: full,
+			Content:      text,
+			ModTime:      info.ModTime(),
+			Size:         info.Size(),
+		})
+	}
 	return agentcore.AgentToolResult{Content: agentcore.ContentList{agentcore.NewTextContent(text)}}, nil
 }
 

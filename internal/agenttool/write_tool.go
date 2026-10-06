@@ -113,6 +113,9 @@ func (t *WriteTool) Execute(ctx context.Context, id string, args json.RawMessage
 	if err := os.WriteFile(full, []byte(a.Content), filePerm); err != nil {
 		return errorResult(fmt.Sprintf("write: cannot write %q: %v", a.Path, err)), nil
 	}
+	// The model just authored the full file content (T3.5): the strongest
+	// residency proof — no read required, qwen's write-proves-residency rule.
+	proveResidencyAfterMutation(ReadFileStateFromContext(ctx), full)
 	verb := "Created"
 	if overwrote {
 		verb = "Overwrote"

@@ -155,6 +155,13 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 	// cmp carries the run-scoped compaction circuit breaker and the one-shot
 	// post-compaction reminder (T3.3 随件).
 	cmp := &compactor{}
+	// readFileState ledger (T3.5): lazy-initialized so every AgentContext
+	// constructor gets it without opt-in — read/write/edit ledger their effects
+	// through the loop-injected context, and microcompaction revokes residency
+	// when it evicts read results. In-process only; never persisted.
+	if agentCtx.ReadFiles == nil {
+		agentCtx.ReadFiles = agentcore.NewReadFileState()
+	}
 	// Wire per-turn system-reminder injection (US-002) onto the TransformContext
 	// seam. Reminders are appended to the request-shaped copy only, so they stay
 	// ephemeral: never written back to agentCtx.Messages, never persisted, never

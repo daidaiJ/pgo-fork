@@ -11,6 +11,11 @@ type AgentContext struct {
 	SystemPrompt string      `json:"systemPrompt"`
 	Messages     MessageList `json:"messages"`
 	Tools        []AgentTool `json:"-"`
+	// ReadFiles is the readFileState ledger (T3.5): what the model has read,
+	// what is still resident in the history, and content snapshots for the
+	// post-compaction reminder. In-process only (not persisted); the loop
+	// lazy-initializes it, so constructors may leave it nil.
+	ReadFiles *ReadFileState `json:"-"`
 }
 
 // ToolExecutionMode selects how a tool is executed relative to others in a batch.

@@ -93,6 +93,12 @@ func (t *EditTool) Execute(ctx context.Context, id string, args json.RawMessage,
 	if err != nil {
 		return errorResult("edit: " + err.Error()), nil
 	}
+	// Freshness gate (T3.5): refuse edits the model cannot vouch for (never
+	// read, read result evicted, or file changed since read). Runs before any
+	// mutation; a rejection is a soft error the model recovers from by reading.
+	if msg, ok := guardEditAgainstStaleKnowledge(ReadFileStateFromContext(ctx), full); !ok {
+		return errorResult(msg), nil
+	}
 	data, err := os.ReadFile(full)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -122,6 +128,9 @@ func (t *EditTool) Execute(ctx context.Context, id string, args json.RawMessage,
 	if err := os.WriteFile(full, []byte(updated), filePerm); err != nil {
 		return errorResult(fmt.Sprintf("edit: cannot write %q: %v", a.Path, err)), nil
 	}
+	// The edit just produced the file's current content and the model saw the
+	// diff → post-edit state becomes the new freshness baseline (T3.5).
+	proveResidencyAfterMutation(ReadFileStateFromContext(ctx), full)
 
 	diff := unifiedDiff(a.Path, original, updated)
 	replaced := 1
