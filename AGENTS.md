@@ -5,25 +5,21 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T3.5 readFileState + edit 新鲜度守卫完成（2026-10-06，
-  当日落地，四 commit）**——`7b31072`（S1 `agentcore.ReadFileState` 账本：
-  指纹/快照/per-call residency/反查表，挂 `AgentContext.ReadFiles` 进程内
-  不持久化 + edit 三拒绝态守卫 + read/write/edit 接线）→ `914c2bb`（S2
-  微压缩驱逐联动 `RevokeEvicted`：#4239 收口，不可反查退全清）→ `502aac8`
-  （S3 时间戳修复：实测实锤生产路径零打点、60min 闲置闸门此前静默失效，
-  loop 五追加点统一补打）→ `e78da66`（S4 post-compaction reminder 内容
-  快照档，zcode 上限表，D-5 收口）。全量 38 包 exit=0。规格偏差 D-1~D-5
-  终稿 = **wiki/port/read-file-state.md**（micro-compaction.md D-3/D-5
-  已就地标注收口）。
-  **下一步 = 第 3 期收口评估**：期验收 = ①真实会话 token 曲线留档
-  （context edit §5 验收 1 + 微压缩曲线一并）+ ②rewind 全闭环回归；通过后
-  进第 4 期，或按用户拍板先切 **T3.3.1 压缩策略管线抽象**（用户点名，
-  Pipeline.RequestView/AfterTurn 归位方案 0.5–1d 见 implementation-plan
-  待议段）。T3.1 遗留 flake（TestREPLExportImportRoundTrip 整包偶发）未动。
-  其余待拍板项（pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性
-  S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移
-  需求已按用户截图提取为 tui-grok-style.md，14 条 S 需求待拍板排期**）
-  见 implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**T4.4 全清（2026-10-06，本会话）**——前置切片（`264ac17`
+  窗口感知 + max_context 阈值）之上，余项当日落地（`81f2f17`）：①触发线
+  通用公式 `internal/compaction/trigger.go` `CompactionLine`（per-model
+  override 表 kimi 0.85/minimax 0.90 优先，否则 minimax A 线
+  `w−max(reserve, perTurn+margin)` + B 线三重 min 前置防线；perTurn=0 严格
+  退化 pi 基线）；②动态 maxTokens = `min(cap, max(4096, w−est−margin−thinking))`
+  逐请求 stamp（共享 Extra 不变异）+ openai/resp_api hint 通路；③五驱动
+  `LiveConfig.MaxOutputTokens` 接线 + `/model` 重解析。偏差四条登记 =
+  **context-compaction-comparison.md §6.2**（kimi 自愈挂供应商韧性 S 族、
+  preset 输出上限数据留 0 → stamp 生产默认不激活）。
+  **下一步待用户拍板**：进第 4 期主件 T4.1（延迟工具声明，5–6d）或先收
+  待议段小件（T3.3.1 管线抽象 0.5–1d 等）。SDK 库压缩装配、其余待拍板项
+  （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
+  dynamic-workflow、code mode、TUI 风格对齐 grok——tui-grok-style.md
+  14 条 S 需求待排期）见 implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
