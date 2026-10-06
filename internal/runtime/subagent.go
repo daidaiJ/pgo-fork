@@ -144,6 +144,13 @@ type SubAgentSpec struct {
 	// mode. It is called per spawn; the returned config's Batch registry should
 	// contain Tools. Ignored in process mode (the subprocess resolves its own).
 	NewRunConfig func() RunConfig
+	// NewRunConfigE, when non-nil, replaces NewRunConfig and may fail: a
+	// spawn-time factory error (e.g. a skill's frontmatter model that cannot be
+	// resolved) is normalized into the T5.1 result envelope (D-7 semantics —
+	// failed status + the cause in the body) instead of a Go error, so the
+	// parent model can read next_step and act. It takes precedence over
+	// NewRunConfig when both are set.
+	NewRunConfigE func() (RunConfig, error)
 	// Isolation selects goroutine (default) vs process execution. Zero value is
 	// goroutine, preserving the original behavior.
 	Isolation SubAgentIsolation
@@ -240,7 +247,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, id string, args json.RawMess
 	// from Process.Model - so the check is guarded to goroutine mode. This
 	// preserves the original precedence (nil NewRunConfig reported before an
 	// empty prompt) for the unchanged goroutine path.
-	if t.spec.Isolation != SubAgentIsolationProcess && t.spec.NewRunConfig == nil {
+	if t.spec.Isolation != SubAgentIsolationProcess && t.spec.NewRunConfig == nil && t.spec.NewRunConfigE == nil {
 		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q: no run configuration", t.spec.Name)
 	}
 	var a subAgentArgs
@@ -286,7 +293,24 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id, prompt, descrip
 			return agentcore.AgentToolResult{}, ctx.Err()
 		}
 	}
-	runCfg := t.spec.NewRunConfig()
+	var runCfg RunConfig
+	if t.spec.NewRunConfigE != nil {
+		rc, ferr := t.spec.NewRunConfigE()
+		if ferr != nil {
+			// D-7: a spawn-time factory failure (e.g. a skill's frontmatter
+			// model that cannot resolve) is a normal envelope result, not a Go
+			// error — the parent model reads the cause and acts on next_step.
+			final := &agentcore.AssistantMessage{StopReason: agentcore.StopReasonError, ErrorMessage: ferr.Error()}
+			env, body := buildEnvelope(id, final, ferr.Error())
+			return agentcore.AgentToolResult{
+				Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
+				Details: env,
+			}, nil
+		}
+		runCfg = rc
+	} else {
+		runCfg = t.spec.NewRunConfig()
+	}
 	// Advertise the child's tools to the model. A spec may pin an explicit set
 	// (spec.Tools); otherwise fall back to the run config's registry — the tools
 	// the executor can actually run — so a factory that wires only the registry

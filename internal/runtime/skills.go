@@ -250,20 +250,23 @@ func LoadSkillsDir(dir string) ([]*Skill, error) {
 // child's system prompt, the description is surfaced to the model, and the tool
 // set is the provided tools filtered by AllowedTools (when set). newRunConfig
 // builds each child run's configuration; it receives the resolved tool set so
-// the caller can wire a matching registry.
-func (s *Skill) SubAgentSpec(tools []agentcore.AgentTool, newRunConfig func(tools []agentcore.AgentTool) RunConfig) SubAgentSpec {
+// the caller can wire a matching registry. The factory may fail (skill-as-tool,
+// T6.5: a frontmatter model that cannot resolve) — the error surfaces as the
+// sub-agent result envelope (D-7), never as a silent fallback to the parent's
+// model.
+func (s *Skill) SubAgentSpec(tools []agentcore.AgentTool, newRunConfig func(tools []agentcore.AgentTool) (RunConfig, error)) SubAgentSpec {
 	resolved := filterToolsByName(tools, s.Frontmatter.AllowedTools)
 	return SubAgentSpec{
-		Name:         s.Frontmatter.Name,
-		Description:  s.Frontmatter.Description,
-		SystemPrompt: s.Body,
-		Tools:        resolved,
-		NewRunConfig: func() RunConfig { return newRunConfig(resolved) },
+		Name:          s.Frontmatter.Name,
+		Description:   s.Frontmatter.Description,
+		SystemPrompt:  s.Body,
+		Tools:         resolved,
+		NewRunConfigE: func() (RunConfig, error) { return newRunConfig(resolved) },
 	}
 }
 
 // SkillTool materializes a skill as an invocable sub-agent tool.
-func (s *Skill) SkillTool(tools []agentcore.AgentTool, newRunConfig func(tools []agentcore.AgentTool) RunConfig) *SubAgentTool {
+func (s *Skill) SkillTool(tools []agentcore.AgentTool, newRunConfig func(tools []agentcore.AgentTool) (RunConfig, error)) *SubAgentTool {
 	return NewSubAgentTool(s.SubAgentSpec(tools, newRunConfig))
 }
 

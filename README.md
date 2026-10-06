@@ -483,12 +483,20 @@ Review the PR at $1. Focus on:
 技能是带 YAML frontmatter（`name`、`description`，可选 `allowed-tools`、`model`、`disable-model-invocation`）的 Markdown 文件，位于 `~/.agents/skills`（可用 `PIGO_SKILLS_DIR` 覆盖）：
 
 - 支持扁平的 `*.md` 与嵌套的 `<name>/SKILL.md`。
-- 每个技能在 REPL 中暴露为 `/skill-name` 斜杠命令（展开正文为 prompt，支持 `$ARGUMENTS` 替换），也可作为子 Agent 工具运行。
+- 每个技能在 REPL 中暴露为 `/skill-name` 斜杠命令（展开正文为 prompt，支持 `$ARGUMENTS` 替换），也可作为子 Agent 工具运行（见下"技能即工具"）。
 - `--no-skills` 禁用技能发现；格式错误的技能会被非致命地跳过。
 
 ### 模型自动调用（渐进式披露）
 
 除了手动的 `/skill-name` 调用，技能还可被模型**自动调用**。pigo 采用渐进式披露：仅将每个技能的 `name`、`description` 和文件路径（location）注入系统提示的 `<available_skills>` 块，模型在任务匹配某技能的描述时，用 `read` 工具按需加载 `SKILL.md` 正文，而非把所有技能正文常驻上下文。
+
+### 技能即工具（skill-as-tool）
+
+除斜杠命令与渐进式披露外，每个模型可调用的技能还会物化为一个**子 Agent 工具**（工具名 = 技能名）：调用时技能正文作为子 Agent 的 system prompt 独立运行，`allowed-tools` 收窄子 Agent 工具面，子 Agent 不能再派发（嵌套护栏与 `task` 一致）。frontmatter 的 `model` 字段为该技能钉住专用模型（role = skill 语义）：
+
+- `model` 未设置时子 Agent 继承父级 provider/model。
+- `model` 设置时按该 id 重新解析 provider 与凭证；解析失败会以子 Agent 结果信封（`status: failed`）报错，**不会**静默降级到父级模型。
+- `disable-model-invocation: true` 的技能不物化为工具（仅 `/skill-name` 可达）；`--no-tools` 下全部技能工具不物化。
 
 - **仅当 `read` 工具可用时**自动调用才生效（`--no-tools` 或屏蔽 `read` 时不注入 `<available_skills>`），因为模型需要 `read` 才能加载技能正文。
 - 在 frontmatter 中设置 `disable-model-invocation: true` 可将某技能排除出 `<available_skills>`（模型不会自动调用它），但它仍可通过 `/skill-name` 斜杠命令显式调用。

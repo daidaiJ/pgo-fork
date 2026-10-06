@@ -452,9 +452,9 @@ func TestSkillSubAgentSpec(t *testing.T) {
 	}
 	tools := []agentcore.AgentTool{execTool{name: "read"}, execTool{name: "write"}, execTool{name: "bash"}}
 	var gotTools []agentcore.AgentTool
-	spec := sk.SubAgentSpec(tools, func(resolved []agentcore.AgentTool) RunConfig {
+	spec := sk.SubAgentSpec(tools, func(resolved []agentcore.AgentTool) (RunConfig, error) {
 		gotTools = resolved
-		return RunConfig{}
+		return RunConfig{}, nil
 	})
 	if spec.Name != "reader" || spec.Description != "reads" {
 		t.Errorf("spec identity = %q/%q", spec.Name, spec.Description)
@@ -465,8 +465,10 @@ func TestSkillSubAgentSpec(t *testing.T) {
 	if len(spec.Tools) != 1 || spec.Tools[0].Name() != "read" {
 		t.Errorf("allowed-tools filter failed, spec tools = %v", spec.Tools)
 	}
-	// NewRunConfig passes the resolved (filtered) tool set to the factory.
-	spec.NewRunConfig()
+	// NewRunConfigE passes the resolved (filtered) tool set to the factory.
+	if _, err := spec.NewRunConfigE(); err != nil {
+		t.Errorf("factory error = %v, want nil", err)
+	}
 	if len(gotTools) != 1 || gotTools[0].Name() != "read" {
 		t.Errorf("factory received %v, want [read]", gotTools)
 	}

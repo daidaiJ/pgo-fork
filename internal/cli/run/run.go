@@ -137,18 +137,24 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// deferrable set (a policy-deny removes the tool from the face entirely,
 	// so a claimed deferred tool can never widen the boundary — 验收 5).
 	var toolPlan *tooldecl.Plan
+	// Shared sub-agent concurrency cap and credential store: both the generic
+	// task tool and the skill-as-tool children (T6.5) draw from the same
+	// semaphore (one run-wide fan-out bound) and the same parent-provider
+	// credential override. Both stay nil under --no-tools.
+	var sem chan struct{}
+	var childCreds *provider.CredentialStore
 	// Wire the generic task tool (US-002, #454) unless tools are disabled. It
 	// dispatches general-purpose sub-agents that reuse the resolved provider
 	// stream/model. Each spawn gets a fresh child RunConfig whose registry is the
 	// builtins with "task" removed (the nesting guard, so a child cannot fan out
 	// again), and all task calls in a run share one semaphore capping concurrency.
 	if !noTools {
-		sem := runtime.NewSubagentSemaphore()
+		sem = runtime.NewSubagentSemaphore()
 		// The child resolves credentials the same way the parent does: env/OAuth via
 		// a fresh store, plus the CLI/config api key as an override. Without the
 		// override a child would get an empty key whenever auth comes from config.toml
 		// or --api-key (not an env var), leaving every sub-agent unauthenticated.
-		childCreds := provider.NewCredentialStore(nil)
+		childCreds = provider.NewCredentialStore(nil)
 		childCreds.SetOverride(resolvedName, apiKey)
 		factory := func() runtime.RunConfig {
 			childTools := ChildToolSet(cwd, policy)
@@ -156,17 +162,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 			// [tools] subagent_defer. The child's plan is the parent plan
 			// intersected with the child's registry names (capability 只减不增);
 			// search_tools joins the child set only when something defers.
-			var childPlan *tooldecl.Plan
-			if toolPlan != nil && toolsCfg.SubagentDefer {
-				childNames := make(map[string]bool, len(childTools))
-				for _, t := range childTools {
-					childNames[t.Name()] = true
-				}
-				childPlan = toolPlan.Intersect(childNames)
-				if childPlan.HasDeferred() {
-					childTools = append(childTools, &agenttool.SearchToolsTool{})
-				}
-			}
+			childPlan, childTools := childToolDeclaration(childTools, toolPlan, toolsCfg)
 			return runtime.RunConfig{
 				LoopConfig: runtime.LoopConfig{
 					Model:     model,
@@ -214,6 +210,36 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		}
 		pluginsSpan.End()
 	}
+	// Load skills once (shared between prompt injection, /skill-name
+	// registration and skill-as-tool materialization). A partial parse error
+	// still yields the skills that DID load, so one malformed file is a
+	// non-fatal warning rather than a hard failure.
+	skillsSpan := spans.Begin("startup.setup_env.skills")
+	skills, err := LoadSkills(noSkills)
+	skillsSpan.End()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: skills: %v\n", err)
+	}
+	// Skill-as-tool (T6.5, role-routing-assessment.md 方案 B): every
+	// model-invocable skill is ALSO materialized as a sub-agent tool — its body
+	// runs as the child's system prompt, its AllowedTools narrows the child face,
+	// and a frontmatter `model` re-resolves the child provider per spawn
+	// (resolution failure = D-7 envelope, never a silent fallback). The
+	// materialized tools must join the policy boundary, so this happens BEFORE
+	// ValidateToolPolicy below. Children go through ChildToolSet (task/ask_user
+	// excluded = nesting guard + D-4, policy-narrowed), and share the task
+	// semaphore so one run-wide fan-out cap covers both spawn paths.
+	if !noTools && len(skills) > 0 {
+		skillFace := ChildToolSet(cwd, policy)
+		for _, s := range skills {
+			if s.Frontmatter.DisableModelInvocation {
+				continue // slash-only: not model-invocable as a tool either
+			}
+			spec := s.SubAgentSpec(skillFace, skillChildRunConfig(s, model, baseURL, protocol, prov, resolvedName, apiKey, childCreds, toolPlan, toolsCfg))
+			spec.Sem = sem
+			tools = append(tools, runtime.NewSubAgentTool(spec))
+		}
+	}
 	// Enforce the --allowed-tools/--disallowed-tools boundary now that the set is
 	// complete. Validation must happen here rather than at flag-parse time: plugin
 	// and memory tool names only exist at runtime, so an earlier check would reject
@@ -253,15 +279,6 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		} else {
 			fmt.Fprintf(os.Stderr, "pigo: info: deferred tool declaration requested but model %q does not advertise the capability; falling back to direct declaration (force with [tools] deferred_capable = true)\n", model)
 		}
-	}
-	// Load skills once (shared between prompt injection and /skill-name
-	// registration). A partial parse error still yields the skills that DID load,
-	// so one malformed file is a non-fatal warning rather than a hard failure.
-	skillsSpan := spans.Begin("startup.setup_env.skills")
-	skills, err := LoadSkills(noSkills)
-	skillsSpan.End()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pigo: skills: %v\n", err)
 	}
 	// The model can only load a skill's body when the read tool is present, so
 	// advertise skills in the prompt only then (mirrors pi's selectedTools check).
@@ -309,7 +326,67 @@ func deferredCapable(prov provider.Provider, model string, force bool) bool {
 	return false
 }
 
-// hasReadTool reports whether the read tool is present in the tool set. Skills
+// childToolDeclaration intersects the run's deferred-declaration plan with a
+// sub-agent's tool set (T4.1 spec §3.4: capability 只减不增 — a child can never
+// claim a tool its registry does not carry). It returns the child plan (nil =
+// direct declaration) and the tool set with search_tools appended when the
+// child actually has a deferred face. Shared by the task and skill-as-tool
+// spawn paths so both honor [tools] subagent_defer identically.
+func childToolDeclaration(childTools []agentcore.AgentTool, plan *tooldecl.Plan, toolsCfg config.ToolsConfig) (*tooldecl.Plan, []agentcore.AgentTool) {
+	if plan == nil || !toolsCfg.SubagentDefer {
+		return nil, childTools
+	}
+	names := make(map[string]bool, len(childTools))
+	for _, t := range childTools {
+		names[t.Name()] = true
+	}
+	childPlan := plan.Intersect(names)
+	if childPlan.HasDeferred() {
+		childTools = append(childTools, &agenttool.SearchToolsTool{})
+	}
+	return childPlan, childTools
+}
+
+// skillChildRunConfig builds the per-spawn run-config factory for one
+// skill-as-tool child (T6.5). The child inherits the parent provider unless the
+// skill's frontmatter pins a `model`, in which case the model AND its provider
+// and credentials are re-resolved from scratch (铁律: childCreds follow the
+// role's provider — the parent's key override belongs to the parent provider
+// and is never reused across providers; a different one resolves its own key
+// from env/OAuth). A resolution error is returned rather than swallowed, so the
+// sub-agent envelope carries the cause (D-7) instead of silently degrading to
+// the parent model.
+func skillChildRunConfig(skill *runtime.Skill, parentModel, baseURL, protocol string, parentProv provider.Provider, parentName, apiKey string, parentCreds *provider.CredentialStore, toolPlan *tooldecl.Plan, toolsCfg config.ToolsConfig) func(childTools []agentcore.AgentTool) (runtime.RunConfig, error) {
+	skillModel := strings.TrimSpace(skill.Frontmatter.Model)
+	return func(childTools []agentcore.AgentTool) (runtime.RunConfig, error) {
+		childModel, childProv, childName := parentModel, parentProv, parentName
+		creds := parentCreds
+		if skillModel != "" && skillModel != parentModel {
+			p, n, err := provider.ResolveProvider(skillModel, baseURL, protocol, "", os.Getenv)
+			if err != nil {
+				return runtime.RunConfig{}, fmt.Errorf("skill %q: resolve model %q: %w", skill.Frontmatter.Name, skillModel, err)
+			}
+			childModel, childProv, childName = skillModel, p, n
+			if n != parentName {
+				creds = provider.NewCredentialStore(nil)
+			}
+		}
+		childPlan, childTools := childToolDeclaration(childTools, toolPlan, toolsCfg)
+		return runtime.RunConfig{
+			LoopConfig: runtime.LoopConfig{
+				Model:     childModel,
+				Provider:  childName,
+				Stream:    provider.StreamFnFromProvider(childProv),
+				GetAPIKey: creds.GetAPIKey,
+			},
+			Batch:           agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: ToolRegistry(childTools)}},
+			ToolDeclaration: childPlan,
+			// Skill children are unattended like task children: the runaway
+			// sentinel rides along (T3.2).
+			Reminders: WithRunawayGuard(nil),
+		}, nil
+	}
+}
 // are advertised in the system prompt only when it is, since the model needs the
 // read tool to load a skill's body on demand.
 func hasReadTool(tools []agentcore.AgentTool) bool {
