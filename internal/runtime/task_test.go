@@ -77,7 +77,9 @@ func TestTaskReturnsChildText(t *testing.T) {
 }
 
 // TestTaskFailedChildErrors verifies a child whose final turn stops on error is
-// surfaced to the parent as a tool error (not a silent success).
+// surfaced to the parent as a structured T5.1 envelope (a normal tool result
+// carrying status/stop_reason/next_step), not a silent success and not an
+// opaque Go-error string.
 func TestTaskFailedChildErrors(t *testing.T) {
 	// A child turn ending on StopReason=error, carrying diagnostic text as content
 	// (executeGoroutine surfaces the child's Content on failure).
@@ -105,12 +107,30 @@ func TestTaskFailedChildErrors(t *testing.T) {
 		}
 	}
 	tool := NewTaskTool(factory, nil)
-	_, err := tool.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"go"}`), nil)
-	if err == nil {
-		t.Fatal("a child that stopped on error must surface as a tool error")
+	res, err := tool.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"go"}`), nil)
+	if err != nil {
+		t.Fatalf("a failed child must be a normal (envelope) result, got tool error %v", err)
 	}
-	if !strings.Contains(err.Error(), "child exploded") {
-		t.Errorf("error should carry the child's diagnostic, got %v", err)
+	got := agentcore.ContentToText(res.Content)
+	for _, want := range []string{
+		"[subagent result]",
+		"agent_id: id",
+		"status: failed",
+		"stop_reason: error",
+		"next_step:",
+		"child exploded",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("envelope result missing %q:\n%s", want, got)
+		}
+	}
+	// The envelope also rides in Details for structured consumers (TUI).
+	env, ok := res.Details.(SubAgentEnvelope)
+	if !ok {
+		t.Fatalf("Details = %T, want SubAgentEnvelope", res.Details)
+	}
+	if env.Status != SubAgentStatusFailed || env.StopReason != "error" || env.AgentID != "id" {
+		t.Errorf("Details envelope = %+v", env)
 	}
 }
 
@@ -229,5 +249,134 @@ func TestTaskAdvertisesRegistryTools(t *testing.T) {
 	names := map[string]bool{gotTools[0].Name(): true, gotTools[1].Name(): true}
 	if !names["read"] || !names["bash"] {
 		t.Errorf("child tools = %v, want read+bash from the registry", names)
+	}
+}
+
+// stopTurn scripts one faux child turn that ends on the given raw stop reason
+// with the given content text and (optionally) ErrorMessage, driving the T5.1
+// envelope table-driven acceptance cases.
+func stopTurn(reason, text, errMsg string) fauxTurn {
+	partial := agentcore.AssistantMessage{RoleField: agentcore.RoleAssistant}
+	if text != "" {
+		partial.Content = agentcore.ContentList{agentcore.NewTextContent(text)}
+	}
+	final := partial
+	final.StopReason = reason
+	final.ErrorMessage = errMsg
+	evs := []provider.AssistantMessageEvent{provider.StreamStartEvent{Partial: partial}}
+	if text != "" {
+		evs = append(evs, provider.StreamTextEvent{Partial: final})
+	}
+	return fauxTurn(append(evs, provider.StreamDoneEvent{Message: final}))
+}
+
+// TestTaskEnvelopeOutcome drives the T5.1 acceptance table: every settled stop
+// reason maps to its documented envelope outcome (status/stop_reason/next_step)
+// on the goroutine path. Table rows mirror wiki/port/subagent-result-envelope.md
+// §6.1 (kimi NEXT_STEP_BY_REASON, adapted for the v1 no-resume wording).
+func TestTaskEnvelopeOutcome(t *testing.T) {
+	factoryFor := func(turn fauxTurn) func() RunConfig {
+		child := &fauxProvider{
+			name:   "faux-child",
+			models: []provider.Model{{Provider: "faux-child", ID: "child"}},
+			turns:  []fauxTurn{turn},
+		}
+		return func() RunConfig {
+			return RunConfig{
+				LoopConfig: LoopConfig{Model: "child", Stream: provider.StreamFnFromProvider(child)},
+				Batch:      agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: agenttool.NewToolRegistry()}},
+			}
+		}
+	}
+
+	cases := []struct {
+		name       string
+		turn       fauxTurn
+		wantStatus string
+		wantReason string
+		// wantBody is asserted as contained in the result text ("" = skip).
+		wantBody string
+		// wantTextIsBody marks the completed contract: the result text equals the
+		// body verbatim with NO envelope header (byte-identical happy path).
+		wantTextIsBody bool
+		wantNextStepFrags []string
+	}{
+		{
+			name:           "completed end_turn returns text verbatim",
+			turn:           stopTurn(agentcore.StopReasonEndTurn, "the report", ""),
+			wantStatus:     SubAgentStatusCompleted,
+			wantReason:     "completed",
+			wantTextIsBody: true,
+			wantBody:       "the report",
+		},
+		// NOTE: the raw "length" stop reason is intentionally absent from this
+		// full-loop table — the child loop itself consumes length (it fails
+		// truncated tool calls and resends, loop.go StopReasonLength branch), so
+		// it cannot reach the task settle point through a real child run. The
+		// length->max_tokens mapping is pinned at the unit level instead
+		// (envelope_test.go TestStopReasonOf / TestNextStepFor).
+		{
+			name:              "aborted maps to cancelled",
+			turn:              stopTurn(agentcore.StopReasonAborted, "", "aborted"),
+			wantStatus:        SubAgentStatusFailed,
+			wantReason:        "cancelled",
+			wantBody:          "aborted",
+			wantNextStepFrags: []string{"stopped by the user", "Do not restart"},
+		},
+		{
+			name:              "end_turn without text maps to no_final_message",
+			turn:              stopTurn(agentcore.StopReasonEndTurn, "", ""),
+			wantStatus:        SubAgentStatusFailed,
+			wantReason:        "no_final_message",
+			wantNextStepFrags: []string{"no final report"},
+		},
+		{
+			name:              "error without content surfaces ErrorMessage",
+			turn:              stopTurn(agentcore.StopReasonError, "", "provider connection refused"),
+			wantStatus:        SubAgentStatusFailed,
+			wantReason:        "error",
+			wantBody:          "provider connection refused",
+			wantNextStepFrags: []string{"Re-dispatch"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := NewTaskTool(factoryFor(tc.turn), nil)
+			res, err := tool.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"go"}`), nil)
+			if err != nil {
+				t.Fatalf("Execute err = %v, want a normal (envelope) result", err)
+			}
+			env, ok := res.Details.(SubAgentEnvelope)
+			if !ok {
+				t.Fatalf("Details = %T, want SubAgentEnvelope", res.Details)
+			}
+			if env.Status != tc.wantStatus || env.StopReason != tc.wantReason || env.AgentID != "id" {
+				t.Errorf("envelope = %+v, want status=%s reason=%s agent_id=id", env, tc.wantStatus, tc.wantReason)
+			}
+			got := agentcore.ContentToText(res.Content)
+			if tc.wantTextIsBody {
+				if got != tc.wantBody {
+					t.Errorf("completed result = %q, want verbatim body %q (no envelope header)", got, tc.wantBody)
+				}
+				if env.NextStep != "" {
+					t.Errorf("completed next_step = %q, want empty", env.NextStep)
+				}
+				return
+			}
+			for _, frag := range []string{"[subagent result]", "status: " + tc.wantStatus, "stop_reason: " + tc.wantReason} {
+				if !strings.Contains(got, frag) {
+					t.Errorf("result missing %q:\n%s", frag, got)
+				}
+			}
+			for _, frag := range tc.wantNextStepFrags {
+				if !strings.Contains(env.NextStep, frag) {
+					t.Errorf("next_step %q missing %q", env.NextStep, frag)
+				}
+			}
+			if tc.wantBody != "" && !strings.Contains(got, tc.wantBody) {
+				t.Errorf("result missing body fragment %q:\n%s", tc.wantBody, got)
+			}
+		})
 	}
 }

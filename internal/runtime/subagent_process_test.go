@@ -97,9 +97,9 @@ func TestSubAgentProcessModeFake(t *testing.T) {
 			SystemPrompt: "you are a subprocess child",
 		})
 		var got SubAgentRunParams
-		sub.processCall = func(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (string, error) {
+		sub.processCall = func(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (SubAgentRunResult, error) {
 			got = params
-			return "process result: 99", nil
+			return SubAgentRunResult{Text: "process result: 99", StopReason: agentcore.StopReasonEndTurn}, nil
 		}
 		res, err := sub.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"find it"}`), nil)
 		if err != nil {
@@ -121,8 +121,8 @@ func TestSubAgentProcessModeFake(t *testing.T) {
 			Isolation: SubAgentIsolationProcess,
 			Process:   SubAgentProcessConfig{Model: "faux"},
 		})
-		sub.processCall = func(context.Context, SubAgentProcessConfig, SubAgentRunParams) (string, error) {
-			return "", errors.New("subprocess exited: signal: killed")
+		sub.processCall = func(context.Context, SubAgentProcessConfig, SubAgentRunParams) (SubAgentRunResult, error) {
+			return SubAgentRunResult{}, errors.New("subprocess exited: signal: killed")
 		}
 		_, err := sub.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"x"}`), nil)
 		if err == nil {
@@ -152,9 +152,9 @@ func TestSubAgentProcessModeFake(t *testing.T) {
 			Tools:     []agentcore.AgentTool{nameOnlyTool("read"), nameOnlyTool("grep")},
 		})
 		var got SubAgentRunParams
-		sub.processCall = func(_ context.Context, _ SubAgentProcessConfig, params SubAgentRunParams) (string, error) {
+		sub.processCall = func(_ context.Context, _ SubAgentProcessConfig, params SubAgentRunParams) (SubAgentRunResult, error) {
 			got = params
-			return "ok", nil
+			return SubAgentRunResult{Text: "ok", StopReason: agentcore.StopReasonEndTurn}, nil
 		}
 		if _, err := sub.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"x"}`), nil); err != nil {
 			t.Fatalf("Execute err = %v", err)
@@ -193,32 +193,41 @@ func TestRunSubAgentOnce(t *testing.T) {
 			models: []provider.Model{{Provider: "faux", ID: "faux"}},
 			turns:  []fauxTurn{textTurn("hello from child")},
 		}
-		text, err := RunSubAgentOnce(context.Background(), "sys", "do it", nil, newFauxRunCfg(p))
+		res, err := RunSubAgentOnce(context.Background(), "sys", "do it", nil, newFauxRunCfg(p))
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
-		if text != "hello from child" {
-			t.Errorf("text = %q, want 'hello from child'", text)
+		if res.Text != "hello from child" {
+			t.Errorf("text = %q, want 'hello from child'", res.Text)
+		}
+		if res.StopReason != agentcore.StopReasonEndTurn {
+			t.Errorf("stopReason = %q, want %q", res.StopReason, agentcore.StopReasonEndTurn)
 		}
 		if p.callCount() != 1 {
 			t.Errorf("provider calls = %d, want 1", p.callCount())
 		}
 	})
 
-	t.Run("failed run errors", func(t *testing.T) {
+	// T5.1 envelope contract: a settled run reports its (raw) stop reason in
+	// the result instead of returning an error — only transport-level failures
+	// error. The parent renders the failure as a structured envelope.
+	t.Run("failed run carries stop reason", func(t *testing.T) {
 		p := &fauxProvider{
 			name:   "faux",
 			models: []provider.Model{{Provider: "faux", ID: "faux"}},
 			turns:  []fauxTurn{errorTurn("boom")},
 		}
-		_, err := RunSubAgentOnce(context.Background(), "sys", "do it", nil, newFauxRunCfg(p))
-		if err == nil {
-			t.Fatal("expected error for failed child run, got nil")
+		res, err := RunSubAgentOnce(context.Background(), "sys", "do it", nil, newFauxRunCfg(p))
+		if err != nil {
+			t.Fatalf("err = %v, want nil (settled run)", err)
+		}
+		if res.StopReason != agentcore.StopReasonError {
+			t.Errorf("stopReason = %q, want %q", res.StopReason, agentcore.StopReasonError)
 		}
 		// The diagnostic is in ErrorMessage (errorTurn sets no Content); the
 		// subprocess must surface it rather than a bare "error" stop reason.
-		if !strings.Contains(err.Error(), "boom") {
-			t.Errorf("error %q does not contain the 'boom' diagnostic", err.Error())
+		if !strings.Contains(res.ErrorMessage, "boom") {
+			t.Errorf("errorMessage %q does not contain the 'boom' diagnostic", res.ErrorMessage)
 		}
 	})
 }
@@ -232,14 +241,14 @@ func TestSubAgentProcessDefaultCall(t *testing.T) {
 	cfg := SubAgentProcessConfig{Command: bin}
 
 	t.Run("happy round-trip", func(t *testing.T) {
-		text, err := defaultProcessCall(context.Background(), cfg, SubAgentRunParams{
+		res, err := defaultProcessCall(context.Background(), cfg, SubAgentRunParams{
 			Prompt: "hello", Model: "faux", SystemPrompt: "sys",
 		})
 		if err != nil {
 			t.Fatalf("defaultProcessCall err = %v", err)
 		}
-		if text != "echo: hello" {
-			t.Errorf("text = %q, want 'echo: hello'", text)
+		if res.Text != "echo: hello" {
+			t.Errorf("text = %q, want 'echo: hello'", res.Text)
 		}
 	})
 

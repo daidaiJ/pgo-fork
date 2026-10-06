@@ -99,9 +99,16 @@ type SubAgentRunParams struct {
 }
 
 // SubAgentRunResult is the JSON-RPC response payload carrying the child's final
-// assistant text.
+// assistant text plus the normalized stop reason (T5.1 envelope): stopReason is
+// always set on a settled run (empty only for a transport-level failure, which
+// is an RPC error instead), so the parent can build the result envelope even
+// when the child failed. errorMessage carries the child's diagnostic (loop
+// error text) when stopReason is "error". The extra fields are omitempty, so
+// the wire contract stays backward compatible with older peers.
 type SubAgentRunResult struct {
-	Text string `json:"text"`
+	Text         string `json:"text"`
+	StopReason   string `json:"stopReason,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
 }
 
 // SubAgentRPCMethod is the JSON-RPC method name the parent calls on the
@@ -187,7 +194,7 @@ type SubAgentTool struct {
 	// process-isolated mode. Tests inject a fake to exercise the process-mode
 	// logic (params shaping, crash-as-error, result forwarding) without building
 	// a real binary; production leaves it nil so Execute uses defaultProcessCall.
-	processCall func(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (string, error)
+	processCall func(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (SubAgentRunResult, error)
 }
 
 // NewSubAgentTool builds a sub-agent tool from a spec. In goroutine mode
@@ -243,7 +250,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, id string, args json.RawMess
 		// Process mode returns only the child's final text (the JSON-RPC protocol
 		// does not stream partial updates), so onUpdate is intentionally not
 		// forwarded here; a caller supplying a sink gets no deltas in this mode.
-		return t.executeProcess(ctx, a.Prompt)
+		return t.executeProcess(ctx, id, a.Prompt)
 	}
 	return t.executeGoroutine(ctx, id, a.Prompt, a.Description, onUpdate)
 }
@@ -336,29 +343,47 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id, prompt, descrip
 	if err != nil {
 		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q: %w", t.spec.Name, err)
 	}
+	// T5.1 envelope: normalize the settled run into the structured outcome. The
+	// parent's ctx governs the child, so a cancelled parent short-circuits as a
+	// tool error (the whole run is going down; an envelope inviting the model to
+	// re-dispatch would be wrong).
+	if ctx.Err() != nil {
+		return agentcore.AgentToolResult{}, ctx.Err()
+	}
 	text := ""
 	if final != nil {
 		text = agentcore.ContentToText(final.Content)
 	}
-	if text == "" {
-		text = fmt.Sprintf("(sub-agent %q produced no text output)", t.spec.Name)
+	env, body := buildEnvelope(id, final, text)
+	// Completed runs keep the pre-envelope contract: the child's final message
+	// is the sole handoff and the result text is returned verbatim (the
+	// envelope rides in Details for the TUI/telemetry), so existing consumers
+	// of successful task results see no change.
+	if env.Status == SubAgentStatusCompleted {
+		return agentcore.AgentToolResult{
+			Content: agentcore.ContentList{agentcore.NewTextContent(body)},
+			Details: env,
+		}, nil
 	}
-	// Surface a failed child run as a tool error so the parent model gets a
-	// signal the delegation failed (the tool executor marks the result
-	// IsError). A child whose final turn stopped on error/aborted otherwise
-	// looks like a successful delegation carrying error text.
-	if final != nil && (final.StopReason == agentcore.StopReasonError || final.StopReason == agentcore.StopReasonAborted) {
-		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q failed (%s): %s", t.spec.Name, final.StopReason, text)
-	}
-	return agentcore.AgentToolResult{Content: agentcore.ContentList{agentcore.NewTextContent(text)}}, nil
+	// Every non-completed outcome (max_tokens / error / cancelled /
+	// no_final_message) formats as the fixed-field envelope text — a normal
+	// (non-error) tool result so the parent model can read next_step and act,
+	// instead of the executor collapsing the failure into an opaque error
+	// string (kimi semantics: the structured contract replaces free-form
+	// failure interpretation).
+	return agentcore.AgentToolResult{
+		Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
+		Details: env,
+	}, nil
 }
 
 // executeProcess runs the child agent loop in a fresh pigo subprocess over stdio
-// JSON-RPC and returns its final text. A subprocess crash, transport error, or
-// failed child run is surfaced as a tool error; the parent loop is unaffected.
-// Streamed child text is not forwarded (the process protocol returns only the
-// final result); the parent sees the complete result when the child settles.
-func (t *SubAgentTool) executeProcess(ctx context.Context, prompt string) (agentcore.AgentToolResult, error) {
+// JSON-RPC and returns its final outcome. A subprocess crash or transport error
+// is surfaced as a tool error; a settled child run (including a failed one) is
+// normalized into the T5.1 result envelope. Streamed child text is not
+// forwarded (the process protocol returns only the final result); the parent
+// sees the complete result when the child settles.
+func (t *SubAgentTool) executeProcess(ctx context.Context, id, prompt string) (agentcore.AgentToolResult, error) {
 	cfg := t.spec.Process
 	if cfg.Model == "" {
 		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q: process mode requires Process.Model", t.spec.Name)
@@ -383,28 +408,58 @@ func (t *SubAgentTool) executeProcess(ctx context.Context, prompt string) (agent
 	if call == nil {
 		call = defaultProcessCall
 	}
-	text, err := call(ctx, cfg, params)
+	res, err := call(ctx, cfg, params)
 	if err != nil {
 		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q (process): %w", t.spec.Name, err)
 	}
-	if text == "" {
-		text = fmt.Sprintf("(sub-agent %q produced no text output)", t.spec.Name)
+	// Body fallback chain mirroring the child-side diagnostic: final text, then
+	// the loop's synthesized error message, then the raw stop reason — so a
+	// failed envelope always carries its cause.
+	body := res.Text
+	if body == "" {
+		body = res.ErrorMessage
 	}
-	return agentcore.AgentToolResult{Content: agentcore.ContentList{agentcore.NewTextContent(text)}}, nil
+	if body == "" {
+		body = res.StopReason
+	}
+	env, body := buildEnvelope(id, envelopeFinalOf(res), body)
+	if env.Status == SubAgentStatusCompleted {
+		return agentcore.AgentToolResult{
+			Content: agentcore.ContentList{agentcore.NewTextContent(body)},
+			Details: env,
+		}, nil
+	}
+	return agentcore.AgentToolResult{
+		Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
+		Details: env,
+	}, nil
+}
+
+// envelopeFinalOf adapts a wire-level SubAgentRunResult into the final-message
+// view buildEnvelope normalizes: the RPC result carries the child's normalized
+// stopReason directly (the subprocess ran RunSubAgentOnce, which reports it),
+// so it is folded into a synthetic stop-reason carrier.
+func envelopeFinalOf(res SubAgentRunResult) *agentcore.AssistantMessage {
+	if res.StopReason == "" {
+		return nil
+	}
+	return &agentcore.AssistantMessage{StopReason: res.StopReason, ErrorMessage: res.ErrorMessage}
 }
 
 // defaultProcessCall is the production subprocess transport: it launches the
 // pigo binary (or cfg.Command) with the subagent-rpc flag, sends a single
 // "subagent/run" JSON-RPC request over the child's stdin, and returns the
-// child's final text from the response. The child is closed (killed if it does
-// not exit on its own) before returning. A crash, transport error, or RPC error
-// is returned as a Go error so executeProcess surfaces it as a tool error.
-func defaultProcessCall(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (string, error) {
+// child's final outcome (text + normalized stop reason). The child is closed
+// (killed if it does not exit on its own) before returning. A crash, transport
+// error, or RPC error is returned as a Go error so executeProcess surfaces it
+// as a tool error; a settled child run — failed or not — comes back as a
+// result with StopReason set (T5.1 envelope contract).
+func defaultProcessCall(ctx context.Context, cfg SubAgentProcessConfig, params SubAgentRunParams) (SubAgentRunResult, error) {
 	command := cfg.Command
 	if command == "" {
 		exe, err := os.Executable()
 		if err != nil {
-			return "", fmt.Errorf("resolve pigo executable: %w", err)
+			return SubAgentRunResult{}, fmt.Errorf("resolve pigo executable: %w", err)
 		}
 		command = exe
 	}
@@ -426,29 +481,38 @@ func defaultProcessCall(ctx context.Context, cfg SubAgentProcessConfig, params S
 		Stderr:  cfg.Stderr,
 	})
 	if err != nil {
-		return "", err
+		return SubAgentRunResult{}, err
 	}
 	defer client.Close()
 	raw, err := client.Call(ctx, SubAgentRPCMethod, params)
 	if err != nil {
-		return "", err
+		return SubAgentRunResult{}, err
 	}
 	var res SubAgentRunResult
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return "", fmt.Errorf("decode sub-agent result: %w", err)
+		return SubAgentRunResult{}, fmt.Errorf("decode sub-agent result: %w", err)
 	}
-	return res.Text, nil
+	return res, nil
 }
 
 // RunSubAgentOnce runs one sub-agent loop to completion and returns the child's
-// final assistant text. It is the execution core shared by the process-isolated
+// final outcome: the last assistant text plus the normalized stop reason (T5.1
+// envelope). It is the execution core shared by the process-isolated
 // subprocess (cmd/pigo --subagent-rpc): given a resolved RunConfig (provider
 // stream, tool registry) and the prompt/system prompt, it builds a fresh child
-// context and drains the run. A run whose final turn stopped on error/aborted
-// is reported as an error so the subprocess surfaces failure (as an RPC error)
-// rather than returning empty text. It does not stream partial updates: the
-// process protocol returns only the final result.
-func RunSubAgentOnce(ctx context.Context, systemPrompt, prompt string, tools []agentcore.AgentTool, runCfg RunConfig) (string, error) {
+// context and drains the run.
+//
+// A settled run is returned as a result with StopReason set, regardless of
+// whether the child succeeded — the error return is reserved for transport-level
+// failures (a drained stream error, e.g. a provider connection failure or a
+// cancelled context). The caller (the subprocess RPC handler) answers those
+// with an RPC error and forwards settled results to the parent, which renders
+// the failure as an envelope. When the loop synthesizes an error turn (e.g. a
+// provider failure) the diagnostic lands in ErrorMessage, not Content; it is
+// surfaced there so the parent's envelope shows the real cause rather than a
+// bare "error" stop reason. It does not stream partial updates: the process
+// protocol returns only the final result.
+func RunSubAgentOnce(ctx context.Context, systemPrompt, prompt string, tools []agentcore.AgentTool, runCfg RunConfig) (SubAgentRunResult, error) {
 	childCtx := &agentcore.AgentContext{
 		SystemPrompt: systemPrompt,
 		Messages: agentcore.MessageList{
@@ -459,24 +523,13 @@ func RunSubAgentOnce(ctx context.Context, systemPrompt, prompt string, tools []a
 	stream := StartRun(ctx, childCtx, runCfg)
 	final, err := DrainStream(ctx, stream, StreamHandler{})
 	if err != nil {
-		return "", err
+		return SubAgentRunResult{}, err
 	}
-	text := ""
+	res := SubAgentRunResult{}
 	if final != nil {
-		text = agentcore.ContentToText(final.Content)
+		res.Text = agentcore.ContentToText(final.Content)
+		res.StopReason = final.StopReason
+		res.ErrorMessage = final.ErrorMessage
 	}
-	if final != nil && (final.StopReason == agentcore.StopReasonError || final.StopReason == agentcore.StopReasonAborted) {
-		// When the loop synthesizes an error turn (e.g. a provider connection
-		// failure) the diagnostic lands in ErrorMessage, not Content; fall back
-		// to it so the subprocess surfaces the real cause rather than a bare
-		// "error" stop reason.
-		if text == "" && final.ErrorMessage != "" {
-			text = final.ErrorMessage
-		}
-		if text == "" {
-			text = string(final.StopReason)
-		}
-		return text, fmt.Errorf("sub-agent failed (%s): %s", final.StopReason, text)
-	}
-	return text, nil
+	return res, nil
 }

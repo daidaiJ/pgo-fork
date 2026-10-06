@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/cli/ui"
+	"github.com/smallnest/pigo/internal/runtime"
 )
 
 // TestSubagentPanelLifecycle exercises the ordered add/update/remove set: rows
@@ -288,5 +289,62 @@ func TestSubagentPanelAppendOutputUnknown(t *testing.T) {
 	p.appendOutput("ghost", "data") // must not panic or add a row
 	if p.active() != 0 {
 		t.Errorf("active after appendOutput to unknown id = %d, want 0", p.active())
+	}
+}
+
+// TestSubagentPanelFinish exercises the T5.1 terminal-outcome contract: a
+// completed envelope removes the row exactly as the pre-envelope toolEnd path;
+// a failed envelope keeps the row, which renders the stop_reason in the panel.
+func TestSubagentPanelFinish(t *testing.T) {
+	now := time.Now()
+	var p subagentPanel
+	p.add("ok", "task OK", now)
+	p.add("bad", "task BAD", now)
+
+	// Completed: row removed (unchanged behavior).
+	p.finish("ok", "")
+	if p.active() != 1 {
+		t.Fatalf("active after completed finish = %d, want 1 (row removed)", p.active())
+	}
+	// Failed: row stays, marked with the stop_reason.
+	p.finish("bad", "max_tokens")
+	if p.active() != 1 {
+		t.Fatalf("active after failed finish = %d, want 1 (row kept)", p.active())
+	}
+	if row := p.byID["bad"]; row == nil || row.failed != "max_tokens" {
+		t.Errorf("row bad = %+v, want failed=max_tokens", row)
+	}
+	line := p.view(DefaultTheme(), 200, now)
+	if !strings.Contains(line, "failed (max_tokens)") {
+		t.Errorf("failed row view missing 'failed (max_tokens)':\n%s", line)
+	}
+	// Finishing an unknown id is a no-op (no phantom row).
+	p.finish("ghost", "error")
+	if p.active() != 1 {
+		t.Errorf("active after finish(unknown) = %d, want 1", p.active())
+	}
+}
+
+// TestFailedReasonFromDetails pins the details-to-outcome mapping consumed by
+// model.go's toolEndMsg handler: a failed envelope yields its stop_reason, a
+// completed one (and any other tool's details) removes the row, and a Go-level
+// tool error without an envelope (e.g. a subprocess crash) maps to "error".
+func TestFailedReasonFromDetails(t *testing.T) {
+	cases := []struct {
+		name    string
+		details any
+		toolOK  bool
+		want    string
+	}{
+		{"failed envelope", runtime.SubAgentEnvelope{Status: runtime.SubAgentStatusFailed, StopReason: "cancelled"}, true, "cancelled"},
+		{"completed envelope", runtime.SubAgentEnvelope{Status: runtime.SubAgentStatusCompleted}, true, ""},
+		{"other tool details (diff)", "some-diff-payload", true, ""},
+		{"nil details, ok", nil, true, ""},
+		{"nil details, tool error", nil, false, "error"},
+	}
+	for _, tc := range cases {
+		if got := failedReasonFromDetails(tc.details, tc.toolOK); got != tc.want {
+			t.Errorf("%s: failedReasonFromDetails = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

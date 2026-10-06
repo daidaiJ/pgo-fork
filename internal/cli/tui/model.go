@@ -476,10 +476,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			card.response = parseToolResult(result)
 			m.transcript.reflow()
 		}
-		// Retire the sub-agent's status-panel row (a no-op for non-task tools whose id
-		// was never added), reclaiming its reserved height.
+		// Settle the sub-agent's status-panel row (a no-op for non-task tools whose
+		// id was never added): a completed sub-agent is removed as before, while a
+		// failed one (T5.1 envelope) stays visible with its stop_reason until run
+		// end clears the panel.
 		if _, wasSub := m.subagents.byID[msg.id]; wasSub {
-			m.subagents.remove(msg.id)
+			m.subagents.finish(msg.id, failedReasonFromDetails(msg.details, msg.ok))
 			m.relayout()
 		}
 		return m, m.pumpNext()

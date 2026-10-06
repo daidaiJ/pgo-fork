@@ -119,15 +119,21 @@ func handleSubAgentRequest(ctx context.Context, enc *json.Encoder, req *jsonrpc.
 	} else {
 		run.InstallHooks(&runCfg, set, run.HookDeps{ProjectDir: cwd, WarnLog: os.Stderr})
 	}
-	text, err := runtime.RunSubAgentOnce(ctx, params.SystemPrompt, params.Prompt, tools, runCfg)
+	res, err := runtime.RunSubAgentOnce(ctx, params.SystemPrompt, params.Prompt, tools, runCfg)
 	if err != nil {
-		// A failed child run is an RPC error so the parent's defaultProcessCall
-		// returns a Go error and executeProcess marks the tool result IsError,
-		// matching goroutine mode's "failed run -> tool error" behavior.
+		// Only transport-level failures (stream error, cancelled context) are
+		// RPC errors so the parent's defaultProcessCall surfaces a tool error.
+		// A settled child run — failed or not — is a normal response carrying
+		// the normalized stop reason (T5.1 envelope); the parent renders the
+		// failure as a structured envelope instead of an opaque error string.
 		writeSubAgentError(enc, req.ID, -32000, err.Error())
 		return
 	}
-	result, _ := json.Marshal(runtime.SubAgentRunResult{Text: text})
+	result, merr := json.Marshal(res)
+	if merr != nil {
+		writeSubAgentError(enc, req.ID, -32000, "encode sub-agent result: "+merr.Error())
+		return
+	}
 	_ = enc.Encode(jsonrpc.Response{JSONRPC: jsonrpc.Version, ID: req.ID, Result: result})
 }
 

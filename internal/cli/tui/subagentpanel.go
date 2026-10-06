@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/smallnest/pigo/internal/runtime"
 )
 
 // This file renders the multi-line sub-agent status panel (SPEC 4.4, US-006): a
@@ -31,7 +33,10 @@ const maxExpandedLines = 12
 // id. start is recorded when the row is added so elapsed can be computed at
 // render time; activity/tokens are refreshed by subagentProgressMsg; output
 // accumulates the sub-agent's forwarded text (toolUpdate deltas + final result)
-// for the inline expanded view.
+// for the inline expanded view. failed is the envelope's stop_reason when the
+// sub-agent ended without completing (T5.1): a failed row stays in the panel
+// (rendered in the warn style) so the outcome is visible instead of silently
+// disappearing at tool end; it is cleared with the panel at run end.
 type subagentRow struct {
 	id       string
 	desc     string
@@ -39,6 +44,7 @@ type subagentRow struct {
 	tokens   int
 	start    time.Time
 	output   string
+	failed   string
 }
 
 // subagentPanel is the ordered set of live sub-agents. order preserves insertion
@@ -105,6 +111,41 @@ func (p *subagentPanel) appendOutput(id, delta string) {
 	if row, ok := p.byID[id]; ok {
 		row.output += delta
 	}
+}
+
+// finish records the sub-agent's terminal outcome for the task's toolEndMsg
+// (T5.1 envelope consumption). A failedReason (the envelope's stop_reason, or
+// "error" for a transport-level failure) marks the row failed so it stays
+// visible; an empty reason (completed, or a non-subagent end) removes the row
+// exactly as before. Unknown ids are a no-op, matching remove.
+func (p *subagentPanel) finish(id, failedReason string) {
+	if failedReason == "" {
+		p.remove(id)
+		return
+	}
+	if row, ok := p.byID[id]; ok {
+		row.failed = failedReason
+	}
+}
+
+// failedReasonFromDetails extracts the panel's terminal outcome from a tool
+// result's Details. The task tool attaches a runtime.SubAgentEnvelope to every
+// result: a failed envelope yields its stop_reason (the row stays, marked);
+// anything else — completed envelope, other tools' details (edit's diff), or a
+// nil details — yields "" (the row is removed as before). toolOK is false when
+// the executor reported a Go-level error (e.g. a subprocess crash): such an end
+// carries no envelope, so it is mapped to "error" to keep the failure visible.
+func failedReasonFromDetails(details any, toolOK bool) string {
+	if env, ok := details.(runtime.SubAgentEnvelope); ok {
+		if env.Status == runtime.SubAgentStatusFailed {
+			return env.StopReason
+		}
+		return ""
+	}
+	if !toolOK {
+		return "error"
+	}
+	return ""
 }
 
 // remove drops the row for id (the task's toolEndMsg). It is a no-op when id is
@@ -288,17 +329,31 @@ func wrapToWidth(s string, width int) []string {
 	return segs
 }
 
-// render builds one status line for a row: "{cursor}⏺ {desc} · {activity}
-// ({elapsed} · ↓{tokens})". A blank description is omitted (the line leads with
-// the glyph and activity); a zero token estimate drops the "↓" stat. When
-// selected, the line leads with a "❯ " cursor and the head takes the accent color
-// to stand out; otherwise the glyph + head take the spinner color and the
-// parenthetical stats are dim, mirroring the spinner line.
+// render builds one status line for a row. A live row is
+// "{cursor}⏺ {desc} · {activity} ({elapsed} · ↓{tokens})"; a failed row is
+// "{cursor}⏺ {desc} · failed ({stop_reason}) ({elapsed})" in the warn style so
+// the terminal outcome stands out until run end clears the panel (T5.1).
+// A blank description is omitted (the line leads with the glyph and activity); a
+// zero token estimate drops the "↓" stat. When selected, the line leads with a
+// "❯ " cursor and the head takes the accent color to stand out; otherwise the
+// glyph + head take the spinner color and the parenthetical stats are dim,
+// mirroring the spinner line.
 func (r subagentRow) render(theme Theme, now time.Time, selected bool) string {
 	var head strings.Builder
 	head.WriteString("⏺")
 	if r.desc != "" {
 		fmt.Fprintf(&head, " %s ·", r.desc)
+	}
+	if r.failed != "" {
+		fmt.Fprintf(&head, " failed (%s)", r.failed)
+		stats := formatElapsed(now.Sub(r.start))
+		style := theme.Warn
+		cursor := "  "
+		if selected {
+			style = theme.Accent
+			cursor = theme.Accent.Render("❯ ")
+		}
+		return cursor + style.Render(head.String()) + " " + theme.System.Render("("+stats+")")
 	}
 	fmt.Fprintf(&head, " %s", r.activity)
 

@@ -5,38 +5,25 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T4.2 questionnaire 结构化提问落地（2026-10-06，第 4 期实作面
-  全部收口）**——多步问卷 schema + `ask_user` 工具 + TUI 问题面板：内核 =
-  `internal/questionnaire` 叶子包（minimax V2 schema 子集：1..4 步/每步 0..4
-  选项/recommended 唯一/single·multiple/allow_other/显式 skip + Normalize/
-  DegradedReply/ResultText）+ `agenttool.AskUserTool`（**阻塞式 QuestionPort
-  端口**，zcode/kimi 形态而非 minimax 停轮模型，D-1；sequential 执行；nil
-  端口降级 = 自动答 recommended→首选项、`requires_explicit_response` 给
-  "state your assumption" 指引，D-3）；问答经普通 role=tool 条目入史。
-  接线 = `run.SetAskPort` finder + REPL stdin 端口（ConfirmMu + trust 同款
-  安全论证，Enter=recommended）+ TUI `teaAskPort`/`askPanel`（单步向导、
-  Warn 统一等待徽章、恒一个 waitAsk 在途）+ task 子代理剔除 ask_user（D-4）。
-  偏差 D-1~D-8 登记
-  [questionnaire-ask-user.md](wiki/port/questionnaire-ask-user.md) §7。
-  基线 **39 包 0 FAIL**（`.gtmp/t42-full.txt`）。
-  此前 T4.3（`4b84390`，BTW peek 会话 + uniqueID 根治既有 flake）、
-  T4.1（`58aedec`）、T3.3.1（`1768d08`）、T4.4 均清——**第 4 期
-  T4.1/T4.2/T4.3/T4.4 实作面全部 ✅**。
-  **第 5/6 期重排（2026-10-06，用户要求按重要性×收益拆分）**：依据 =
-  [wiki/port/phase5-split-assessment.md](wiki/port/phase5-split-assessment.md)
-  （双轴 AX/CX 评分矩阵 + 四条现状纠偏 + 降级台账）。新第 5 期 =
-  **agent 自主性与决策质量**（T5.1 子代理信封 / T5.2 副作用契约+权限规则层
-  打包 / T5.3 内置 skill 双件 / T5.4 多模型路由评估 / T5.5 供应商韧性 /
-  T5.6 截断挽救）；新第 6 期 = **生态耐久**（T6.1 会话租约 / T6.2 MCP
-  先评估（pigo 无 client，原 2d 估漏地基）/ T6.3 usage 缩 MVP / T6.4 pstack
-  只盘点 / T6.5 候选池）。
-  **下一步待用户拍板**：第 4 期收口验收（T4.1 期验收 1 defer 档 token A/B
-  仍未做，需 API key 可随时插入）；T5.5/T5.6 是否进第 5 期、T6.2 MCP 是否
-  补 client、T6.5 候选池排序；其余待拍板项
-  （pi-durable 切片 1、/ui 面板、skill-as-tool、
-  供应商韧性 S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——
-  tui-grok-style.md 14 条 S 需求待排期）见 implementation-plan 待议段；
-  其余均见 handoff。
+- **当前阶段**：**T5.1 子代理结果信封 + stop_reason 实作落地（2026-10-06，
+  第 5 期第一件）**——内核 = `internal/runtime/envelope.go`
+  （SubAgentEnvelope：agent_id/status/stop_reason/next_step；词表 completed/
+  max_tokens/error/cancelled/no_final_message；2000 字符 body 封顶）；
+  goroutine/process 双路径收尾点统一走信封，**失败从 Go error 改为普通
+  文本信封结果**（D-7，期验收①依赖父模型可读 next_step）；completed 文本
+  逐字返回仅 Details 挂信封（D-1，验收③不回归）；RPC `SubAgentRunResult`
+  增 stopReason/errorMessage（D-6）；TUI subagentpanel 失败行 Warn 保留至
+  runEnd。偏差 D-1~D-8 登记
+  [subagent-result-envelope.md](wiki/port/subagent-result-envelope.md) §7。
+  **第 5/6 期拍板（2026-10-06）**：T5.5/T5.6 双双移第 6 期（T6.6/T6.7），
+  第 5 期收敛核心 4 件；T6.2 MCP 保留 0.5d 评估。此前第 4 期
+  T4.1/T4.2/T4.3/T4.4 实作面全部 ✅（T4.1 期验收 1 token A/B 仍待 key）。
+  **下一步待用户拍板**：T5.1 收口验收；第 5 期后续件（T5.2 契约+权限规则
+  打包 3.5–4d / T5.3 内置 skill 双件 / T5.4 路由评估）；T4.1 期验收 1
+  （需 API key）；T6.5 候选池排序；其余待议段小件
+  （pi-durable 切片 1、/ui 面板、skill-as-tool、dynamic-workflow、code
+  mode、TUI 风格对齐 grok——tui-grok-style.md 14 条 S 需求待排期）见
+  implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)

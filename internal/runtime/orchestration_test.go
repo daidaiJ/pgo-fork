@@ -169,8 +169,10 @@ func TestSubAgentEmptyPromptErrors(t *testing.T) {
 }
 
 // TestSubAgentFailedChildErrors verifies a child whose final turn stopped on
-// error/aborted is surfaced to the parent as a tool error (not a silent
-// success), so the parent model learns the delegation failed.
+// error is surfaced to the parent as a structured T5.1 envelope (a normal tool
+// result carrying status/stop_reason/next_step), so the parent model learns
+// the delegation failed AND what to do next — not a silent success, and not an
+// opaque Go-error string.
 func TestSubAgentFailedChildErrors(t *testing.T) {
 	// A child turn that ends with StopReason=error carrying diagnostic text.
 	errTurn := func(text string) fauxTurn {
@@ -200,12 +202,15 @@ func TestSubAgentFailedChildErrors(t *testing.T) {
 			}
 		},
 	})
-	_, err := sub.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"go"}`), nil)
-	if err == nil {
-		t.Fatal("a child that stopped on error must surface as a tool error")
+	res, err := sub.Execute(context.Background(), "id", json.RawMessage(`{"prompt":"go"}`), nil)
+	if err != nil {
+		t.Fatalf("a failed child must be a normal (envelope) result, got tool error %v", err)
 	}
-	if !strings.Contains(err.Error(), "provider blew up") {
-		t.Errorf("error should carry the child's diagnostic text, got %v", err)
+	got := agentcore.ContentToText(res.Content)
+	for _, want := range []string{"status: failed", "stop_reason: error", "provider blew up"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("envelope result missing %q:\n%s", want, got)
+		}
 	}
 }
 
