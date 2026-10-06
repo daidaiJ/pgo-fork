@@ -162,10 +162,10 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 	addedPartial := false
 	backfill := func(partial agentcore.AssistantMessage) {
 		if !addedPartial {
-			agentCtx.Messages = append(agentCtx.Messages, partial)
+			agentCtx.Messages = append(agentCtx.Messages, stampedMessage(partial))
 			addedPartial = true
 		} else {
-			agentCtx.Messages[len(agentCtx.Messages)-1] = partial
+			agentCtx.Messages[len(agentCtx.Messages)-1] = stampedMessage(partial)
 		}
 	}
 
@@ -222,9 +222,9 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 // appends it if the provider sent done/error without a prior start.
 func finalizeMessage(agentCtx *agentcore.AgentContext, final agentcore.AssistantMessage, addedPartial *bool) {
 	if *addedPartial {
-		agentCtx.Messages[len(agentCtx.Messages)-1] = final
+		agentCtx.Messages[len(agentCtx.Messages)-1] = stampedMessage(final)
 	} else {
-		agentCtx.Messages = append(agentCtx.Messages, final)
+		agentCtx.Messages = append(agentCtx.Messages, stampedMessage(final))
 		*addedPartial = true
 	}
 }

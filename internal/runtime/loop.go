@@ -35,8 +35,36 @@ import (
 )
 
 // nowMillis returns the current Unix time in milliseconds, the timestamp unit
-// used for CompactionMessage checkpoints.
+// used for CompactionMessage checkpoints and message stamps.
 func nowMillis() int64 { return time.Now().UnixMilli() }
+
+// stampedMessage records the append wall clock on a message the loop adds to
+// the live list (T3.5 随件② fix): the microcompaction idle gate reads the
+// newest message timestamp, and no production path stamped one before — the
+// provider decoders and the drivers all leave it zero — so the 60-minute
+// idle window could never open. Zero timestamps on restored history are left
+// alone (backfilling "now" would fake activity; zero = never idle, the
+// conservative direction).
+func stampedMessage(m agentcore.Message) agentcore.Message {
+	switch t := m.(type) {
+	case agentcore.UserMessage:
+		if t.Timestamp == 0 {
+			t.Timestamp = nowMillis()
+			return t
+		}
+	case agentcore.AssistantMessage:
+		if t.Timestamp == 0 {
+			t.Timestamp = nowMillis()
+			return t
+		}
+	case agentcore.ToolResultMessage:
+		if t.Timestamp == 0 {
+			t.Timestamp = nowMillis()
+			return t
+		}
+	}
+	return m
+}
 
 // TurnUpdate is the optional result of PrepareNextTurn: any non-nil field
 // replaces the corresponding piece of loop state before the next turn. It lets
@@ -306,7 +334,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				agentcore.WithProgressEmitter(ctx, emitFrom), agentCtx)
 			toolResults, allTerminate := agenttool.ExecuteToolCalls(toolCtx, cfg.Batch, calls, emitFrom)
 			for _, tr := range toolResults {
-				agentCtx.Messages = append(agentCtx.Messages, tr)
+				agentCtx.Messages = append(agentCtx.Messages, stampedMessage(tr))
 			}
 			if err := emit(agentcore.TurnEndEvent{Message: assistant, ToolResults: toolResults}); err != nil {
 				finishErr(err)
@@ -327,7 +355,9 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		// Inner loop settled: consult follow-up messages.
 		if cfg.GetFollowUpMessages != nil {
 			if follow := cfg.GetFollowUpMessages(ctx, agentCtx); len(follow) > 0 {
-				agentCtx.Messages = append(agentCtx.Messages, follow...)
+				for _, m := range follow {
+					agentCtx.Messages = append(agentCtx.Messages, stampedMessage(m))
+				}
 				continue // outer loop with the follow-ups as new input
 			}
 		}
@@ -338,10 +368,10 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		if cfg.OnStop != nil {
 			if dec := cfg.OnStop(ctx, agentCtx); dec != nil && dec.Block {
 				if dec.Guidance != "" {
-					agentCtx.Messages = append(agentCtx.Messages, agentcore.UserMessage{
+					agentCtx.Messages = append(agentCtx.Messages, stampedMessage(agentcore.UserMessage{
 						RoleField: agentcore.RoleUser,
 						Content:   agentcore.ContentList{agentcore.NewTextContent(dec.Guidance)},
-					})
+					}))
 				}
 				continue // outer loop: keep the run alive
 			}
@@ -360,7 +390,9 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, hadToolExecution bool, emit func(agentcore.AgentEvent) error, tel *telemetry, cmp *compactor) (stop bool) {
 	if hadToolExecution && cfg.GetSteeringMessages != nil {
 		if steer := cfg.GetSteeringMessages(ctx); len(steer) > 0 {
-			agentCtx.Messages = append(agentCtx.Messages, steer...)
+			for _, m := range steer {
+				agentCtx.Messages = append(agentCtx.Messages, stampedMessage(m))
+			}
 		}
 	}
 	if cfg.PrepareNextTurn != nil {
