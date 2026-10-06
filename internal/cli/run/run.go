@@ -287,6 +287,7 @@ func BuiltinTools(cwd string, disabled bool) []agentcore.AgentTool {
 		&agenttool.BashOutputTool{Jobs: jobs},
 		&agenttool.BashKillTool{Jobs: jobs},
 		&agenttool.TodoTool{Store: agenttool.NewTodoStore()},
+		&agenttool.ContextEditTool{},
 		&agenttool.WebFetchTool{},
 		&agenttool.WebSearchTool{},
 	}

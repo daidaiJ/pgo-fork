@@ -118,17 +118,18 @@ func RebuildFromCheckpoint(
 		persisted = len(msgs)
 	}
 	// Decisions run on the request view (T3.3): the raw list may hold superseded
-	// markers and pre-compaction history the view collapses.
-	view := compaction.ProjectView(msgs)
+	// markers and pre-compaction history the view collapses. The view→raw map
+	// (not the marker-anchor formula) converts cuts/watermarks back: microcompact
+	// markers and context edits also drop entries from the view.
+	view, rawOf := compaction.ProjectViewMapped(msgs)
 	tokensBefore := compaction.EstimateContextTokens(view).Tokens
-	m0, k0 := compaction.LastMarkerAnchor(msgs)
 
 	cp, ok, err := LoadCheckpoint(sessionID, memoryRoot)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		return rebuildFromLoadedCheckpoint(msgs, view, m0, k0, persisted, cp, tokensBefore, now), nil
+		return rebuildFromLoadedCheckpoint(msgs, rawOf, persisted, cp, tokensBefore, now), nil
 	}
 
 	// No checkpoint: fall back to the summarizing compaction path.
@@ -159,7 +160,7 @@ func RebuildFromCheckpoint(
 		}, nil
 	}
 	cut := res.FirstKeptIndex
-	fullCut := compaction.ViewIndexToRaw(cut, m0, k0)
+	fullCut := compaction.ViewRawOf(rawOf, cut)
 	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
 	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
 	marker.TokensAfter = tokensAfter
@@ -179,20 +180,27 @@ func RebuildFromCheckpoint(
 // checkpoint: the pre-watermark prefix collapses into a compaction marker
 // carrying cp.Summary (inserted at the T3.3 topology position), and the tail
 // from the (clamped) watermark on is preserved verbatim in the request view.
-func rebuildFromLoadedCheckpoint(msgs, view agentcore.MessageList, m0, k0, persisted int, cp *Checkpoint, tokensBefore int, now int64) *RebuildResult {
+// The watermark is a view coordinate (the checkpoint's cut was recorded against
+// the view, T3.3 D-2) and converts back through the view→raw map.
+func rebuildFromLoadedCheckpoint(msgs agentcore.MessageList, rawOf []int, persisted int, cp *Checkpoint, tokensBefore int, now int64) *RebuildResult {
+	// A nil map is the identity: the view length is the raw length.
+	viewLen := len(rawOf)
+	if rawOf == nil {
+		viewLen = len(msgs)
+	}
 	w := cp.Watermark
 	if w < 0 {
 		w = 0
 	}
-	if w > len(view) {
-		w = len(view)
+	if w > viewLen {
+		w = viewLen
 	}
 	res := &compaction.CompactionResult{
 		Summary:        cp.Summary,
 		FirstKeptIndex: w,
 		TokensBefore:   tokensBefore,
 	}
-	fullCut := compaction.ViewIndexToRaw(w, m0, k0)
+	fullCut := compaction.ViewRawOf(rawOf, w)
 	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
 	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
 	marker.TokensAfter = tokensAfter
@@ -202,7 +210,7 @@ func rebuildFromLoadedCheckpoint(msgs, view agentcore.MessageList, m0, k0, persi
 		FromCheckpoint:  true,
 		Watermark:       insertAt,
 		SummarizedCount: w,
-		KeptCount:       len(view) - w,
+		KeptCount:       viewLen - w,
 		TokensBefore:    tokensBefore,
 		TokensAfter:     tokensAfter,
 	}

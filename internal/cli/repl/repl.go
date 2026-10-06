@@ -1112,7 +1112,9 @@ func runManualCompact(out io.Writer, deps *replDeps) {
 	if persisted > len(deps.agentCtx.Messages) {
 		persisted = len(deps.agentCtx.Messages)
 	}
-	view := compaction.ProjectView(deps.agentCtx.Messages)
+	// The view→raw map (not the marker-anchor formula) converts the cut back:
+	// microcompact markers and context edits also drop entries from the view.
+	view, rawOf := compaction.ProjectViewMapped(deps.agentCtx.Messages)
 	settings := compaction.DefaultCompactionSettings
 	before := compaction.EstimateContextTokens(view).Tokens
 
@@ -1154,8 +1156,7 @@ func runManualCompact(out io.Writer, deps *replDeps) {
 	// Map the view cut back to raw-list coordinates and insert the marker at the
 	// T3.3 topology position (after the persisted cursor so the next PersistTurn
 	// carries it into the tree).
-	m0, k0 := compaction.LastMarkerAnchor(deps.agentCtx.Messages)
-	fullCut := compaction.ViewIndexToRaw(res.FirstKeptIndex, m0, k0)
+	fullCut := compaction.ViewRawOf(rawOf, res.FirstKeptIndex)
 	insertAt := fullCut
 	if insertAt < persisted {
 		insertAt = persisted

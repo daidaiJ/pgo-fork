@@ -55,6 +55,8 @@ h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem; }
 .msg.tool .role { color: #B8860B; }
 .msg.compaction { background: #FFF5F0; border-color: #D97757; }
 .msg.compaction .role { color: #D97757; }
+.msg.edit { background: #F6F2FA; border-color: #8E6FB8; }
+.msg.edit .role { color: #8E6FB8; }
 .text { white-space: pre-wrap; word-break: break-word; font-size: 0.875rem; }
 .toolcall { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #F0EEE9; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; }
 .toolcall .tname { font-weight: 600; color: #B8860B; }
@@ -78,7 +80,10 @@ func htmlFoot() string {
 }
 
 // renderEntryHTML renders one entry as a role-colored message block. Text and
-// tool arguments are escaped so no session content can inject markup.
+// tool arguments are escaped so no session content can inject markup. The
+// audit invariant (spec §3.4 #4): the export always shows the ORIGINAL entries;
+// a context edit appears as its own marker block alongside them, never as a
+// silent rewrite.
 func renderEntryHTML(e Entry) string {
 	switch m := e.Message.(type) {
 	case agentcore.UserMessage:
@@ -97,6 +102,20 @@ func renderEntryHTML(e Entry) string {
 			label = "Tool Result: " + m.ToolName
 		}
 		return msgBlock("tool", html.EscapeString(label), html.EscapeString(agentcore.ContentToText(m.Content)), "")
+	case agentcore.ContextEditMessage:
+		var eb strings.Builder
+		for _, e := range m.Edits {
+			target := e.TargetCallID
+			if target == "" {
+				target = fmt.Sprintf("#%d", e.TargetSeq)
+			}
+			fmt.Fprintf(&eb, "%s %s", e.Mode, target)
+			if e.Digest != "" {
+				fmt.Fprintf(&eb, ": %s", e.Digest)
+			}
+			eb.WriteString("\n")
+		}
+		return msgBlock("edit", "Context Edit", html.EscapeString(eb.String()), "")
 	case agentcore.CompactionMessage:
 		return msgBlock("compaction", "Compaction", html.EscapeString(m.Summary), "")
 	default:

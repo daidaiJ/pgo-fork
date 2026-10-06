@@ -292,8 +292,11 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 			// generic task tool) can retrieve it via ProgressEmitterFromContext and
 			// surface a dispatched sub-agent's progress up this parent event stream.
 			// emitFrom feeds the parent stream and is run-scoped, so a child's
-			// SubAgentProgressEvent lands on the right run's stream.
-			toolCtx := agentcore.WithProgressEmitter(ctx, emitFrom)
+			// SubAgentProgressEvent lands on the right run's stream. The AgentContext
+			// rides along for tools that must read or extend the live conversation
+			// (the context_edit tool, T3.4).
+			toolCtx := agentcore.WithAgentContext(
+				agentcore.WithProgressEmitter(ctx, emitFrom), agentCtx)
 			toolResults, allTerminate := agenttool.ExecuteToolCalls(toolCtx, cfg.Batch, calls, emitFrom)
 			for _, tr := range toolResults {
 				agentCtx.Messages = append(agentCtx.Messages, tr)
@@ -402,12 +405,6 @@ func (c *compactor) takePostCompactReminder() string {
 // breaker for the rest of the run.
 const circuitBreakerLimit = 3
 
-// mapViewIndex delegates to the compaction package's shared view→raw mapping
-// (the topology rules live with the projection that defines them).
-func mapViewIndex(c, m0, k0 int) int {
-	return compaction.ViewIndexToRaw(c, m0, k0)
-}
-
 // maybeAutoCompact checks whether the request view has outgrown its usable
 // window and, if so, compacts: it inserts a CompactionMessage marker into the
 // live list (T3.3 marker-entry model) instead of rewriting it, so the persisted
@@ -431,8 +428,10 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	}
 	// Every decision and the summarization input run on the request view (T3.3):
 	// the raw list may hold superseded markers and pre-compaction history that
-	// the view collapses.
-	view := compaction.ProjectView(agentCtx.Messages)
+	// the view collapses. The view→raw map (not the marker-anchor formula)
+	// converts the cut back: microcompact markers and context edits also drop
+	// entries from the view, so the formula drifts once they are present.
+	view, rawOf := compaction.ProjectViewMapped(agentCtx.Messages)
 	before := compaction.EstimateContextTokens(view).Tokens
 	// Record pre-compaction utilization so the ratio reflects the peak that
 	// triggered (or nearly triggered) compaction even when the summary is read
@@ -472,9 +471,6 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 			}
 		}
 	}
-	// Full-list coordinates of the view's anchor marker, for mapping the cut back.
-	m0, k0 := compaction.LastMarkerAnchor(agentCtx.Messages)
-
 	res, err := runCompaction(ctx, view, cfg, prevIdx, prevSummary, prevDetails)
 	if err != nil {
 		if cmp != nil {
@@ -503,7 +499,7 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	}
 
 	cut := res.FirstKeptIndex // view coordinates
-	fullCut := mapViewIndex(cut, m0, k0)
+	fullCut := compaction.ViewRawOf(rawOf, cut)
 	newList, marker, insertAt := insertCompactionMarker(agentCtx.Messages, res, fullCut, persisted)
 	after := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
 	if after >= before {
