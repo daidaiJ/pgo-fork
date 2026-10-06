@@ -58,8 +58,16 @@ var goalWorkflowSkills = []string{
 	"architecture-diagram", "weather",
 }
 
+// devWorkflowSkills is the dev-workflow set: conversational handoff documents
+// and deep three-axis defect auditing, ported from the maintainer's personal
+// skill collection. Kept as a separate set from goal-workflow so the two
+// collections evolve (and re-trigger installs) independently.
+var devWorkflowSkills = []string{
+	"handoff", "defect-detective",
+}
+
 // Manifest is the single source of truth for the built-in skill collections
-// installed on first run. It seeds one collection today; adding a Set is all
+// installed on first run. It seeds the collections below; adding a Set is all
 // that is needed to bundle another collection.
 func Manifest() []Set {
 	return []Set{
@@ -68,6 +76,13 @@ func Manifest() []Set {
 			Version: "2026-07-24",
 			Root:    "skills",
 			Skills:  goalWorkflowSkills,
+			FS:      skillsFS,
+		},
+		{
+			Name:    "dev-workflow",
+			Version: "2026-10-06",
+			Root:    "skills",
+			Skills:  devWorkflowSkills,
 			FS:      skillsFS,
 		},
 	}

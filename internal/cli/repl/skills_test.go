@@ -152,7 +152,8 @@ func TestLoadSkillsBootstrapsBuiltinSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSlashRegistry: %v", err)
 	}
-	for _, name := range []string{"/prd", "/refactor", "/architecture-diagram", "/weather"} {
+	for _, name := range []string{"/prd", "/refactor", "/architecture-diagram", "/weather",
+		"/handoff", "/defect-detective"} {
 		out, err := reg.ResolveOutcome(name)
 		if err != nil {
 			t.Errorf("%s should be registered after bootstrap: %v", name, err)
