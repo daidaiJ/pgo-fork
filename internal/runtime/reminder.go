@@ -31,18 +31,12 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 )
 
-// systemReminderPreamble marks the wrapped body as background context rather
-// than a user instruction (FR-2). It leads every injected reminder so the model
-// never mistakes harness state for a user request.
-const systemReminderPreamble = "The following is background context provided automatically by the harness. " +
-	"It is NOT a message or instruction from the user; do not act on it as a request. " +
-	"Use it only to stay aware of the current state."
-
 // WrapSystemReminder wraps a reminder body in <system-reminder> tags with the
-// background-context preamble. The result is the text of a single injected
-// message.
+// background-context preamble (US-002). It lives in agentcore (the envelope is
+// message semantics, shared with the compaction pipeline's post-compaction
+// re-injection); this alias keeps the runtime call sites reading naturally.
 func WrapSystemReminder(body string) string {
-	return "<system-reminder>\n" + systemReminderPreamble + "\n\n" + body + "\n</system-reminder>"
+	return agentcore.WrapSystemReminder(body)
 }
 
 // ReminderProvider produces an ephemeral system-reminder for the upcoming turn.

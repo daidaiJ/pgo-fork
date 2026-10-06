@@ -41,7 +41,7 @@ func reminderTextsInRequest(t *testing.T, reg *ReminderRegistry, agentCtx *agent
 }
 
 func TestWrapSystemReminderLabelsBackgroundContext(t *testing.T) {
-	out := WrapSystemReminder("body here")
+	out := agentcore.WrapSystemReminder("body here")
 	if !strings.Contains(out, "<system-reminder>") || !strings.Contains(out, "</system-reminder>") {
 		t.Errorf("reminder must be wrapped in <system-reminder> tags, got %q", out)
 	}

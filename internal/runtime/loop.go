@@ -21,11 +21,9 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -180,9 +178,6 @@ func StartRun(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConf
 // runLoop is the producer: it drives the two-layer loop, emitting events onto
 // stream and setting the stream result to the messages produced during the run.
 func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfig, stream *LoopEventStream) {
-	// cmp carries the run-scoped compaction circuit breaker and the one-shot
-	// post-compaction reminder (T3.3 随件).
-	cmp := &compactor{}
 	// readFileState ledger (T3.5): lazy-initialized so every AgentContext
 	// constructor gets it without opt-in — read/write/edit ledger their effects
 	// through the loop-injected context, and microcompaction revokes residency
@@ -190,6 +185,43 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 	if agentCtx.ReadFiles == nil {
 		agentCtx.ReadFiles = agentcore.NewReadFileState()
 	}
+	// tel accumulates structured telemetry (turn count, per-tool durations,
+	// truncation count, compaction count, latest context-utilization ratio) from
+	// the events emitted below, surfaced as a TelemetryEvent at run end.
+	tel := newTelemetry()
+	emit := func(ev agentcore.AgentEvent) error {
+		tel.observe(ev)
+		return stream.Emit(ctx, ev)
+	}
+	// emitFrom wraps the raw stream.Emit callback handed to streamAssistantResponse
+	// and ExecuteToolCalls so telemetry observes those events (message_* and
+	// tool_execution_*) too, without changing their signatures.
+	emitFrom := func(c context.Context, ev agentcore.AgentEvent) error {
+		tel.observe(ev)
+		return stream.Emit(c, ev)
+	}
+	// pipe owns the compaction orchestration (T3.3.1): trigger judgment, marker
+	// insertion, circuit breaker, post-compaction reminder, microcompaction.
+	// The loop keeps exactly two call sites — pipe.RequestView before each
+	// request and pipe.AfterTurn at each turn boundary — and injects the seams
+	// that are RunConfig knowledge (Summarizer, checkpoint store, persist
+	// cursor, telemetry observation, wall clock).
+	pipe := compaction.NewPipeline(compaction.PipelineConfig{
+		Settings:        cfg.Compaction,
+		ContextWindow:   cfg.ContextWindow,
+		MaxOutputTokens: cfg.MaxOutputTokens,
+		Model:           func() string { return cfg.Model },
+		Emit:            emit,
+		Now:             nowMillis,
+		RecordContext:   tel.recordContext,
+		Summarize: func(ctx context.Context, view agentcore.MessageList, prevIdx int, prevSummary string, prevDetails *compaction.CompactionDetails) (*compaction.CompactionResult, error) {
+			return runCompaction(ctx, view, &cfg, prevIdx, prevSummary, prevDetails)
+		},
+		PersistedCount: cfg.PersistedCount,
+		PersistCheckpoint: func(ctx context.Context, view agentcore.MessageList, res *compaction.CompactionResult) {
+			writeCompactionCheckpoint(ctx, view, res, &cfg)
+		},
+	})
 	// Wire per-turn system-reminder injection (US-002) onto the TransformContext
 	// seam. Reminders are appended to the request-shaped copy only, so they stay
 	// ephemeral: never written back to agentCtx.Messages, never persisted, never
@@ -203,7 +235,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		if inner != nil {
 			msgs = inner(ctx, msgs)
 		}
-		if note := cmp.takePostCompactReminder(); note != "" {
+		if note := pipe.TakePostCompactReminder(); note != "" {
 			msgs = append(msgs, agentcore.UserMessage{
 				RoleField: agentcore.RoleUser,
 				Content:   agentcore.ContentList{agentcore.NewTextContent(note)},
@@ -215,10 +247,6 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		cfg.TransformContext = cfg.Reminders.wrapTransform(cfg.TransformContext)
 	}
 	startIdx := len(agentCtx.Messages)
-	// tel accumulates structured telemetry (turn count, per-tool durations,
-	// truncation count, compaction count, latest context-utilization ratio) from
-	// the events emitted below, surfaced as a TelemetryEvent at run end.
-	tel := newTelemetry()
 	// newMessages returns the messages appended since the run began.
 	newMessages := func() []agentcore.AgentMessage {
 		if len(agentCtx.Messages) <= startIdx {
@@ -227,17 +255,6 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 		out := make([]agentcore.AgentMessage, len(agentCtx.Messages)-startIdx)
 		copy(out, agentCtx.Messages[startIdx:])
 		return out
-	}
-	emit := func(ev agentcore.AgentEvent) error {
-		tel.observe(ev)
-		return stream.Emit(ctx, ev)
-	}
-	// emitFrom wraps the raw stream.Emit callback handed to streamAssistantResponse
-	// and ExecuteToolCalls so telemetry observes those events (message_* and
-	// tool_execution_*) too, without changing their signatures.
-	emitFrom := func(c context.Context, ev agentcore.AgentEvent) error {
-		tel.observe(ev)
-		return stream.Emit(c, ev)
 	}
 
 	// finish emits the telemetry summary then agent_end (unless suppressed by a
@@ -271,17 +288,18 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 
 	for { // outer loop: pending / follow-up messages
 		for { // inner loop: turns until no tool calls
-			// Microcompaction (T3.3) runs just before the request: the double
-			// gate (token pressure on the derived line, or the 60-minute
-			// cache-cold idle window) evicts old regenerable tool results via a
-			// durable marker; the projection turns them into placeholders.
-			maybeMicrocompact(ctx, agentCtx, &cfg, emit)
+			// RequestView (T3.3.1) runs just before the request: one
+			// microcompaction pass — the double gate (token pressure on the
+			// derived line, or the 60-minute cache-cold idle window) evicts old
+			// regenerable tool results via a durable marker — followed by the
+			// projection, yielding the request view in one shot.
+			view := pipe.RequestView(ctx, agentCtx)
 			if err := emit(agentcore.TurnStartEvent{}); err != nil {
 				finishErr(err)
 				return
 			}
 
-			assistant, err := streamAssistantResponse(ctx, agentCtx, cfg.LoopConfig, emitFrom)
+			assistant, err := streamAssistantResponse(ctx, agentCtx, cfg.LoopConfig, emitFrom, view)
 			if err != nil {
 				// emit was cancelled mid-stream; end the run.
 				finishErr(err)
@@ -297,7 +315,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 					finishErr(err)
 					return
 				}
-				if afterTurn(ctx, agentCtx, &cfg, true, emit, tel, cmp) {
+				if afterTurn(ctx, agentCtx, &cfg, true, pipe) {
 					finish()
 					return
 				}
@@ -316,7 +334,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 					finishErr(err)
 					return
 				}
-				if afterTurn(ctx, agentCtx, &cfg, false, emit, tel, cmp) {
+				if afterTurn(ctx, agentCtx, &cfg, false, pipe) {
 					finish()
 					return
 				}
@@ -345,7 +363,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				finish()
 				return
 			}
-			if afterTurn(ctx, agentCtx, &cfg, true, emit, tel, cmp) {
+			if afterTurn(ctx, agentCtx, &cfg, true, pipe) {
 				finish()
 				return
 			}
@@ -384,10 +402,12 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 
 // afterTurn runs the per-turn hooks after a turn_end. When hadToolExecution is
 // true it first pulls getSteeringMessages and injects them before the next turn
-// (pi per-turn semantics). It then applies prepareNextTurn, runs auto-compaction
-// when the context has outgrown its window, and finally consults
-// shouldStopAfterTurn, returning true when the run should end.
-func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, hadToolExecution bool, emit func(agentcore.AgentEvent) error, tel *telemetry, cmp *compactor) (stop bool) {
+// (pi per-turn semantics). It then applies prepareNextTurn, hands the turn
+// boundary to the compaction pipeline (pipe.AfterTurn: full-compaction trigger
+// judgment + execution + the post-settle utilization observation — the loop
+// only marks the boundary), and finally consults shouldStopAfterTurn, returning
+// true when the run should end.
+func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, hadToolExecution bool, pipe *compaction.Pipeline) (stop bool) {
 	if hadToolExecution && cfg.GetSteeringMessages != nil {
 		if steer := cfg.GetSteeringMessages(ctx); len(steer) > 0 {
 			for _, m := range steer {
@@ -400,217 +420,18 @@ func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunCo
 			applyTurnUpdate(agentCtx, cfg, upd)
 		}
 	}
-	maybeAutoCompact(ctx, agentCtx, cfg, emit, tel, cmp)
-	// Record the latest context-utilization ratio once the turn has settled (after
-	// any compaction), so the telemetry summary reports the current used/window
-	// figure. This runs even when auto-compaction is disabled so utilization is
-	// still observable whenever the context window is known. The ratio reads the
-	// request view (T3.3): raw-list size would count history the view collapses.
-	if tel != nil && cfg.ContextWindow > 0 {
-		tokens := compaction.EstimateContextTokens(compaction.ProjectView(agentCtx.Messages)).Tokens
-		tel.recordContext(tokens, cfg.ContextWindow)
-	}
+	pipe.AfterTurn(ctx, agentCtx)
 	if cfg.ShouldStopAfterTurn != nil {
 		return cfg.ShouldStopAfterTurn(ctx, agentCtx)
 	}
 	return false
 }
 
-// compactor carries per-run compaction state across turns: the consecutive
-// failure count feeding the circuit breaker (T3.3 随件, qwen/zcode 3-strike
-// value). It is scoped to one run: pigo's loop keeps no cross-run state, and a
-// failed run already terminates, so a fresh run starts with a clean breaker.
-type compactor struct {
-	failures int
-	// postCompactReminder, when non-empty, is a one-shot ephemeral
-	// system-reminder injected into the next turn's request (and only that
-	// one) after a successful full compaction: the recently-read file paths
-	// whose results the summary replaced (zcode's post-compaction live-state
-	// re-injection, reference-hint form).
-	postCompactReminder string
-}
-
-// takePostCompactReminder pops the pending post-compaction reminder (one-shot).
-func (c *compactor) takePostCompactReminder() string {
-	if c == nil || c.postCompactReminder == "" {
-		return ""
-	}
-	t := c.postCompactReminder
-	c.postCompactReminder = ""
-	return t
-}
-
-// circuitBreakerLimit is how many consecutive compaction failures open the
-// breaker for the rest of the run.
-const circuitBreakerLimit = 3
-
-// maybeAutoCompact checks whether the request view has outgrown its usable
-// window and, if so, compacts: it inserts a CompactionMessage marker into the
-// live list (T3.3 marker-entry model) instead of rewriting it, so the persisted
-// tree stays append-only and the request view is derived by projection.
-//
-// Compaction is a no-op when disabled, when the context window is unknown
-// (<= 0), or when usage is under threshold. A compaction failure is non-fatal:
-// the original context is preserved and a CompactionEvent carrying the typed
-// SkipReason and ErrorMessage is emitted so the failure is observable without
-// aborting the run (US-004).
-func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, emit func(agentcore.AgentEvent) error, tel *telemetry, cmp *compactor) {
-	if !cfg.Compaction.Enabled || cfg.ContextWindow <= 0 {
-		return
-	}
-	persisted := 0
-	if cfg.PersistedCount != nil {
-		persisted = cfg.PersistedCount()
-	}
-	if persisted > len(agentCtx.Messages) {
-		persisted = len(agentCtx.Messages) // defensive against a stale driver cursor
-	}
-	// Every decision and the summarization input run on the request view (T3.3):
-	// the raw list may hold superseded markers and pre-compaction history that
-	// the view collapses. The view→raw map (not the marker-anchor formula)
-	// converts the cut back: microcompact markers and context edits also drop
-	// entries from the view, so the formula drifts once they are present.
-	view, rawOf := compaction.ProjectViewMapped(agentCtx.Messages)
-	before := compaction.EstimateContextTokens(view).Tokens
-	// Record pre-compaction utilization so the ratio reflects the peak that
-	// triggered (or nearly triggered) compaction even when the summary is read
-	// mid-run. afterTurn overwrites it with the post-settle figure.
-	if tel != nil {
-		tel.recordContext(before, cfg.ContextWindow)
-	}
-	// T4.4: the trigger line is model-aware — per-model ratio override
-	// (kimi/minimax) or the generic A/B formula (window − max(reserve,
-	// perTurn+margin), B-line pre-defense). With no output cap seeded and an
-	// unmatched model id this is pi's baseline window − reserve.
-	line := compaction.CompactionLine(cfg.ContextWindow, cfg.MaxOutputTokens, cfg.Compaction, cfg.Model)
-	if before <= line {
-		return
-	}
-	if cmp != nil && cmp.failures >= circuitBreakerLimit {
-		_ = emit(agentcore.CompactionEvent{
-			Reason:       "threshold",
-			TokensBefore: before,
-			TokensAfter:  before,
-			SkipReason:   string(compaction.SkipCircuitOpen),
-			ErrorMessage: "compaction circuit breaker open after 3 consecutive failures",
-		})
-		return
-	}
-	// Signal the start so a front-end can show an in-progress indicator while the
-	// summarization request (an LLM call that blocks the loop) is in flight.
-	_ = emit(agentcore.CompactionStartEvent{Reason: "threshold", TokensBefore: before})
-
-	// Iterative chain (defect-① fix): the view's leading marker, when present,
-	// is the previous compaction — summarize only what came after it, seeding
-	// the file lists and feeding its summary into the update template.
-	prevIdx := -1
-	var prevSummary string
-	var prevDetails *compaction.CompactionDetails
-	if len(view) > 0 {
-		if c, ok := view[0].(agentcore.CompactionMessage); ok {
-			prevIdx = 0
-			prevSummary = c.Summary
-			if d, err := unmarshalDetails(c.Details); err == nil && (len(d.ReadFiles) > 0 || len(d.ModifiedFiles) > 0) {
-				prevDetails = d
-			}
-		}
-	}
-	res, err := runCompaction(ctx, view, cfg, prevIdx, prevSummary, prevDetails)
-	if err != nil {
-		if cmp != nil {
-			cmp.failures++
-		}
-		_ = emit(agentcore.CompactionEvent{
-			Reason:       "threshold",
-			TokensBefore: before,
-			TokensAfter:  before,
-			SkipReason:   string(compaction.SkipReasonOf(err)),
-			ErrorMessage: err.Error(),
-		})
-		return
-	}
-	if res == nil {
-		_ = emit(agentcore.CompactionEvent{
-			Reason:       "threshold",
-			TokensBefore: before,
-			TokensAfter:  before,
-			SkipReason:   string(compaction.SkipNothingToSummarize),
-		})
-		return
-	}
-	if cmp != nil {
-		cmp.failures = 0
-	}
-
-	cut := res.FirstKeptIndex // view coordinates
-	fullCut := compaction.ViewRawOf(rawOf, cut)
-	newList, marker, insertAt := insertCompactionMarker(agentCtx.Messages, res, fullCut, persisted)
-	after := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
-	if after >= before {
-		// Inflation guard (qwen): never apply a compaction that does not shrink
-		// the view — a non-shrinking "compaction" risks a
-		// compact→restore→recompact loop while paying for the summary call.
-		_ = emit(agentcore.CompactionEvent{
-			Reason:       "threshold",
-			TokensBefore: before,
-			TokensAfter:  before,
-			SkipReason:   string(compaction.SkipInflated),
-			ErrorMessage: "compaction rejected: post-compaction view would not shrink",
-		})
-		return
-	}
-	marker.TokensAfter = after
-	newList[insertAt] = marker
-	// Live-state re-injection (zcode 随件): surface the recently-read files the
-	// summary replaced so the model re-reads before trusting stale memory.
-	if cmp != nil {
-		cmp.postCompactReminder = postCompactReminder(view[max(prevIdx+1, 0):cut], agentCtx.ReadFiles)
-	}
-	// Persist a checkpoint of the collapsed prefix before inserting the marker so
-	// a later run can reload it (infinite context, #480/#481). It reuses the
-	// summary compaction just produced — no extra LLM call — and is best-effort.
-	writeCompactionCheckpoint(ctx, view, res, cfg)
-	agentCtx.Messages = newList
-	_ = emit(agentcore.CompactionEvent{
-		Reason:                "threshold",
-		TokensBefore:          before,
-		TokensAfter:           after,
-		SummarizedCount:       max(0, cut-1),
-		KeptCount:             len(view) - cut,
-		SummaryUsage:          &res.SummaryUsage,
-		WillRetriggerNextTurn: after > line,
-	})
-}
-
-// insertCompactionMarker returns msgs with res's compaction marker inserted at
-// the T3.3 topology position, plus the inserted marker (FirstKeptIndex /
-// KeptBefore / TokensAfter stamped). Rules:
-//
-//   - fullCut is the cut in raw-list coordinates (mapped from the view cut).
-//   - The marker is inserted at max(fullCut, persisted): when the cut reaches
-//     into unpersisted messages the marker sits at the cut; when the kept
-//     window starts inside already-persisted territory the marker sits at the
-//     branch tip (the only place PersistTurn's tail append can chain it into
-//     the tree), and KeptBefore records how many kept entries precede it on
-//     the path so replay projection restores them.
-func insertCompactionMarker(msgs agentcore.MessageList, res *compaction.CompactionResult, fullCut, persisted int) (agentcore.MessageList, agentcore.CompactionMessage, int) {
-	insertAt := fullCut
-	if insertAt < persisted {
-		insertAt = persisted
-	}
-	marker := res.Message(nowMillis())
-	marker.FirstKeptIndex = fullCut
-	marker.KeptBefore = insertAt - fullCut
-	out := make(agentcore.MessageList, 0, len(msgs)+1)
-	out = append(out, msgs[:insertAt]...)
-	out = append(out, marker)
-	out = append(out, msgs[insertAt:]...)
-	return out, marker, insertAt
-}
-
 // runCompaction invokes compaction.Compact over the request view with the
 // loop's summarization config, falling back to the primary Stream/Model when
-// the summary-specific fields are unset. prevCompactionIndex/prevSummary/
+// the summary-specific fields are unset. It is injected into the compaction
+// pipeline as the Summarizer seam (T3.3.1) and also drives the rebuild
+// fallback path. prevCompactionIndex/prevSummary/
 // prevDetails carry the view's previous compaction marker so successive
 // compactions chain (T3.3 defect-① fix): summarization starts after it, the
 // prior summary feeds the update template, and its file lists seed this one.
@@ -730,172 +551,4 @@ func toAgentToolCalls(blocks []agentcore.ToolCallContent) []agentcore.AgentToolC
 		calls[i] = agentcore.AgentToolCall{ID: b.ID, Name: b.Name, Arguments: b.Arguments}
 	}
 	return calls
-}
-
-// maybeMicrocompact runs one microcompaction pass before a turn's request
-// (T3.3): the zcode double gate — token pressure on the derived line
-// min(0.9×autoLine, autoLine−2K), or the 60-minute idle window where the
-// prompt cache is cold and eviction is free — decides whether to run; the
-// decision evicts old regenerable tool results by appending one durable
-// MicrocompactMessage marker (sticky: cleared results never resurrect, and
-// the next PersistTurn carries the marker into the tree). Everything is
-// decided on the request view; the raw list only ever grows. A pass is a
-// no-op when compaction is disabled or the window is unknown.
-func maybeMicrocompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, emit func(agentcore.AgentEvent) error) {
-	if !cfg.Compaction.Enabled || cfg.ContextWindow <= 0 {
-		return
-	}
-	view := compaction.ProjectView(agentCtx.Messages)
-	tokens := compaction.EstimateContextTokens(view).Tokens
-	// T4.4: derive the micro line from the model-aware full-compaction line
-	// (zcode derivation), so per-model override lines propagate to the
-	// microcompaction gate too.
-	line := compaction.MicrocompactPressureLineFor(
-		compaction.CompactionLine(cfg.ContextWindow, cfg.MaxOutputTokens, cfg.Compaction, cfg.Model))
-	idle := compaction.IdleMillis(view, time.Now().UnixMilli()) >= compaction.MicrocompactIdleMillis
-	if line <= 0 && !idle {
-		return
-	}
-	if tokens < line && !idle {
-		return
-	}
-	dec := compaction.DecideMicrocompact(view, tokens, line, idle)
-	if len(dec.ClearedCallIDs) == 0 {
-		if dec.SkipReason != "" {
-			_ = emit(agentcore.MicrocompactEvent{Reason: dec.Reason, SkipReason: string(dec.SkipReason)})
-		}
-		return
-	}
-	agentCtx.Messages = append(agentCtx.Messages, dec.Marker(nowMillis()))
-	// #4239 eviction rule (T3.5): the evicted read results no longer evidence
-	// their files' residency — the next edit on those files is refused until
-	// the model re-reads. Needs the pre-eviction view (the assistant calls live
-	// there) and the ledger.
-	revokeResidencyForEvictions(agentCtx, view, dec.ClearedCallIDs)
-	_ = emit(agentcore.MicrocompactEvent{
-		Reason:       dec.Reason,
-		ClearedCount: len(dec.ClearedCallIDs),
-		SavedTokens:  dec.SavedTokens,
-	})
-}
-
-// revokeResidencyForEvictions applies the #4239 eviction rule (T3.5): every
-// evicted tool call that was a read withdraws that call's residency vote from
-// the ledger. The reverse index identifies each read call; a read the ledger
-// cannot identify (recorded before the ledger existed, e.g. a restored
-// session) triggers the defensive revoke-everything branch. Non-read tools
-// (bash/grep/…) carry no residency evidence and change nothing.
-func revokeResidencyForEvictions(agentCtx *agentcore.AgentContext, view agentcore.MessageList, cleared []string) {
-	st := agentCtx.ReadFiles
-	if st == nil || len(cleared) == 0 {
-		return
-	}
-	clearedSet := make(map[string]bool, len(cleared))
-	for _, id := range cleared {
-		clearedSet[id] = true
-	}
-	var readCalls []string
-	for _, m := range view {
-		a, ok := m.(agentcore.AssistantMessage)
-		if !ok {
-			continue
-		}
-		for _, c := range a.ToolCalls() {
-			if clearedSet[c.ID] && c.Name == "read" {
-				readCalls = append(readCalls, c.ID)
-			}
-		}
-	}
-	if len(readCalls) > 0 {
-		st.RevokeEvicted(readCalls)
-	}
-}
-
-// reminderMaxFileChars / reminderMaxTotalChars are the zcode cap table for the
-// post-compaction content re-injection: per-file and aggregate snapshot
-// budgets (5 files / 5K per file / 50K total; the aggregate cannot be reached
-// under the per-file cap and file count — it guards the table changing).
-const (
-	reminderMaxFileChars  = 5 * 1024
-	reminderMaxTotalChars = 50 * 1024
-)
-
-// postCompactReminder renders the one-shot system-reminder for the files read
-// in the compacted range (newest first, capped at 5 — zcode's cap table).
-// When the readFileState ledger holds content snapshots for them (T3.5 随件③,
-// closing the D-5 deviation), the reminder carries the snapshot contents so
-// the model keeps working without an immediate re-read; without a snapshot
-// (restored session, snapshot evicted) it degrades to the reference-hint form.
-// Snapshots are from the last read and may be stale — the body says so.
-// Returns "" when the range read nothing.
-func postCompactReminder(rangeMsgs []agentcore.Message, st *agentcore.ReadFileState) string {
-	var paths []string
-	seen := make(map[string]bool)
-	for i := len(rangeMsgs) - 1; i >= 0 && len(paths) < 5; i-- {
-		a, ok := rangeMsgs[i].(agentcore.AssistantMessage)
-		if !ok {
-			continue
-		}
-		for _, call := range a.ToolCalls() {
-			if call.Name != "read" || len(paths) >= 5 {
-				continue
-			}
-			if p := readToolPath(call.Arguments); p != "" && !seen[p] {
-				seen[p] = true
-				paths = append(paths, p)
-			}
-		}
-	}
-	if len(paths) == 0 {
-		return ""
-	}
-	var snaps []string
-	anySnap := false
-	if st != nil {
-		snaps = make([]string, len(paths))
-		for i, p := range paths {
-			snaps[i], _ = st.ContentByArgPath(p)
-			if snaps[i] != "" {
-				anySnap = true
-			}
-		}
-	}
-	var b strings.Builder
-	if !anySnap {
-		b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files, whose exact contents may no longer be in context — re-read them before relying on precise details:\n")
-		for _, p := range paths {
-			b.WriteString("- " + p + "\n")
-		}
-		return WrapSystemReminder(strings.TrimRight(b.String(), "\n"))
-	}
-	b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files; the content below is a snapshot from your last read and may be stale — re-read a file before relying on precise details:\n")
-	total := 0
-	for i, p := range paths {
-		snap := snaps[i]
-		if snap == "" {
-			b.WriteString("- " + p + " (no content snapshot; re-read if needed)\n")
-			continue
-		}
-		if len(snap) > reminderMaxFileChars {
-			snap = snap[:reminderMaxFileChars] + "\n… (snapshot truncated)"
-		}
-		if total+len(snap) > reminderMaxTotalChars {
-			b.WriteString("- " + p + " (snapshot budget exhausted; re-read if needed)\n")
-			continue
-		}
-		total += len(snap)
-		b.WriteString("- " + p + "\n" + snap + "\n")
-	}
-	return WrapSystemReminder(strings.TrimRight(b.String(), "\n"))
-}
-
-// readToolPath extracts the string "path" argument from a read tool call.
-func readToolPath(args json.RawMessage) string {
-	var decoded struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(args, &decoded); err != nil {
-		return ""
-	}
-	return decoded.Path
 }

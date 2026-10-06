@@ -119,12 +119,20 @@ type LoopConfig struct {
 // (transformContext → convertToLlm → resolve key → stream → drain) is kept
 // identical to pi. It never returns an error for a request failure — such
 // failures arrive as a terminal assistant message with stopReason error/aborted.
-func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc) (agentcore.AssistantMessage, error) {
-	// 1. derive the request view (T3.3 marker-entry model): compaction markers
+//
+// view is the pre-derived request view (T3.3.1): the loop obtains it from the
+// compaction pipeline's RequestView (microcompact pass + projection + repair)
+// so the projection happens exactly once per request. A nil view (standalone
+// or test callers) is derived here from the live list.
+func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc, view agentcore.MessageList) (agentcore.AssistantMessage, error) {
+	// 1. the request view (T3.3 marker-entry model): compaction markers
 	// collapse the summarized prefix, microcompact markers evict old tool
 	// results, dangling tool calls get synthetic results. The raw context is
 	// never touched — projection only.
-	msgs := compaction.ProjectView(agentCtx.Messages)
+	if view == nil {
+		view = compaction.ProjectView(agentCtx.Messages)
+	}
+	msgs := view
 	// 2. fold the projection-only stream-recovery hint (T1.2) before any
 	// TransformContext runs: reminders append ephemeral messages at the tail,
 	// so the interruption trigger must be evaluated on the real context tail.

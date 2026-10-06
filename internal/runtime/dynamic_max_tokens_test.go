@@ -56,7 +56,7 @@ func TestDynamicMaxTokensStamp(t *testing.T) {
 			},
 		},
 	}
-	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit); err != nil {
+	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit, nil); err != nil {
 		t.Fatalf("streamAssistantResponse: %v", err)
 	}
 	if v, ok := got["max_tokens"].(int); !ok || v != 32_768 {
@@ -85,7 +85,7 @@ func TestDynamicMaxTokensStampDerivedBinds(t *testing.T) {
 			},
 		},
 	}
-	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit); err != nil {
+	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit, nil); err != nil {
 		t.Fatalf("streamAssistantResponse: %v", err)
 	}
 	if v, ok := got["max_tokens"].(int); !ok || v != compaction.OutputFloorTokens {
@@ -114,7 +114,7 @@ func TestDynamicMaxTokensNoStampWithoutCap(t *testing.T) {
 			},
 		},
 	}
-	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit); err != nil {
+	if _, err := streamAssistantResponse(context.Background(), agentCtx, cfg, noopEmit, nil); err != nil {
 		t.Fatalf("streamAssistantResponse: %v", err)
 	}
 	if _, ok := got["max_tokens"]; ok {

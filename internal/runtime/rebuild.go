@@ -161,7 +161,7 @@ func RebuildFromCheckpoint(
 	}
 	cut := res.FirstKeptIndex
 	fullCut := compaction.ViewRawOf(rawOf, cut)
-	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
+	newList, marker, insertAt := compaction.InsertCompactionMarker(msgs, res, fullCut, persisted, now)
 	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
 	marker.TokensAfter = tokensAfter
 	newList[insertAt] = marker
@@ -201,7 +201,7 @@ func rebuildFromLoadedCheckpoint(msgs agentcore.MessageList, rawOf []int, persis
 		TokensBefore:   tokensBefore,
 	}
 	fullCut := compaction.ViewRawOf(rawOf, w)
-	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
+	newList, marker, insertAt := compaction.InsertCompactionMarker(msgs, res, fullCut, persisted, now)
 	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
 	marker.TokensAfter = tokensAfter
 	newList[insertAt] = marker
