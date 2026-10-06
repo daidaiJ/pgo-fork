@@ -254,6 +254,16 @@ func serializeConversation(msgs []agentcore.Message) string {
 			if s := textOf(m.Content); s != "" {
 				parts = append(parts, "[Tool result]: "+truncateForSummary(s, toolResultMaxChars))
 			}
+		case agentcore.CompactionMessage:
+			// A prior compaction checkpoint inside the input range: carry its
+			// summary forward so a second compaction never silently drops the
+			// first one's content (T3.3 defect-① fix; the loop normally passes
+			// it via previousSummary instead, this is the defensive path).
+			if strings.TrimSpace(m.Summary) != "" {
+				parts = append(parts, "[Previous compaction checkpoint]: "+truncateForSummary(m.Summary, toolResultMaxChars))
+			}
+		case agentcore.MicrocompactMessage:
+			// Projection metadata: carries no conversation content.
 		}
 	}
 	return strings.Join(parts, "\n\n")
@@ -287,8 +297,10 @@ func formatToolCall(c agentcore.ToolCallContent) string {
 // embeds the prior summary in <previous-summary> tags; otherwise it uses the
 // first-time template. maxTokens is bounded to min(0.8*reserveTokens,
 // model.MaxOutputTokens) as in pi. The returned text is the concatenation of
-// the assistant response's text blocks. A terminal error/aborted response is
-// surfaced as an error.
+// the assistant response's text blocks; the returned Usage is the summarization
+// request's own provider usage so its cost can enter telemetry (T3.3 defect-④).
+// A terminal error/aborted response, an empty output, or a degenerate
+// (<500-char, grok floor) summary is surfaced as a typed *SkipError.
 func GenerateSummary(
 	ctx context.Context,
 	stream provider.StreamFn,
@@ -297,7 +309,7 @@ func GenerateSummary(
 	reserveTokens int,
 	previousSummary string,
 	cfg provider.StreamConfig,
-) (string, error) {
+) (string, agentcore.Usage, error) {
 	base := summarizationPrompt
 	if previousSummary != "" {
 		base = updateSummarizationPrompt
@@ -340,28 +352,40 @@ func GenerateSummary(
 	}
 	s, err := stream(ctx, model.ID, llm, cfg)
 	if err != nil {
-		return "", fmt.Errorf("compaction: build summary stream: %w", err)
+		return "", agentcore.Usage{}, NewSkipError(SkipAPIError, fmt.Errorf("build summary stream: %w", err))
 	}
 
 	// Drain events so the stream's result is populated, then read the final
 	// message. Failures ride the stream as a terminal message per the provider
 	// contract, so inspect StopReason rather than only the returned error.
+	var usage agentcore.Usage
 	for range s.Events() {
 	}
 	final, resErr := s.Result(ctx)
 	if resErr != nil {
-		return "", fmt.Errorf("compaction: summary stream: %w", resErr)
+		return "", usage, NewSkipError(SkipAPIError, fmt.Errorf("summary stream: %w", resErr))
+	}
+	if final.Usage != nil {
+		// Capture the summarization request's own cost even when the summary
+		// itself fails validation below — it was spent either way.
+		usage = *final.Usage
 	}
 	switch final.StopReason {
 	case agentcore.StopReasonAborted:
-		return "", fmt.Errorf("compaction: summarization aborted: %s", final.ErrorMessage)
+		return "", usage, NewSkipError(SkipAPIError, fmt.Errorf("summarization aborted: %s", final.ErrorMessage))
 	case agentcore.StopReasonError:
-		return "", fmt.Errorf("compaction: summarization failed: %s", final.ErrorMessage)
+		return "", usage, NewSkipError(SkipAPIError, fmt.Errorf("summarization failed: %s", final.ErrorMessage))
 	}
 
 	summary := textOf(final.Content)
 	if strings.TrimSpace(summary) == "" {
-		return "", fmt.Errorf("compaction: summarization produced empty output")
+		return "", usage, NewSkipError(SkipDegenerateSummary, fmt.Errorf("summarization produced empty output"))
 	}
-	return summary, nil
+	if len(summary) < minSummaryChars {
+		// Degenerate floor (grok): a sub-500-char "summary" cannot carry the
+		// collapsed history; treat the attempt as failed so the circuit
+		// breaker and retry accounting see it.
+		return "", usage, NewSkipError(SkipDegenerateSummary, fmt.Errorf("summarization produced degenerate output (%d chars < %d)", len(summary), minSummaryChars))
+	}
+	return summary, usage, nil
 }

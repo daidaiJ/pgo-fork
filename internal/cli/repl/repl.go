@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
@@ -393,20 +395,12 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		if line == "/compact" {
 			// /compact is intercepted here (like /exit) because compaction must run
 			// an agent stream and mutate the shared context — neither of which a
-			// slash Action closure (string in, string out) can do. Compaction
-			// replaces the whole message list with a summary + tail, so the session
-			// is rewritten linearly (Save) and the branch-tracking state is reset to
-			// the new flattened leaf.
-			runManualCompact(out, deps)
-			deps.header.UpdatedAt = time.Now().UTC()
-			if err := deps.store.Save(deps.header, deps.agentCtx.Messages); err != nil {
-				fmt.Fprintf(out, "pigo: session save failed: %v\n", err)
-			}
-			deps.persisted = len(deps.agentCtx.Messages)
-			deps.curLeaf = ""
-			if _, entries, err := deps.store.LoadEntries(deps.header.ID); err == nil && len(entries) > 0 {
-				deps.curLeaf = entries[len(entries)-1].ID
-			}
+			// slash Action closure (string in, string out) can do. T3.3 marker
+			// model: compaction only INSERTS a marker into the live list, so the
+			// plain tail append below carries it into the tree (no flatten, no
+			// linear re-save, abandoned branches intact).
+			runManualCompact(out, &deps)
+			cli.PersistTurn(out, &deps)
 			continue
 		}
 		if line == "/rebuild" {
@@ -414,18 +408,11 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			// reconstructs the whole message list (checkpoint summary + retained
 			// tail) and mutates the shared context, which a slash Action closure
 			// cannot do. It reloads a persisted checkpoint when present, else falls
-			// back to lossy compaction. Like /compact, the session is rewritten
-			// linearly (Save) and the branch cursor reset to the new flattened leaf.
+			// back to summarizing compaction. Like /compact, the T3.3 marker model
+			// means the rebuild only INSERTS a marker — the plain tail append below
+			// carries it into the tree.
 			runManualRebuild(out, deps)
-			deps.header.UpdatedAt = time.Now().UTC()
-			if err := deps.store.Save(deps.header, deps.agentCtx.Messages); err != nil {
-				fmt.Fprintf(out, "pigo: session save failed: %v\n", err)
-			}
-			deps.persisted = len(deps.agentCtx.Messages)
-			deps.curLeaf = ""
-			if _, entries, err := deps.store.LoadEntries(deps.header.ID); err == nil && len(entries) > 0 {
-				deps.curLeaf = entries[len(entries)-1].ID
-			}
+			cli.PersistTurn(out, &deps)
 			continue
 		}
 		if line == "/clone" || line == "/fork" || strings.HasPrefix(line, "/fork ") {
@@ -637,6 +624,10 @@ func streamRun(ctx context.Context, out io.Writer, deps replDeps, prompt string)
 		SessionID:  deps.header.ID,
 		MemoryRoot: deps.memoryRoot,
 	}
+	// T3.3: compaction needs the persisted-message cursor to place its marker at
+	// the branch tip (after the last persisted entry), keeping the tree
+	// append-only under PersistTurn's plain tail append.
+	cfg.PersistedCount = func() int { return deps.persisted }
 	// Per-turn wiring of the tool-execution + Stop seams (PreToolUse/PostToolUse/
 	// Stop) onto this turn's freshly-built cfg; a nil dispatcher is a no-op so the
 	// hot path pays nothing when no hooks are configured (FR-18).
@@ -1109,14 +1100,21 @@ func runSession(out io.Writer, deps *replDeps) {
 }
 
 // runManualCompact compacts the shared context on an explicit /compact request:
-// it runs the summarization stream, replaces the context with the checkpoint +
-// retained tail, and prints the before/after token counts and retained message
-// count. A failure is reported but non-fatal — the original context is kept
-// unchanged (US-004). It uses the same provider/model as the live run.
-func runManualCompact(out io.Writer, deps replDeps) {
-	msgs := deps.agentCtx.Messages
+// it runs the summarization stream on the request view and inserts a compaction
+// marker into the live list (T3.3 marker-entry model — nothing is dropped; the
+// request view collapses the summarized prefix), then prints the before/after
+// token counts and retained message count. A failure is reported but non-fatal —
+// the original context is kept unchanged (US-004). It uses the same
+// provider/model as the live run, and chains from the view's existing marker so
+// successive /compact calls never drop the previous summary (defect-① fix).
+func runManualCompact(out io.Writer, deps *replDeps) {
+	persisted := deps.persisted
+	if persisted > len(deps.agentCtx.Messages) {
+		persisted = len(deps.agentCtx.Messages)
+	}
+	view := compaction.ProjectView(deps.agentCtx.Messages)
 	settings := compaction.DefaultCompactionSettings
-	before := compaction.EstimateContextTokens(msgs).Tokens
+	before := compaction.EstimateContextTokens(view).Tokens
 
 	stream := provider.StreamFnFromProvider(deps.live.Provider)
 	model := provider.Model{Provider: deps.live.ProviderName, ID: deps.live.Model, ContextWindow: deps.live.ContextWindow}
@@ -1129,34 +1127,68 @@ func runManualCompact(out io.Writer, deps replDeps) {
 		scfg.APIKey = deps.creds.GetAPIKey(context.Background(), deps.live.ProviderName)
 	}
 	fmt.Fprintln(out, ui.Colorize(ui.Enabled(), ui.Dim, "Compacting conversation…"))
-	res, err := compaction.Compact(context.Background(), stream, model, msgs, settings, -1, nil, "", scfg)
+	// Iterative chain: the view's leading marker (if any) is the previous
+	// compaction — summarize only what came after it.
+	prevIdx := -1
+	var prevSummary string
+	var prevDetails *compaction.CompactionDetails
+	if len(view) > 0 {
+		if c, ok := view[0].(agentcore.CompactionMessage); ok {
+			prevIdx = 0
+			prevSummary = c.Summary
+			var d compaction.CompactionDetails
+			if err := json.Unmarshal(c.Details, &d); err == nil && (len(d.ReadFiles) > 0 || len(d.ModifiedFiles) > 0) {
+				prevDetails = &d
+			}
+		}
+	}
+	res, err := compaction.Compact(context.Background(), stream, model, view, settings, prevIdx, prevDetails, prevSummary, scfg)
 	if err != nil {
 		fmt.Fprintf(out, "compaction failed: %v (context left unchanged)\n", err)
 		return
 	}
 	if res == nil {
-		fmt.Fprintf(out, "nothing to compact (%d tokens, %d messages)\n", before, len(msgs))
+		fmt.Fprintf(out, "nothing to compact (%d tokens, %d messages)\n", before, len(view))
 		return
 	}
-	now := time.Now().UnixMilli()
-	rebuilt := res.RebuildContext(msgs, now)
-	deps.agentCtx.Messages = rebuilt
-	after := compaction.EstimateContextTokens(rebuilt).Tokens
-	summarized := len(msgs) - (len(rebuilt) - 1)
+	// Map the view cut back to raw-list coordinates and insert the marker at the
+	// T3.3 topology position (after the persisted cursor so the next PersistTurn
+	// carries it into the tree).
+	m0, k0 := compaction.LastMarkerAnchor(deps.agentCtx.Messages)
+	fullCut := compaction.ViewIndexToRaw(res.FirstKeptIndex, m0, k0)
+	insertAt := fullCut
+	if insertAt < persisted {
+		insertAt = persisted
+	}
+	marker := res.Message(time.Now().UnixMilli())
+	marker.FirstKeptIndex = fullCut
+	marker.KeptBefore = insertAt - fullCut
+	newList := make(agentcore.MessageList, 0, len(deps.agentCtx.Messages)+1)
+	newList = append(newList, deps.agentCtx.Messages[:insertAt]...)
+	newList = append(newList, marker)
+	newList = append(newList, deps.agentCtx.Messages[insertAt:]...)
+	marker.TokensAfter = compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
+	newList[insertAt] = marker
+	deps.agentCtx.Messages = newList
+	after := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
+	summarized := res.FirstKeptIndex - 1
+	if summarized < 0 {
+		summarized = 0
+	}
 	fmt.Fprintf(out, "compacted: %d → %d tokens, summarized %d messages, kept %d\n",
-		before, after, summarized, len(rebuilt)-1)
+		before, after, summarized, len(view)-res.FirstKeptIndex)
 }
 
 // runManualRebuild reconstructs the shared context on an explicit /rebuild
 // request. It reloads the session's persisted checkpoint (from #480) and inserts
 // the compression boundary at its watermark — collapsing the pre-watermark
 // prefix into the checkpoint summary and preserving the recent tail verbatim. If
-// no checkpoint exists it falls back to the same lossy compaction /compact runs.
-// It prints the before/after token counts; a failure is reported but non-fatal
-// (the original context is kept unchanged).
+// no checkpoint exists it falls back to the same summarizing compaction /compact
+// runs. It prints the before/after token counts; a failure is reported but
+// non-fatal (the original context is kept unchanged).
 func runManualRebuild(out io.Writer, deps replDeps) {
 	msgs := deps.agentCtx.Messages
-	before := compaction.EstimateContextTokens(msgs).Tokens
+	before := compaction.EstimateContextTokens(compaction.ProjectView(msgs)).Tokens
 
 	// Build a RunConfig matching a normal turn so the no-checkpoint fallback can
 	// summarize against the live provider/model (RebuildFromCheckpoint reuses the
@@ -1174,6 +1206,9 @@ func runManualRebuild(out io.Writer, deps replDeps) {
 	if deps.creds != nil {
 		cfg.GetAPIKey = deps.creds.GetAPIKey
 	}
+	// T3.3: the rebuild's marker must land after the persisted cursor so the
+	// next PersistTurn carries it into the tree.
+	cfg.PersistedCount = func() int { return deps.persisted }
 
 	// Checkpoints live at <memoryRoot>/sessions/<id>/checkpoint.md; recover from
 	// the same root streamRun writes to. Empty when memory is disabled — then

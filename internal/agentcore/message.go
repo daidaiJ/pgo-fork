@@ -15,6 +15,9 @@ const (
 	// "compactionSummary"). It is not sent to the model verbatim; the LLM
 	// conversion turns it into a user text block.
 	RoleCompaction = "compaction"
+	// RoleMicrocompact marks a microcompaction decision record (T3.3): cleared
+	// tool-result ids, projection metadata — never rendered into a request.
+	RoleMicrocompact = "microcompact"
 )
 
 // Message is the sealed interface implemented by the three message roles.
@@ -33,10 +36,17 @@ type Message interface {
 // LLM messages.
 type AgentMessage = Message
 
-// Usage reports token accounting for an assistant response.
+// Usage reports token accounting for an assistant response. Cache buckets are
+// optional: providers whose decoders do not surface them leave them zero, and
+// consumers must treat them as "unknown", not "absent cost" — context-token
+// math adds them on top of InputTokens only when the source API reports cache
+// tokens separately from input (anthropic does; openai's prompt_tokens already
+// folds its cached share into prompt_tokens and is decoded without them).
 type Usage struct {
-	InputTokens  int `json:"inputTokens"`
-	OutputTokens int `json:"outputTokens"`
+	InputTokens      int `json:"inputTokens"`
+	OutputTokens     int `json:"outputTokens"`
+	CacheReadTokens  int `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int `json:"cacheWriteTokens,omitempty"`
 }
 
 // UserMessage is input from the user. Content is restricted at construction to
@@ -111,6 +121,23 @@ type CompactionMessage struct {
 	// kept as raw JSON so agentcore stays free of a compaction dependency.
 	Details   json.RawMessage `json:"details,omitempty"`
 	Timestamp int64           `json:"timestamp"`
+
+	// FirstKeptIndex is the compaction cut expressed in the live message-list
+	// coordinates at compaction time (observability / driver-side math only;
+	// replay projection uses KeptBefore, which does not drift when the tree
+	// grows or the active leaf moves).
+	FirstKeptIndex int `json:"firstKeptIndex,omitempty"`
+	// KeptBefore is the replay-projection anchor: how many entries immediately
+	// before this marker on the persisted path belong to the KEPT window rather
+	// than the summarized range. Projection restores them ahead of the marker.
+	// Zero when everything before the marker on the path is summarized.
+	KeptBefore int `json:"keptBefore,omitempty"`
+	// TokensAfter is the estimated context tokens of the post-compaction view
+	// (the "post" of the pre/post dual-caliber boundary event, T3.3).
+	TokensAfter int `json:"tokensAfter,omitempty"`
+	// StrategyVersion tags the compaction strategy that produced this marker
+	// (minimax metadata alignment); 1 = the T3.3 marker+projection model.
+	StrategyVersion int `json:"strategyVersion,omitempty"`
 }
 
 func (CompactionMessage) isMessage()     {}
@@ -135,6 +162,25 @@ func (m CompactionMessage) AsUserMessage() UserMessage {
 		Timestamp: m.Timestamp,
 	}
 }
+
+// MicrocompactMessage is a microcompaction decision record (T3.3): it does not
+// stand in for history — it records WHICH tool results were evicted from the
+// request view (by tool-call id) and the estimated tokens saved. It is
+// projection metadata: appended to the live list and persisted as a tree entry
+// (sticky, so evicted results never resurrect across turns or resume), but
+// never rendered into an LLM request — the compaction projection replaces the
+// matching tool results with placeholders and drops these markers.
+type MicrocompactMessage struct {
+	RoleField string `json:"role"`
+	// ClearedCallIDs are the tool-call ids whose results were evicted.
+	ClearedCallIDs []string `json:"clearedCallIds"`
+	// SavedTokens is the estimated token footprint removed from the view.
+	SavedTokens int   `json:"savedTokens,omitempty"`
+	Timestamp   int64 `json:"timestamp"`
+}
+
+func (MicrocompactMessage) isMessage()       {}
+func (m MicrocompactMessage) Role() string   { return RoleMicrocompact }
 
 // StopReason values, matching pi.
 const (
@@ -198,6 +244,12 @@ func decodeMessage(raw json.RawMessage) (Message, error) {
 		return m, nil
 	case RoleCompaction:
 		var m CompactionMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		return m, nil
+	case RoleMicrocompact:
+		var m MicrocompactMessage
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, err
 		}

@@ -64,9 +64,15 @@ func TestE2E_LongSession_TriggersCompaction(t *testing.T) {
 	if ce.SummarizedCount <= 0 {
 		t.Errorf("compaction must fold at least one message into the summary, got %d", ce.SummarizedCount)
 	}
-	// The compacted context must begin with a compaction checkpoint.
-	if len(agentCtx.Messages) == 0 || agentCtx.Messages[0].Role() != agentcore.RoleCompaction {
-		t.Errorf("context must start with a compaction checkpoint after compaction, got %+v", agentCtx.Messages)
+	// T3.3 marker-entry model: the live list only grows by the inserted marker
+	// (16 seed + the run's one assistant reply + marker); the request VIEW is
+	// what begins with a compaction checkpoint.
+	if len(agentCtx.Messages) != 18 {
+		t.Errorf("compaction must insert one marker, list = %d, want 18 (16 seed + 1 reply + marker)", len(agentCtx.Messages))
+	}
+	view := compaction.ProjectView(agentCtx.Messages)
+	if len(view) == 0 || view[0].Role() != agentcore.RoleCompaction {
+		t.Errorf("request view must start with a compaction checkpoint after compaction, got %+v", view)
 	}
 	// The run must still terminate cleanly.
 	if n := len(events); n == 0 || events[n-1].EventType() != agentcore.EventAgentEnd {

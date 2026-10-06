@@ -108,6 +108,12 @@ func fakeStreamFn(final agentcore.AssistantMessage, capture *provider.LlmContext
 }
 
 func assistantText(text string) agentcore.AssistantMessage {
+	// Pad past the degenerate-summary floor (T3.3: a sub-500-char summary is a
+	// failed attempt); real summaries always clear it.
+	const floor = 600
+	for len(text) < floor {
+		text += "\n- filler context line for the test fixture"
+	}
 	return agentcore.AssistantMessage{
 		RoleField:  agentcore.RoleAssistant,
 		Content:    agentcore.ContentList{agentcore.NewTextContent(text)},
@@ -121,7 +127,7 @@ func TestGenerateSummaryFirstTime(t *testing.T) {
 	model := provider.Model{ID: "m", MaxOutputTokens: 8000}
 	msgs := []agentcore.Message{userMsg("please do X")}
 
-	got, err := GenerateSummary(context.Background(), stream, model, msgs, 16384, "", provider.StreamConfig{})
+	got, _, err := GenerateSummary(context.Background(), stream, model, msgs, 16384, "", provider.StreamConfig{})
 	if err != nil {
 		t.Fatalf("GenerateSummary: %v", err)
 	}
@@ -148,7 +154,7 @@ func TestGenerateSummaryUpdateUsesPrevious(t *testing.T) {
 	model := provider.Model{ID: "m"}
 	msgs := []agentcore.Message{userMsg("more work")}
 
-	_, err := GenerateSummary(context.Background(), stream, model, msgs, 16384, "PRIOR SUMMARY", provider.StreamConfig{})
+	_, _, err := GenerateSummary(context.Background(), stream, model, msgs, 16384, "PRIOR SUMMARY", provider.StreamConfig{})
 	if err != nil {
 		t.Fatalf("GenerateSummary: %v", err)
 	}
@@ -178,7 +184,7 @@ func TestGenerateSummaryMaxTokensCap(t *testing.T) {
 	}
 	// 0.8 * 16384 = 13107, but model max output is 5000 -> cap at 5000.
 	model := provider.Model{ID: "m", MaxOutputTokens: 5000}
-	_, err := GenerateSummary(context.Background(), stream, model, []agentcore.Message{userMsg("x")}, 16384, "", provider.StreamConfig{})
+	_, _, err := GenerateSummary(context.Background(), stream, model, []agentcore.Message{userMsg("x")}, 16384, "", provider.StreamConfig{})
 	if err != nil {
 		t.Fatalf("GenerateSummary: %v", err)
 	}
@@ -190,7 +196,7 @@ func TestGenerateSummaryMaxTokensCap(t *testing.T) {
 func TestGenerateSummaryErrorStopReason(t *testing.T) {
 	errMsg := agentcore.AssistantMessage{RoleField: agentcore.RoleAssistant, StopReason: agentcore.StopReasonError, ErrorMessage: "boom"}
 	stream := fakeStreamFn(errMsg, nil)
-	_, err := GenerateSummary(context.Background(), stream, provider.Model{ID: "m"}, []agentcore.Message{userMsg("x")}, 16384, "", provider.StreamConfig{})
+	_, _, err := GenerateSummary(context.Background(), stream, provider.Model{ID: "m"}, []agentcore.Message{userMsg("x")}, 16384, "", provider.StreamConfig{})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected error containing 'boom', got %v", err)
 	}
@@ -199,10 +205,10 @@ func TestGenerateSummaryErrorStopReason(t *testing.T) {
 func TestCompactRebuildsContext(t *testing.T) {
 	readArgs, _ := json.Marshal(map[string]string{"path": "old.go"})
 	msgs := []agentcore.Message{
-		userMsg("turn one"),                                                                                                                                    // 0
+		userMsg("turn one"), // 0
 		agentcore.AssistantMessage{RoleField: agentcore.RoleAssistant, Content: agentcore.ContentList{agentcore.NewToolCallContent("t1", "read", readArgs)}}, // 1
-		toolResult("t1"), // 2
-		bigUser(100),     // 3
+		toolResult("t1"),                // 2
+		bigUser(100),                    // 3
 		assistantMsg("recent", nil, ""), // 4
 	}
 	stream := fakeStreamFn(assistantText("## Goal\nx"), nil)
@@ -270,5 +276,88 @@ func TestCompactionMessageRoundTrip(t *testing.T) {
 	got := back[0].(agentcore.CompactionMessage)
 	if got.Summary != "the summary" || got.TokensBefore != 42 {
 		t.Fatalf("round-trip fields: %+v", got)
+	}
+}
+
+func TestCompactIterativeChainCarriesPreviousSummary(t *testing.T) {
+	// T3.3 defect-① fix: a second compaction over a view whose head is the
+	// previous compaction's marker must (a) summarize only the messages after
+	// the marker and (b) feed the previous summary into the update template,
+	// so the old summary's content is never silently dropped.
+	readArgs, _ := json.Marshal(map[string]string{"path": "old.go"})
+	marker := agentcore.CompactionMessage{
+		RoleField: agentcore.RoleCompaction,
+		Summary:   "PRIOR CHAIN SUMMARY",
+		Details:   mustJSON(t, CompactionDetails{ReadFiles: []string{"carried.go"}}),
+		Timestamp: 1,
+	}
+	msgs := []agentcore.Message{
+		marker, // 0: previous compaction
+		agentcore.AssistantMessage{RoleField: agentcore.RoleAssistant, Content: agentcore.ContentList{agentcore.NewToolCallContent("t1", "read", readArgs)}}, // 1
+		toolResult("t1"),                // 2
+		bigUser(100),                    // 3
+		assistantMsg("recent", nil, ""), // 4
+	}
+	var captured provider.LlmContext
+	stream := fakeStreamFn(assistantText("## Goal\nchained"), &captured)
+	settings := CompactionSettings{Enabled: true, ReserveTokens: 16384, KeepRecentTokens: 50}
+	res, err := Compact(context.Background(), stream, provider.Model{ID: "m"}, msgs, settings, 0, mustDetails(t, marker), "PRIOR CHAIN SUMMARY", provider.StreamConfig{})
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if res == nil {
+		t.Fatal("Compact returned nil result")
+	}
+	promptText := textOf(captured.Messages[0].(agentcore.UserMessage).Content)
+	if !strings.Contains(promptText, "<previous-summary>\nPRIOR CHAIN SUMMARY") {
+		t.Fatalf("second compaction must carry the previous summary: %q", promptText)
+	}
+	// Only the post-marker range is serialized into the conversation block.
+	if strings.Contains(promptText, "[Previous compaction checkpoint]") {
+		t.Fatalf("the marker itself must not be re-serialized as conversation: %q", promptText)
+	}
+	// File lists seed from the previous compaction's details.
+	joined := strings.Join(res.Details.ReadFiles, ",")
+	if !strings.Contains(joined, "carried.go") || !strings.Contains(joined, "old.go") {
+		t.Fatalf("readFiles must union prev+range: got %v", res.Details.ReadFiles)
+	}
+	if !strings.Contains(res.Summary, "<read-files>") {
+		t.Fatalf("summary should carry file metadata: %q", res.Summary)
+	}
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+func mustDetails(t *testing.T, m agentcore.CompactionMessage) *CompactionDetails {
+	t.Helper()
+	var d CompactionDetails
+	if err := json.Unmarshal(m.Details, &d); err != nil {
+		t.Fatalf("unmarshal details: %v", err)
+	}
+	return &d
+}
+
+func TestSerializeConversationCarriesCompactionMarker(t *testing.T) {
+	// Defensive defect-① branch: a marker passed through unprojected still
+	// contributes its summary to the serialization.
+	msgs := []agentcore.Message{
+		agentcore.CompactionMessage{RoleField: agentcore.RoleCompaction, Summary: "OLD CHAIN SUMMARY"},
+		userMsg("turn"),
+	}
+	got := serializeConversation(msgs)
+	if !strings.Contains(got, "OLD CHAIN SUMMARY") {
+		t.Fatalf("serializeConversation must carry a compaction marker's summary: %q", got)
+	}
+	// Microcompact records are projection metadata: never serialized.
+	msgs = append(msgs, agentcore.MicrocompactMessage{RoleField: agentcore.RoleMicrocompact, ClearedCallIDs: []string{"x"}})
+	if strings.Count(serializeConversation(msgs), "OLD CHAIN SUMMARY") != 1 {
+		t.Fatalf("serialization changed shape unexpectedly")
 	}
 }

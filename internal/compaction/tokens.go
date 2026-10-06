@@ -92,16 +92,22 @@ func EstimateTokens(msg agentcore.Message) int {
 	case agentcore.CompactionMessage:
 		// A compaction checkpoint replays as its summary text; estimate from it.
 		return ceilDiv(len(m.Summary), charsPerToken)
+	case agentcore.MicrocompactMessage:
+		// Projection metadata, never a request message; occupies no view tokens.
+		return 0
 	default:
 		return 0
 	}
 }
 
 // calculateContextTokens derives total context tokens from a provider usage
-// block. pigo's Usage only reports input/output, so we sum them (pi additionally
-// folds cache read/write, which pigo does not track).
+// block. Cache buckets are folded in when the source API reports them
+// separately (anthropic): cached reads still occupy the context window, so
+// ignoring them under-counts the watermark; providers that fold their cached
+// share into input (openai) decode zero here, so nothing double-counts
+// (T3.3 defect-③ fix).
 func calculateContextTokens(u agentcore.Usage) int {
-	return u.InputTokens + u.OutputTokens
+	return u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens + u.OutputTokens
 }
 
 // assistantUsage returns a usable Usage from an assistant message, skipping

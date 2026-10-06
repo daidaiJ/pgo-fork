@@ -54,14 +54,30 @@ func collectEvents(t *testing.T, s *LoopEventStream) []agentcore.AgentEvent {
 	return out
 }
 
+// padSummary pads text with filler lines until it clears the 500-char
+// degenerate-summary floor (T3.3), so test fixtures resemble real summaries.
+func padSummary(text string) string {
+	const floor = 600
+	if len(text) >= floor {
+		return text
+	}
+	filler := "\n- filler context line for the test fixture"
+	for len(text) < floor {
+		text += filler
+	}
+	return text
+}
+
 // summaryStream yields a fixed summary text as an end_turn assistant message,
-// standing in for the summarization model.
+// standing in for the summarization model. The text is padded past the
+// degenerate-summary floor (T3.3: a sub-500-char summary is a failed attempt),
+// which real summaries always clear.
 func summaryStream(text string) provider.StreamFn {
 	return func(ctx context.Context, model string, llm provider.LlmContext, cfg provider.StreamConfig) (*provider.AssistantMessageEventStream, error) {
 		msg := agentcore.AssistantMessage{
 			RoleField:  agentcore.RoleAssistant,
 			StopReason: agentcore.StopReasonEndTurn,
-			Content:    agentcore.ContentList{agentcore.NewTextContent(text)},
+			Content:    agentcore.ContentList{agentcore.NewTextContent(padSummary(text))},
 		}
 		s := provider.NewAssistantMessageEventStream(0)
 		go func() { _ = s.Emit(ctx, provider.StreamDoneEvent{Message: msg}); s.Close() }()
@@ -115,9 +131,14 @@ func TestAutoCompactionFiresOnThreshold(t *testing.T) {
 	if ce.SummarizedCount <= 0 {
 		t.Errorf("expected some messages summarized, got %d", ce.SummarizedCount)
 	}
-	// The context must now begin with a compaction checkpoint.
-	if len(agentCtx.Messages) == 0 || agentCtx.Messages[0].Role() != agentcore.RoleCompaction {
-		t.Errorf("context should start with a compaction checkpoint, got %+v", agentCtx.Messages)
+	// T3.3 marker-entry model: the live list only grows by the inserted marker;
+	// the request VIEW is what begins with a compaction checkpoint.
+	if len(agentCtx.Messages) != 14 {
+		t.Errorf("compaction must insert one marker, list = %d, want 14 (12 seed + 1 reply + marker)", len(agentCtx.Messages))
+	}
+	view := compaction.ProjectView(agentCtx.Messages)
+	if len(view) == 0 || view[0].Role() != agentcore.RoleCompaction {
+		t.Errorf("request view should start with a compaction checkpoint, got %+v", view)
 	}
 }
 

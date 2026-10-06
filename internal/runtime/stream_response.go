@@ -116,32 +116,37 @@ type LoopConfig struct {
 // identical to pi. It never returns an error for a request failure — such
 // failures arrive as a terminal assistant message with stopReason error/aborted.
 func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc) (agentcore.AssistantMessage, error) {
-	// 1. fold the projection-only stream-recovery hint (T1.2) before any
+	// 1. derive the request view (T3.3 marker-entry model): compaction markers
+	// collapse the summarized prefix, microcompact markers evict old tool
+	// results, dangling tool calls get synthetic results. The raw context is
+	// never touched — projection only.
+	msgs := compaction.ProjectView(agentCtx.Messages)
+	// 2. fold the projection-only stream-recovery hint (T1.2) before any
 	// TransformContext runs: reminders append ephemeral messages at the tail,
 	// so the interruption trigger must be evaluated on the real context tail.
-	msgs := foldStreamRecovery(agentCtx.Messages)
-	// 2. transformContext (optional, must not error).
+	msgs = foldStreamRecovery(msgs)
+	// 3. transformContext (optional, must not error).
 	if cfg.TransformContext != nil {
 		msgs = cfg.TransformContext(ctx, msgs)
 	}
-	// 3. convertToLlm (filter UI-only; default identity).
+	// 4. convertToLlm (filter UI-only; default identity).
 	if cfg.ConvertToLlm != nil {
 		msgs = cfg.ConvertToLlm(msgs)
 	}
-	// 4. shape the LLM context.
+	// 5. shape the LLM context.
 	llm := provider.LlmContext{
 		SystemPrompt: agentCtx.SystemPrompt,
 		Messages:     msgs,
 		Tools:        agentCtx.Tools,
 	}
-	// 5. resolve API key dynamically, fall back to static.
+	// 6. resolve API key dynamically, fall back to static.
 	key := cfg.APIKey
 	if cfg.GetAPIKey != nil {
 		if dyn := cfg.GetAPIKey(ctx, cfg.Provider); dyn != "" {
 			key = dyn
 		}
 	}
-	// 6. build the provider stream.
+	// 7. build the provider stream.
 	stream, err := cfg.Stream(ctx, cfg.Model, llm, provider.StreamConfig{
 		APIKey:        key,
 		ThinkingLevel: cfg.ThinkingLevel,
@@ -153,7 +158,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 		return newErrorAssistantMessage(cfg, err), nil
 	}
 
-	// 7. drain the stream, back-filling the partial into the context.
+	// 8. drain the stream, back-filling the partial into the context.
 	addedPartial := false
 	backfill := func(partial agentcore.AssistantMessage) {
 		if !addedPartial {
@@ -201,7 +206,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 		}
 	}
 
-	// 8. stream ended without done/error: fall back to the stream result.
+	// 9. stream ended without done/error: fall back to the stream result.
 	final, resErr := stream.Result(ctx)
 	if resErr != nil {
 		return newErrorAssistantMessage(cfg, resErr), nil

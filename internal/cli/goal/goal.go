@@ -224,6 +224,9 @@ func runGoalLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Hos
 			},
 		},
 		Reminders: reminders,
+		// T3.3: compaction places its marker after the host's persisted cursor so
+		// cli.PersistTurn's tail append carries it into the tree append-only.
+		PersistedCount: func() int { return host.Persisted() },
 		GetFollowUpMessages: func(ctx context.Context, agentCtx *agentcore.AgentContext) []agentcore.AgentMessage {
 			// Account for the turns produced since the last settle. Auto-compaction
 			// can shrink agentCtx.Messages in place (summary + tail) between settles,

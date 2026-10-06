@@ -841,3 +841,57 @@ func TestLoadedSessionsWithoutInheritanceReadZero(t *testing.T) {
 		}
 	}
 }
+
+// TestCompactionMarkerFieldsRoundTrip covers the T3.3 marker metadata: the
+// extended CompactionMessage fields (FirstKeptIndex/KeptBefore/TokensAfter/
+// StrategyVersion) and the new MicrocompactMessage role must survive a full
+// session-file round trip unchanged.
+func TestCompactionMarkerFieldsRoundTrip(t *testing.T) {
+	s := newStore(t)
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	h := SessionHeader{ID: NewID(now), CreatedAt: now, UpdatedAt: now}
+	msgs := agentcore.MessageList{
+		agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("q")}},
+		agentcore.CompactionMessage{
+			RoleField:       agentcore.RoleCompaction,
+			Summary:         "chain summary",
+			TokensBefore:    4200,
+			Details:         []byte(`{"readFiles":["a.go"],"modifiedFiles":null}`),
+			Timestamp:       1000,
+			FirstKeptIndex:  7,
+			KeptBefore:      3,
+			TokensAfter:     1900,
+			StrategyVersion: 1,
+		},
+		agentcore.MicrocompactMessage{
+			RoleField:      agentcore.RoleMicrocompact,
+			ClearedCallIDs: []string{"call-1", "call-2"},
+			SavedTokens:    750,
+			Timestamp:      2000,
+		},
+	}
+	if err := s.Save(h, msgs); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	_, loaded, err := s.Load(h.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("loaded %d messages, want 3", len(loaded))
+	}
+	cm, ok := loaded[1].(agentcore.CompactionMessage)
+	if !ok {
+		t.Fatalf("loaded[1] = %T, want CompactionMessage", loaded[1])
+	}
+	if cm.FirstKeptIndex != 7 || cm.KeptBefore != 3 || cm.TokensAfter != 1900 || cm.StrategyVersion != 1 || cm.TokensBefore != 4200 {
+		t.Fatalf("marker fields did not round-trip: %+v", cm)
+	}
+	mc, ok := loaded[2].(agentcore.MicrocompactMessage)
+	if !ok {
+		t.Fatalf("loaded[2] = %T, want MicrocompactMessage", loaded[2])
+	}
+	if len(mc.ClearedCallIDs) != 2 || mc.SavedTokens != 750 {
+		t.Fatalf("microcompact fields did not round-trip: %+v", mc)
+	}
+}

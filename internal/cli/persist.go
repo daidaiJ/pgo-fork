@@ -14,29 +14,16 @@ import (
 // branch descending from the host's current leaf, advancing the leaf and the
 // persisted-message cursor. Growing the tree with AppendBranch (rather than a
 // full linear Save) is what lets a later /tree leaf-switch fork the on-disk
-// history instead of clobbering it. If nothing new was produced it is a no-op:
-// rewriting the file would regenerate entry ids and flatten the tree.
+// history instead of clobbering it. If nothing new was produced it is a no-op.
+//
+// T3.3 marker-entry model: compaction no longer rewrites the context — the
+// loop inserts a marker into the live list (always after the persisted cursor,
+// by topology), so the tail append below carries the marker into the tree and
+// the tree grows append-only. The old "context shrank below the cursor →
+// re-save flattened" branch is gone: it was the defect that flattened the v3
+// tree and physically destroyed abandoned branches after every auto-compaction.
 func PersistTurn(out io.Writer, h Host) {
 	agentCtx := h.AgentCtx()
-	// Automatic compaction during a turn rewrites Messages into a summary + recent
-	// tail, shrinking the slice below the persisted cursor. The append-a-tail
-	// branch model no longer holds (the prefix changed and Messages[persisted:]
-	// would be out of range), so re-save the flattened context linearly and reset
-	// the branch cursor to the new leaf, mirroring the /compact handler.
-	if h.Persisted() > len(agentCtx.Messages) {
-		header := h.Header()
-		header.UpdatedAt = time.Now().UTC()
-		if err := h.Store().Save(header, agentCtx.Messages); err != nil {
-			fmt.Fprintf(out, "pigo: session save failed: %v\n", err)
-			return
-		}
-		h.SetPersisted(len(agentCtx.Messages))
-		h.SetCurLeaf("")
-		if _, entries, err := h.Store().LoadEntries(header.ID); err == nil && len(entries) > 0 {
-			h.SetCurLeaf(entries[len(entries)-1].ID)
-		}
-		return
-	}
 	tail := agentCtx.Messages[h.Persisted():]
 	if len(tail) == 0 {
 		return

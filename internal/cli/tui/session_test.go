@@ -160,6 +160,12 @@ func TestFreshSessionPersists(t *testing.T) {
 // shrinks agentCtx.Messages below the persisted cursor: an incremental
 // Messages[persisted:] would panic with a slice-bounds error. persist() must
 // instead re-save the flattened context and reset the cursor to the new length.
+// TestPersistAfterCompaction covers the T3.3 marker-entry contract: auto-
+// compaction no longer rewrites the context — it INSERTS a compaction marker
+// into the live list, so persist() keeps doing a plain tail append. The
+// pre-compaction entries must survive on disk (append-only tree) and the
+// marker must join the same branch (defect-② fix: the old flatten-and-save
+// path physically destroyed abandoned branches).
 func TestPersistAfterCompaction(t *testing.T) {
 	store := newTestStore(t)
 	s, _, err := newRunSessionWithStore(store, Options{Model: "m", ProviderName: "p"})
@@ -167,7 +173,7 @@ func TestPersistAfterCompaction(t *testing.T) {
 		t.Fatalf("newRunSessionWithStore: %v", err)
 	}
 
-	// Persist a few turns so the cursor advances past what compaction will keep.
+	// Persist a few turns so the cursor advances.
 	for i := 0; i < 4; i++ {
 		s.agentCtx.Messages = append(s.agentCtx.Messages,
 			agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("q")}},
@@ -181,30 +187,47 @@ func TestPersistAfterCompaction(t *testing.T) {
 		t.Fatalf("persisted = %d, want 8 before compaction", s.persisted)
 	}
 
-	// Simulate the run loop compacting: Messages is rewritten to a shorter
-	// summary + tail (here just a 2-message tail), and the loop signalled it via
-	// compactionMsg (which sets s.compacted).
-	s.agentCtx.Messages = agentcore.MessageList{
-		agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("recent q")}},
-		agentcore.AssistantMessage{RoleField: agentcore.RoleAssistant, Content: agentcore.ContentList{agentcore.NewTextContent("recent a")}},
+	// Simulate the run loop compacting T3.3-style: a marker inserted at the
+	// persisted cursor (cut lands inside persisted territory, KeptBefore
+	// records the kept wrap) plus a fresh turn after it.
+	marker := agentcore.CompactionMessage{
+		RoleField:       agentcore.RoleCompaction,
+		Summary:         "summary of the earlier turns",
+		Timestamp:       time.Now().UnixMilli(),
+		FirstKeptIndex:  4,
+		KeptBefore:      4,
+		StrategyVersion: 1,
 	}
-	s.compacted = true
+	msgs := append(agentcore.MessageList{}, s.agentCtx.Messages[:8]...)
+	msgs = append(msgs, marker)
+	msgs = append(msgs,
+		agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("recent q")}},
+	)
+	s.agentCtx.Messages = msgs
 
 	if err := s.persist(); err != nil {
 		t.Fatalf("persist after compaction: %v", err)
 	}
-	if s.compacted {
-		t.Error("compacted flag should be cleared after persist")
-	}
-	if s.persisted != 2 {
-		t.Errorf("persisted = %d, want 2 (the compacted length)", s.persisted)
+	if s.persisted != len(msgs) {
+		t.Errorf("persisted = %d, want %d (marker + tail appended)", s.persisted, len(msgs))
 	}
 
-	_, msgs, err := store.Load(s.header.ID)
+	// The on-disk tree keeps every original entry AND the marker: append-only.
+	header, got, err := store.Load(s.header.ID)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(msgs) != 2 {
-		t.Fatalf("persisted messages = %d, want 2 (flattened compacted context)", len(msgs))
+	_ = header
+	if len(got) != len(msgs) {
+		t.Fatalf("persisted messages = %d, want %d (8 original + marker + tail)", len(got), len(msgs))
+	}
+	if got[8].Role() != agentcore.RoleCompaction {
+		t.Errorf("entry 9 = %s, want a compaction marker entry", got[8].Role())
+	}
+	for i := 0; i < 8; i++ {
+		if got[i].Role() == agentcore.RoleCompaction {
+			t.Errorf("original entry %d was replaced by a compaction entry", i)
+		}
 	}
 }
+

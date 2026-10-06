@@ -109,6 +109,17 @@ type CompactionEvent struct {
 	SummarizedCount int
 	// KeptCount is the number of recent messages retained verbatim.
 	KeptCount int
+	// SkipReason is the typed reason compaction did not run or was skipped
+	// (compaction SkipReason values); empty when it completed successfully.
+	SkipReason string
+	// SummaryUsage is the provider usage of the summarization request itself,
+	// so compaction cost is visible in telemetry (T3.3 defect-④ fix). Nil when
+	// no summarization ran (failure before the request, or a no-op).
+	SummaryUsage *Usage
+	// WillRetriggerNextTurn is true when the post-compaction view still
+	// exceeds the trigger line, so compaction will fire again next turn
+	// (zcode's anti-loop flag); consumers can warn instead of waiting.
+	WillRetriggerNextTurn bool
 	// ErrorMessage is non-empty when compaction failed; the original context is
 	// preserved in that case.
 	ErrorMessage string

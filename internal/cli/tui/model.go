@@ -484,10 +484,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pumpNext()
 
 	case compactionMsg:
+		// T3.3 marker model: compaction only inserts a marker into the live
+		// list, which the next persist()'s tail append carries into the tree —
+		// no flatten bookkeeping needed here.
 		m.spinner.unpin()
-		if m.session != nil {
-			m.session.compacted = true
-		}
 		m.transcript.addSystem("(context compacted)")
 		return m, m.pumpNext()
 
@@ -978,7 +978,6 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.session.agentCtx.Messages = msgs
 		m.session.curLeaf = p.LeafID
 		m.session.persisted = len(msgs)
-		m.session.compacted = false
 		note := fmt.Sprintf("rewound to before point %d — the prompt is back in the input line", n)
 		if p.Lossy {
 			note += "\nnote: this point predates a compaction; context was rebuilt from the summary"

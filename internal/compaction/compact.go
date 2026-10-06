@@ -36,6 +36,9 @@ type CompactionResult struct {
 	TokensBefore int
 	// Details holds the file operations extracted from the compacted range.
 	Details CompactionDetails
+	// SummaryUsage is the summarization request's own provider usage (T3.3
+	// defect-④: compaction cost must be observable, previously discarded).
+	SummaryUsage agentcore.Usage
 }
 
 // Compact prepares and generates a compaction over msgs. It cuts at
@@ -90,7 +93,7 @@ func Compact(
 	}
 	readFiles, modifiedFiles := computeFileLists(ops)
 
-	summary, err := GenerateSummary(ctx, stream, model, toSummarize, settings.ReserveTokens, previousSummary, cfg)
+	summary, sumUsage, err := GenerateSummary(ctx, stream, model, toSummarize, settings.ReserveTokens, previousSummary, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -101,22 +104,27 @@ func Compact(
 		FirstKeptIndex: cut.FirstKeptIndex,
 		TokensBefore:   EstimateContextTokens(msgs).Tokens,
 		Details:        CompactionDetails{ReadFiles: readFiles, ModifiedFiles: modifiedFiles},
+		SummaryUsage:   sumUsage,
 	}, nil
 }
 
 // Message builds the CompactionMessage to persist for this result: the summary
 // text plus the estimated tokens-before and the file details (as raw JSON).
+// StrategyVersion is stamped here; the loop fills FirstKeptIndex / KeptBefore /
+// TokensAfter when it inserts the marker (their values depend on live-list and
+// persist-cursor coordinates only the loop knows).
 func (r *CompactionResult) Message(now int64) agentcore.CompactionMessage {
 	var details json.RawMessage
 	if b, err := json.Marshal(r.Details); err == nil {
 		details = b
 	}
 	return agentcore.CompactionMessage{
-		RoleField:    agentcore.RoleCompaction,
-		Summary:      r.Summary,
-		TokensBefore: r.TokensBefore,
-		Details:      details,
-		Timestamp:    now,
+		RoleField:       agentcore.RoleCompaction,
+		Summary:         r.Summary,
+		TokensBefore:    r.TokensBefore,
+		Details:         details,
+		Timestamp:       now,
+		StrategyVersion: 1,
 	}
 }
 

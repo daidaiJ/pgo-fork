@@ -113,6 +113,16 @@ type RunConfig struct {
 	// when persistent memory is disabled (memory.enabled=false), which fully
 	// disables checkpoint writing. A checkpoint write failure is non-fatal.
 	MemoryRoot string
+
+	// PersistedCount reports how many leading messages of agentCtx.Messages the
+	// driver has already persisted to the session tree (the driver's cursor).
+	// Auto-compaction uses it to insert the compaction marker at the branch tip
+	// (the only place AppendBranch can chain into), which is what keeps the
+	// persisted tree append-only: the marker must land after the last persisted
+	// entry so PersistTurn's plain tail append carries it into the tree. nil
+	// (side runs, tests) is treated as 0: the marker always lands in the
+	// unpersisted tail, which is conservative and still correct.
+	PersistedCount func() int
 }
 
 // LoopEventStream is the stream returned by the loop entry points: it carries
@@ -152,6 +162,8 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 	// truncation count, compaction count, latest context-utilization ratio) from
 	// the events emitted below, surfaced as a TelemetryEvent at run end.
 	tel := newTelemetry()
+	// cmp carries the run-scoped compaction circuit breaker (T3.3 随件).
+	cmp := &compactor{}
 	// newMessages returns the messages appended since the run began.
 	newMessages := func() []agentcore.AgentMessage {
 		if len(agentCtx.Messages) <= startIdx {
@@ -225,7 +237,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 					finishErr(err)
 					return
 				}
-				if afterTurn(ctx, agentCtx, &cfg, true, emit, tel) {
+				if afterTurn(ctx, agentCtx, &cfg, true, emit, tel, cmp) {
 					finish()
 					return
 				}
@@ -244,7 +256,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 					finishErr(err)
 					return
 				}
-				if afterTurn(ctx, agentCtx, &cfg, false, emit, tel) {
+				if afterTurn(ctx, agentCtx, &cfg, false, emit, tel, cmp) {
 					finish()
 					return
 				}
@@ -270,7 +282,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 				finish()
 				return
 			}
-			if afterTurn(ctx, agentCtx, &cfg, true, emit, tel) {
+			if afterTurn(ctx, agentCtx, &cfg, true, emit, tel, cmp) {
 				finish()
 				return
 			}
@@ -310,7 +322,7 @@ func runLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfi
 // (pi per-turn semantics). It then applies prepareNextTurn, runs auto-compaction
 // when the context has outgrown its window, and finally consults
 // shouldStopAfterTurn, returning true when the run should end.
-func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, hadToolExecution bool, emit func(agentcore.AgentEvent) error, tel *telemetry) (stop bool) {
+func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, hadToolExecution bool, emit func(agentcore.AgentEvent) error, tel *telemetry, cmp *compactor) (stop bool) {
 	if hadToolExecution && cfg.GetSteeringMessages != nil {
 		if steer := cfg.GetSteeringMessages(ctx); len(steer) > 0 {
 			agentCtx.Messages = append(agentCtx.Messages, steer...)
@@ -321,13 +333,14 @@ func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunCo
 			applyTurnUpdate(agentCtx, cfg, upd)
 		}
 	}
-	maybeAutoCompact(ctx, agentCtx, cfg, emit, tel)
+	maybeAutoCompact(ctx, agentCtx, cfg, emit, tel, cmp)
 	// Record the latest context-utilization ratio once the turn has settled (after
 	// any compaction), so the telemetry summary reports the current used/window
 	// figure. This runs even when auto-compaction is disabled so utilization is
-	// still observable whenever the context window is known.
+	// still observable whenever the context window is known. The ratio reads the
+	// request view (T3.3): raw-list size would count history the view collapses.
 	if tel != nil && cfg.ContextWindow > 0 {
-		tokens := compaction.EstimateContextTokens(agentCtx.Messages).Tokens
+		tokens := compaction.EstimateContextTokens(compaction.ProjectView(agentCtx.Messages)).Tokens
 		tel.recordContext(tokens, cfg.ContextWindow)
 	}
 	if cfg.ShouldStopAfterTurn != nil {
@@ -336,17 +349,50 @@ func afterTurn(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunCo
 	return false
 }
 
-// maybeAutoCompact checks whether the context has outgrown its usable window and,
-// if so, compacts it in place and emits a CompactionEvent. Compaction is a no-op
-// when disabled, when the context window is unknown (<= 0), or when usage is
-// under threshold. A compaction failure is non-fatal: the original context is
-// preserved and a CompactionEvent carrying ErrorMessage is emitted so the failure
-// is observable without aborting the run (US-004).
-func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, emit func(agentcore.AgentEvent) error, tel *telemetry) {
+// compactor carries per-run compaction state across turns: the consecutive
+// failure count feeding the circuit breaker (T3.3 随件, qwen/zcode 3-strike
+// value). It is scoped to one run: pigo's loop keeps no cross-run state, and a
+// failed run already terminates, so a fresh run starts with a clean breaker.
+type compactor struct {
+	failures int
+}
+
+// circuitBreakerLimit is how many consecutive compaction failures open the
+// breaker for the rest of the run.
+const circuitBreakerLimit = 3
+
+// mapViewIndex delegates to the compaction package's shared view→raw mapping
+// (the topology rules live with the projection that defines them).
+func mapViewIndex(c, m0, k0 int) int {
+	return compaction.ViewIndexToRaw(c, m0, k0)
+}
+
+// maybeAutoCompact checks whether the request view has outgrown its usable
+// window and, if so, compacts: it inserts a CompactionMessage marker into the
+// live list (T3.3 marker-entry model) instead of rewriting it, so the persisted
+// tree stays append-only and the request view is derived by projection.
+//
+// Compaction is a no-op when disabled, when the context window is unknown
+// (<= 0), or when usage is under threshold. A compaction failure is non-fatal:
+// the original context is preserved and a CompactionEvent carrying the typed
+// SkipReason and ErrorMessage is emitted so the failure is observable without
+// aborting the run (US-004).
+func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg *RunConfig, emit func(agentcore.AgentEvent) error, tel *telemetry, cmp *compactor) {
 	if !cfg.Compaction.Enabled || cfg.ContextWindow <= 0 {
 		return
 	}
-	before := compaction.EstimateContextTokens(agentCtx.Messages).Tokens
+	persisted := 0
+	if cfg.PersistedCount != nil {
+		persisted = cfg.PersistedCount()
+	}
+	if persisted > len(agentCtx.Messages) {
+		persisted = len(agentCtx.Messages) // defensive against a stale driver cursor
+	}
+	// Every decision and the summarization input run on the request view (T3.3):
+	// the raw list may hold superseded markers and pre-compaction history that
+	// the view collapses.
+	view := compaction.ProjectView(agentCtx.Messages)
+	before := compaction.EstimateContextTokens(view).Tokens
 	// Record pre-compaction utilization so the ratio reflects the peak that
 	// triggered (or nearly triggered) compaction even when the summary is read
 	// mid-run. afterTurn overwrites it with the post-settle figure.
@@ -356,48 +402,133 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	if !compaction.ShouldCompact(before, cfg.ContextWindow, cfg.Compaction) {
 		return
 	}
-	// Signal the start so a front-end can show an in-progress indicator while the
-	// summarization request (an LLM call that blocks the loop) is in flight.
-	_ = emit(agentcore.CompactionStartEvent{Reason: "threshold", TokensBefore: before})
-	res, err := runCompaction(ctx, agentCtx.Messages, cfg)
-	kept := len(agentCtx.Messages)
-	if err != nil {
+	if cmp != nil && cmp.failures >= circuitBreakerLimit {
 		_ = emit(agentcore.CompactionEvent{
 			Reason:       "threshold",
 			TokensBefore: before,
 			TokensAfter:  before,
-			KeptCount:    kept,
+			SkipReason:   string(compaction.SkipCircuitOpen),
+			ErrorMessage: "compaction circuit breaker open after 3 consecutive failures",
+		})
+		return
+	}
+	// Signal the start so a front-end can show an in-progress indicator while the
+	// summarization request (an LLM call that blocks the loop) is in flight.
+	_ = emit(agentcore.CompactionStartEvent{Reason: "threshold", TokensBefore: before})
+
+	// Iterative chain (defect-① fix): the view's leading marker, when present,
+	// is the previous compaction — summarize only what came after it, seeding
+	// the file lists and feeding its summary into the update template.
+	prevIdx := -1
+	var prevSummary string
+	var prevDetails *compaction.CompactionDetails
+	if len(view) > 0 {
+		if c, ok := view[0].(agentcore.CompactionMessage); ok {
+			prevIdx = 0
+			prevSummary = c.Summary
+			if d, err := unmarshalDetails(c.Details); err == nil && (len(d.ReadFiles) > 0 || len(d.ModifiedFiles) > 0) {
+				prevDetails = d
+			}
+		}
+	}
+	// Full-list coordinates of the view's anchor marker, for mapping the cut back.
+	m0, k0 := compaction.LastMarkerAnchor(agentCtx.Messages)
+
+	res, err := runCompaction(ctx, view, cfg, prevIdx, prevSummary, prevDetails)
+	if err != nil {
+		if cmp != nil {
+			cmp.failures++
+		}
+		_ = emit(agentcore.CompactionEvent{
+			Reason:       "threshold",
+			TokensBefore: before,
+			TokensAfter:  before,
+			SkipReason:   string(compaction.SkipReasonOf(err)),
 			ErrorMessage: err.Error(),
 		})
 		return
 	}
 	if res == nil {
-		// Nothing to summarize (cut point left no prefix); leave context as-is.
+		_ = emit(agentcore.CompactionEvent{
+			Reason:       "threshold",
+			TokensBefore: before,
+			TokensAfter:  before,
+			SkipReason:   string(compaction.SkipNothingToSummarize),
+		})
 		return
 	}
-	// Persist a checkpoint of the collapsed prefix before rewriting the context so
+	if cmp != nil {
+		cmp.failures = 0
+	}
+
+	cut := res.FirstKeptIndex // view coordinates
+	fullCut := mapViewIndex(cut, m0, k0)
+	newList, marker, insertAt := insertCompactionMarker(agentCtx.Messages, res, fullCut, persisted)
+	after := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
+	if after >= before {
+		// Inflation guard (qwen): never apply a compaction that does not shrink
+		// the view — a non-shrinking "compaction" risks a
+		// compact→restore→recompact loop while paying for the summary call.
+		_ = emit(agentcore.CompactionEvent{
+			Reason:       "threshold",
+			TokensBefore: before,
+			TokensAfter:  before,
+			SkipReason:   string(compaction.SkipInflated),
+			ErrorMessage: "compaction rejected: post-compaction view would not shrink",
+		})
+		return
+	}
+	marker.TokensAfter = after
+	newList[insertAt] = marker
+	// Persist a checkpoint of the collapsed prefix before inserting the marker so
 	// a later run can reload it (infinite context, #480/#481). It reuses the
-	// summary compaction just produced — no extra LLM call — and is best-effort:
-	// a write failure is logged and the run continues on the compacted context.
-	writeCompactionCheckpoint(ctx, agentCtx.Messages, res, cfg)
-	now := nowMillis()
-	rebuilt := res.RebuildContext(agentCtx.Messages, now)
-	summarized := len(agentCtx.Messages) - (len(rebuilt) - 1)
-	agentCtx.Messages = rebuilt
-	after := compaction.EstimateContextTokens(rebuilt).Tokens
+	// summary compaction just produced — no extra LLM call — and is best-effort.
+	writeCompactionCheckpoint(ctx, view, res, cfg)
+	agentCtx.Messages = newList
 	_ = emit(agentcore.CompactionEvent{
-		Reason:          "threshold",
-		TokensBefore:    before,
-		TokensAfter:     after,
-		SummarizedCount: summarized,
-		KeptCount:       len(rebuilt) - 1,
+		Reason:                "threshold",
+		TokensBefore:          before,
+		TokensAfter:           after,
+		SummarizedCount:       max(0, cut-1),
+		KeptCount:             len(view) - cut,
+		SummaryUsage:          &res.SummaryUsage,
+		WillRetriggerNextTurn: compaction.ShouldCompact(after, cfg.ContextWindow, cfg.Compaction),
 	})
 }
 
-// runCompaction invokes compaction.Compact with the loop's summarization config,
-// falling back to the primary Stream/Model when the summary-specific fields are
-// unset. Compact derives the cut point from settings.KeepRecentTokens.
-func runCompaction(ctx context.Context, msgs agentcore.MessageList, cfg *RunConfig) (*compaction.CompactionResult, error) {
+// insertCompactionMarker returns msgs with res's compaction marker inserted at
+// the T3.3 topology position, plus the inserted marker (FirstKeptIndex /
+// KeptBefore / TokensAfter stamped). Rules:
+//
+//   - fullCut is the cut in raw-list coordinates (mapped from the view cut).
+//   - The marker is inserted at max(fullCut, persisted): when the cut reaches
+//     into unpersisted messages the marker sits at the cut; when the kept
+//     window starts inside already-persisted territory the marker sits at the
+//     branch tip (the only place PersistTurn's tail append can chain it into
+//     the tree), and KeptBefore records how many kept entries precede it on
+//     the path so replay projection restores them.
+func insertCompactionMarker(msgs agentcore.MessageList, res *compaction.CompactionResult, fullCut, persisted int) (agentcore.MessageList, agentcore.CompactionMessage, int) {
+	insertAt := fullCut
+	if insertAt < persisted {
+		insertAt = persisted
+	}
+	marker := res.Message(nowMillis())
+	marker.FirstKeptIndex = fullCut
+	marker.KeptBefore = insertAt - fullCut
+	out := make(agentcore.MessageList, 0, len(msgs)+1)
+	out = append(out, msgs[:insertAt]...)
+	out = append(out, marker)
+	out = append(out, msgs[insertAt:]...)
+	return out, marker, insertAt
+}
+
+// runCompaction invokes compaction.Compact over the request view with the
+// loop's summarization config, falling back to the primary Stream/Model when
+// the summary-specific fields are unset. prevCompactionIndex/prevSummary/
+// prevDetails carry the view's previous compaction marker so successive
+// compactions chain (T3.3 defect-① fix): summarization starts after it, the
+// prior summary feeds the update template, and its file lists seed this one.
+func runCompaction(ctx context.Context, view agentcore.MessageList, cfg *RunConfig, prevIdx int, prevSummary string, prevDetails *compaction.CompactionDetails) (*compaction.CompactionResult, error) {
 	stream := cfg.SummaryStream
 	if stream == nil {
 		stream = cfg.Stream
@@ -416,7 +547,7 @@ func runCompaction(ctx context.Context, msgs agentcore.MessageList, cfg *RunConf
 		}
 	}
 	scfg := provider.StreamConfig{APIKey: key, ThinkingLevel: cfg.ThinkingLevel}
-	return compaction.Compact(ctx, stream, model, msgs, cfg.Compaction, -1, nil, "", scfg)
+	return compaction.Compact(ctx, stream, model, view, cfg.Compaction, prevIdx, prevDetails, prevSummary, scfg)
 }
 
 // writeCompactionCheckpoint persists the just-produced compaction summary as a

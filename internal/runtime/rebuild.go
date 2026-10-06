@@ -1,50 +1,65 @@
 // Context rebuild for the "infinite context" feature (#482). Where auto-
-// compaction (loop.go) collapses history *lossily* on the fly, a rebuild
-// reconstructs the working context deterministically from a persisted
-// checkpoint: everything before the checkpoint watermark is replaced by the
-// distilled checkpoint summary, and everything at/after the watermark is kept
-// verbatim. This is what the /rebuild command (REPL + TUI) invokes, and what
-// the run loop (#481) will call on resume to reload a collapsed prefix instead
-// of replaying the whole transcript.
+// compaction (loop.go) inserts a compaction marker when the context outgrows
+// its window, a rebuild reconstructs the working context deterministically from
+// a persisted checkpoint: everything before the checkpoint watermark collapses
+// into the marker's summary, and everything at/after the watermark is kept
+// verbatim. This is what the /rebuild command (REPL + TUI) invokes.
+//
+// T3.3 marker-entry model: like auto-compaction, rebuild no longer rewrites
+// the context — it inserts a CompactionMessage marker into the live list at
+// the topology position (max(cut, persisted cursor)) and lets the request-view
+// projection (compaction.ProjectView) collapse the prefix. The caller's list
+// grows by exactly one message; persistence stays a plain tail append.
 //
 // When no checkpoint exists yet there is nothing to reload, so a rebuild falls
-// back to the ordinary lossy compaction path (the same compaction.Compact flow
-// runCompaction drives) so /rebuild still shrinks an overgrown context.
+// back to the ordinary compaction path (the same runCompaction flow
+// maybeAutoCompact drives) so /rebuild still shrinks an overgrown context.
 //
 // This file is deliberately side-effect free with respect to the loop: it never
 // mutates the caller's AgentContext. It returns the rebuilt MessageList (plus a
 // RebuildResult describing what happened and an equivalent CompactionEvent) so
-// the CLI handlers — and, later, #481 — decide when and how to apply it.
+// the CLI handlers decide when and how to apply it.
 package runtime
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/compaction"
 )
+
+// unmarshalDetails decodes a compaction marker's opaque Details JSON into
+// CompactionDetails (shared by the loop's iterative chain and the rebuild path).
+func unmarshalDetails(raw json.RawMessage) (*compaction.CompactionDetails, error) {
+	var d compaction.CompactionDetails
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
 
 // RebuildResult describes the outcome of a context rebuild. Messages is the
 // rebuilt list ready to replace the live context; the remaining fields mirror
 // CompactionEvent so a front-end can report the same before/after summary as a
 // compaction.
 type RebuildResult struct {
-	// Messages is the rebuilt context: a single summary/checkpoint message
-	// followed by the retained recent tail. When NoOp is true it is the original
-	// list, unchanged.
+	// Messages is the rebuilt context: the original list with one compaction
+	// marker inserted at the cut (T3.3 marker-entry model — nothing is dropped;
+	// the request view collapses the prefix). When NoOp is true it is the
+	// original list, unchanged.
 	Messages agentcore.MessageList
 	// FromCheckpoint is true when the boundary came from a persisted checkpoint;
-	// false when the no-checkpoint fallback ran a lossy compaction.
+	// false when the no-checkpoint fallback ran a summarizing compaction.
 	FromCheckpoint bool
-	// Watermark is the boundary index used: the checkpoint watermark, or the
-	// compaction cut point in the fallback path.
+	// Watermark is the raw-list position the marker was inserted at.
 	Watermark int
-	// SummarizedCount is how many leading messages were collapsed into the summary.
+	// SummarizedCount is how many view messages were collapsed into the summary.
 	SummarizedCount int
-	// KeptCount is how many recent messages were preserved verbatim.
+	// KeptCount is how many view messages were preserved verbatim.
 	KeptCount int
-	// TokensBefore / TokensAfter are the estimated context tokens before and after
-	// the rebuild (equal when NoOp).
+	// TokensBefore / TokensAfter are the estimated context tokens of the view
+	// before and after the rebuild (equal when NoOp).
 	TokensBefore int
 	TokensAfter  int
 	// NoOp is true when nothing changed: no checkpoint existed and there was
@@ -67,17 +82,17 @@ func (r *RebuildResult) Event() agentcore.CompactionEvent {
 
 // RebuildFromCheckpoint reconstructs the working context for sessionID.
 //
-// If a checkpoint exists under memoryRoot, the compression boundary is inserted
-// at checkpoint.Watermark: messages before the watermark collapse to the
-// checkpoint summary (rendered as a single compaction message), and messages
-// at/after the watermark are preserved verbatim. The watermark is clamped to
-// [0, len(msgs)] so a stale checkpoint recorded against a longer history (or one
-// that has since been re-compacted) never slices out of range.
+// If a checkpoint exists under memoryRoot, the compaction marker is inserted at
+// the checkpoint watermark: messages before the watermark collapse to the
+// checkpoint summary (in the request view), and messages at/after the watermark
+// are preserved verbatim. The watermark is clamped to [0, len(view)] so a stale
+// checkpoint recorded against a longer history (or one that has since been
+// re-compacted) never slices out of range.
 //
-// If no checkpoint exists, it falls back to the lossy compaction path — the same
-// compaction.Compact flow the loop's auto-compaction uses (runCompaction) — so
-// /rebuild still shrinks the context. When there is nothing to compact the
-// original list is returned with NoOp set.
+// If no checkpoint exists, it falls back to the summarizing compaction path —
+// the same runCompaction flow the loop's auto-compaction uses — so /rebuild
+// still shrinks the context. When there is nothing to compact the original list
+// is returned with NoOp set.
 //
 // It performs no mutation of the caller's context and no checkpoint writes; the
 // returned RebuildResult carries the rebuilt list for the caller to apply. When
@@ -95,18 +110,41 @@ func RebuildFromCheckpoint(
 		waitForCheckpoint()
 	}
 	now := nowMillis()
-	tokensBefore := compaction.EstimateContextTokens(msgs).Tokens
+	persisted := 0
+	if cfg != nil && cfg.PersistedCount != nil {
+		persisted = cfg.PersistedCount()
+	}
+	if persisted > len(msgs) {
+		persisted = len(msgs)
+	}
+	// Decisions run on the request view (T3.3): the raw list may hold superseded
+	// markers and pre-compaction history the view collapses.
+	view := compaction.ProjectView(msgs)
+	tokensBefore := compaction.EstimateContextTokens(view).Tokens
+	m0, k0 := compaction.LastMarkerAnchor(msgs)
 
 	cp, ok, err := LoadCheckpoint(sessionID, memoryRoot)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		return rebuildFromLoadedCheckpoint(msgs, cp, tokensBefore, now), nil
+		return rebuildFromLoadedCheckpoint(msgs, view, m0, k0, persisted, cp, tokensBefore, now), nil
 	}
 
-	// No checkpoint: fall back to the ordinary lossy compaction path.
-	res, err := runCompaction(ctx, msgs, cfg)
+	// No checkpoint: fall back to the summarizing compaction path.
+	prevIdx := -1
+	var prevSummary string
+	var prevDetails *compaction.CompactionDetails
+	if len(view) > 0 {
+		if c, isMarker := view[0].(agentcore.CompactionMessage); isMarker {
+			prevIdx = 0
+			prevSummary = c.Summary
+			if d, err := unmarshalDetails(c.Details); err == nil {
+				prevDetails = d
+			}
+		}
+	}
+	res, err := runCompaction(ctx, view, cfg, prevIdx, prevSummary, prevDetails)
 	if err != nil {
 		return nil, err
 	}
@@ -116,50 +154,56 @@ func RebuildFromCheckpoint(
 			Messages:     msgs,
 			TokensBefore: tokensBefore,
 			TokensAfter:  tokensBefore,
-			KeptCount:    len(msgs),
+			KeptCount:    len(view),
 			NoOp:         true,
 		}, nil
 	}
-	rebuilt := res.RebuildContext(msgs, now)
-	kept := len(rebuilt) - 1
+	cut := res.FirstKeptIndex
+	fullCut := compaction.ViewIndexToRaw(cut, m0, k0)
+	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
+	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
+	marker.TokensAfter = tokensAfter
+	newList[insertAt] = marker
 	return &RebuildResult{
-		Messages:        rebuilt,
+		Messages:        newList,
 		FromCheckpoint:  false,
-		Watermark:       res.FirstKeptIndex,
-		SummarizedCount: len(msgs) - kept,
-		KeptCount:       kept,
+		Watermark:       insertAt,
+		SummarizedCount: max(0, cut-1),
+		KeptCount:       len(view) - cut,
 		TokensBefore:    tokensBefore,
-		TokensAfter:     compaction.EstimateContextTokens(rebuilt).Tokens,
+		TokensAfter:     tokensAfter,
 	}, nil
 }
 
 // rebuildFromLoadedCheckpoint builds the rebuilt context from a loaded
-// checkpoint: the pre-watermark prefix collapses to a single compaction message
-// carrying cp.Summary, and the tail from the (clamped) watermark on is preserved
-// verbatim. It reuses compaction.CompactionResult.RebuildContext so the summary
-// message is shaped exactly like a compaction checkpoint.
-func rebuildFromLoadedCheckpoint(msgs agentcore.MessageList, cp *Checkpoint, tokensBefore int, now int64) *RebuildResult {
+// checkpoint: the pre-watermark prefix collapses into a compaction marker
+// carrying cp.Summary (inserted at the T3.3 topology position), and the tail
+// from the (clamped) watermark on is preserved verbatim in the request view.
+func rebuildFromLoadedCheckpoint(msgs, view agentcore.MessageList, m0, k0, persisted int, cp *Checkpoint, tokensBefore int, now int64) *RebuildResult {
 	w := cp.Watermark
 	if w < 0 {
 		w = 0
 	}
-	if w > len(msgs) {
-		w = len(msgs)
+	if w > len(view) {
+		w = len(view)
 	}
 	res := &compaction.CompactionResult{
 		Summary:        cp.Summary,
 		FirstKeptIndex: w,
 		TokensBefore:   tokensBefore,
 	}
-	rebuilt := res.RebuildContext(msgs, now)
-	kept := len(rebuilt) - 1
+	fullCut := compaction.ViewIndexToRaw(w, m0, k0)
+	newList, marker, insertAt := insertCompactionMarker(msgs, res, fullCut, persisted)
+	tokensAfter := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
+	marker.TokensAfter = tokensAfter
+	newList[insertAt] = marker
 	return &RebuildResult{
-		Messages:        rebuilt,
+		Messages:        newList,
 		FromCheckpoint:  true,
-		Watermark:       w,
+		Watermark:       insertAt,
 		SummarizedCount: w,
-		KeptCount:       kept,
+		KeptCount:       len(view) - w,
 		TokensBefore:    tokensBefore,
-		TokensAfter:     compaction.EstimateContextTokens(rebuilt).Tokens,
+		TokensAfter:     tokensAfter,
 	}
 }

@@ -60,26 +60,41 @@ func TestRebuildFromCheckpoint_InsertsBoundary(t *testing.T) {
 	if res.Watermark != 4 || res.SummarizedCount != 4 {
 		t.Fatalf("watermark/summarized: got %d/%d, want 4/4", res.Watermark, res.SummarizedCount)
 	}
-	// Rebuilt list = 1 compaction message + the retained tail (2 messages).
-	if len(res.Messages) != 3 {
-		t.Fatalf("rebuilt length: got %d, want 3: %+v", len(res.Messages), res.Messages)
+	// T3.3 marker-entry model: the rebuilt list is the ORIGINAL list with the
+	// marker inserted at the cut (persisted=0 ⇒ at the watermark); nothing is
+	// dropped — the request view collapses the prefix.
+	if len(res.Messages) != 7 {
+		t.Fatalf("rebuilt length: got %d, want 7 (6 original + marker): %+v", len(res.Messages), res.Messages)
 	}
 	if res.KeptCount != 2 {
 		t.Fatalf("kept: got %d, want 2", res.KeptCount)
 	}
-	// The prefix must collapse into a single compaction message carrying the summary.
-	head, ok := res.Messages[0].(agentcore.CompactionMessage)
+	// The marker sits at the cut and carries the checkpoint summary.
+	head, ok := res.Messages[4].(agentcore.CompactionMessage)
 	if !ok {
-		t.Fatalf("message[0] should be a compaction checkpoint, got %T", res.Messages[0])
+		t.Fatalf("message[4] should be the inserted compaction marker, got %T", res.Messages[4])
 	}
 	if !strings.Contains(head.Summary, "distilled prefix") {
 		t.Fatalf("summary not carried through: %q", head.Summary)
 	}
-	// The recent tail is preserved verbatim, in order.
+	// Everything before the cut stays on the live list (lossless durable layer),
+	// and the request view collapses it to marker + kept tail.
+	for i := 0; i < 4; i++ {
+		if _, ok := res.Messages[i].(agentcore.UserMessage); !ok {
+			t.Fatalf("message[%d] should be the preserved original, got %T", i, res.Messages[i])
+		}
+	}
+	view := compaction.ProjectView(res.Messages)
+	if len(view) != 3 {
+		t.Fatalf("request view length: got %d, want 3 (marker + kept tail): %+v", len(view), view)
+	}
+	if view[0].Role() != agentcore.RoleCompaction {
+		t.Fatalf("request view should start with the marker, got %T", view[0])
+	}
 	for i, want := range []string{"keep-A", "keep-B"} {
-		um, ok := res.Messages[i+1].(agentcore.UserMessage)
+		um, ok := view[i+1].(agentcore.UserMessage)
 		if !ok {
-			t.Fatalf("message[%d] should be preserved user message, got %T", i+1, res.Messages[i+1])
+			t.Fatalf("view[%d] should be preserved user message, got %T", i+1, view[i+1])
 		}
 		if got := agentcore.ContentToText(um.Content); got != want {
 			t.Fatalf("tail[%d]: got %q, want %q", i, got, want)
@@ -103,12 +118,19 @@ func TestRebuildFromCheckpoint_ClampsStaleWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RebuildFromCheckpoint: %v", err)
 	}
-	// Clamped to len(msgs)=2: everything collapses, no verbatim tail, only the head.
+	// Clamped to len(msgs)=2: everything collapses, no verbatim tail. T3.3: the
+	// marker is appended after the two original messages (insert at the cut).
 	if res.Watermark != 2 || res.KeptCount != 0 {
 		t.Fatalf("clamp: watermark=%d kept=%d, want 2/0", res.Watermark, res.KeptCount)
 	}
-	if len(res.Messages) != 1 {
-		t.Fatalf("rebuilt length: got %d, want 1 (summary only)", len(res.Messages))
+	if len(res.Messages) != 3 {
+		t.Fatalf("rebuilt length: got %d, want 3 (2 original + marker)", len(res.Messages))
+	}
+	if res.Messages[2].Role() != agentcore.RoleCompaction {
+		t.Fatalf("message[2] should be the inserted marker, got %T", res.Messages[2])
+	}
+	if view := compaction.ProjectView(res.Messages); len(view) != 1 || view[0].Role() != agentcore.RoleCompaction {
+		t.Fatalf("request view should be the marker alone, got %+v", view)
 	}
 }
 
@@ -159,10 +181,15 @@ func TestRebuildFromCheckpoint_FallsBackToCompaction(t *testing.T) {
 	if res.TokensAfter >= res.TokensBefore {
 		t.Fatalf("fallback should reduce tokens: before=%d after=%d", res.TokensBefore, res.TokensAfter)
 	}
-	// The rebuilt context begins with a compaction checkpoint holding the summary.
-	head, ok := res.Messages[0].(agentcore.CompactionMessage)
+	// T3.3: the rebuilt list is the original + one inserted marker; the request
+	// view begins with the marker carrying the fallback summary.
+	if len(res.Messages) != len(msgs)+1 {
+		t.Fatalf("rebuilt length: got %d, want %d (original + marker)", len(res.Messages), len(msgs)+1)
+	}
+	view := compaction.ProjectView(res.Messages)
+	head, ok := view[0].(agentcore.CompactionMessage)
 	if !ok {
-		t.Fatalf("message[0] should be a compaction checkpoint, got %T", res.Messages[0])
+		t.Fatalf("view[0] should be a compaction checkpoint, got %T", view[0])
 	}
 	if !strings.Contains(head.Summary, "fallback compaction summary") {
 		t.Fatalf("fallback summary not carried through: %q", head.Summary)

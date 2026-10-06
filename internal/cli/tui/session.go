@@ -98,13 +98,6 @@ type runSession struct {
 	curLeaf   string
 	persisted int
 
-	// compacted is set when the run loop compacted the context (CompactionEvent):
-	// compaction rewrites Messages into a summary + recent tail, which both shrinks
-	// the slice below persisted (so an incremental Messages[persisted:] would panic)
-	// and invalidates the branch prefix. persist() honors this by re-saving the
-	// flattened context linearly and resetting the branch cursor, then clears it.
-	compacted bool
-
 	// cancelRun cancels the in-flight run's context; startRun sets it and the
 	// two-stage interrupt (Model.interruptFn → interrupt) calls it. It is nil
 	// before the first run and after a run is cancelled.
@@ -325,6 +318,10 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 		SessionID:  s.header.ID,
 		MemoryRoot: s.memoryRoot,
 	}
+	// T3.3: compaction needs the persisted-message cursor to place its marker at
+	// the branch tip (after the last persisted entry), keeping the tree
+	// append-only under persist()'s plain tail append.
+	cfg.PersistedCount = func() int { return s.persisted }
 	// Per-turn wiring of the tool-execution + Stop seams; nil dispatcher is a
 	// no-op so the hot path pays nothing when no hooks are configured (FR-18).
 	if s.dispatcher != nil {
@@ -374,16 +371,17 @@ func (s *runSession) rebuildCmd() tea.Cmd {
 }
 
 // rebuild reconstructs the shared context from the session's persisted checkpoint
-// (collapsing the pre-watermark prefix to the checkpoint summary and preserving
-// the recent tail verbatim), falling back to lossy compaction when no checkpoint
-// exists. It replaces agentCtx.Messages in place on success and flags compacted
-// so persist() re-saves the flattened context linearly (as after a /compact).
+// (inserting a compaction marker at the watermark — the request view collapses
+// the pre-watermark prefix), falling back to summarizing compaction when no
+// checkpoint exists. It replaces agentCtx.Messages in place on success; the
+// inserted marker rides the next persist()'s plain tail append (T3.3 marker
+// model — no flatten, no linear re-save).
 func (s *runSession) rebuild() (string, error) {
 	msgs := s.agentCtx.Messages
-	before := compaction.EstimateContextTokens(msgs).Tokens
+	before := compaction.EstimateContextTokens(compaction.ProjectView(msgs)).Tokens
 	// Checkpoints live under <memoryRoot>/sessions/<id>/; recover from the same
 	// root the loop writes to. Empty when memory is disabled — RebuildFromCheckpoint
-	// then falls back to lossy compaction.
+	// then falls back to summarizing compaction.
 	memoryRoot := s.memoryRoot
 	cfg := s.buildConfig()
 	res, err := runtime.RebuildFromCheckpoint(context.Background(), msgs, s.header.ID, memoryRoot, &cfg, nil)
@@ -394,7 +392,6 @@ func (s *runSession) rebuild() (string, error) {
 		return fmt.Sprintf("nothing to rebuild (%d tokens, %d messages)", before, len(msgs)), nil
 	}
 	s.agentCtx.Messages = res.Messages
-	s.compacted = true
 	source := "checkpoint"
 	if !res.FromCheckpoint {
 		source = "compaction (no checkpoint)"
@@ -453,27 +450,13 @@ func (s *runSession) interrupt() {
 // It mirrors cli.PersistTurn: growing the on-disk tree with AppendBranch (rather
 // than a linear rewrite) keeps history intact. A no-op when nothing new was
 // produced, so an idle turn-end never regenerates entry ids.
+//
+// T3.3 marker-entry model: compaction inserts a marker into the live list
+// (always after the persisted cursor) instead of rewriting it, so the plain
+// tail append below carries the marker into the tree. The old flatten-and-save
+// branch is gone — it was the defect that physically destroyed abandoned
+// branches after every auto-compaction.
 func (s *runSession) persist() error {
-	// A compaction during the run rewrote Messages into a summary + recent tail,
-	// so the append-a-tail branch model no longer holds: the prefix changed and
-	// the slice may be shorter than persisted. Re-save the flattened context
-	// linearly and reset the branch cursor to the new leaf, mirroring the REPL's
-	// /compact handling.
-	if s.compacted || s.persisted > len(s.agentCtx.Messages) {
-		s.header.UpdatedAt = time.Now().UTC()
-		s.header.Model = s.live.Model
-		s.header.Provider = s.live.ProviderName
-		if err := s.store.Save(s.header, s.agentCtx.Messages); err != nil {
-			return err
-		}
-		s.persisted = len(s.agentCtx.Messages)
-		s.curLeaf = ""
-		if _, entries, err := s.store.LoadEntries(s.header.ID); err == nil && len(entries) > 0 {
-			s.curLeaf = entries[len(entries)-1].ID
-		}
-		s.compacted = false
-		return nil
-	}
 	tail := s.agentCtx.Messages[s.persisted:]
 	if len(tail) == 0 {
 		return nil

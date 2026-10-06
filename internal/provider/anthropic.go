@@ -54,6 +54,8 @@ type AnthropicDecoder struct {
 	responseModel string
 	inputTokens   int
 	outputTokens  int
+	cacheRead     int
+	cacheWrite    int
 	stopReason    string // mapped pigo stop reason (empty until message_delta)
 	done          bool   // message_stop / done already emitted
 }
@@ -111,6 +113,11 @@ type anthropicEvent struct {
 type anthropicUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Cache tokens are reported separately from input_tokens by anthropic and
+	// still occupy the context window, so they decode into their own Usage
+	// buckets (T3.3 defect-③ fix); consumers fold them into the watermark.
+	CacheReadTokens     int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
 // Decode turns one Anthropic SSE data payload into zero or more StreamEvents.
@@ -170,6 +177,8 @@ func (d *AnthropicDecoder) onMessageStart(ev anthropicEvent) []StreamEvent {
 		if ev.Message.Usage != nil {
 			d.inputTokens = ev.Message.Usage.InputTokens
 			d.outputTokens = ev.Message.Usage.OutputTokens
+			d.cacheRead = ev.Message.Usage.CacheReadTokens
+			d.cacheWrite = ev.Message.Usage.CacheCreationTokens
 		}
 	}
 	return []StreamEvent{StreamStartEvent{Partial: d.partial()}}
@@ -244,6 +253,12 @@ func (d *AnthropicDecoder) onMessageDelta(ev anthropicEvent) []StreamEvent {
 		if ev.Usage.InputTokens != 0 {
 			d.inputTokens = ev.Usage.InputTokens
 		}
+		if ev.Usage.CacheReadTokens != 0 {
+			d.cacheRead = ev.Usage.CacheReadTokens
+		}
+		if ev.Usage.CacheCreationTokens != 0 {
+			d.cacheWrite = ev.Usage.CacheCreationTokens
+		}
 	}
 	// No standalone event kind for usage/stop-reason accumulation; the values
 	// surface in the terminal done message.
@@ -285,7 +300,12 @@ func (d *AnthropicDecoder) partial() agentcore.AssistantMessage {
 		ResponseModel: d.responseModel,
 	}
 	if d.inputTokens != 0 || d.outputTokens != 0 {
-		msg.Usage = &agentcore.Usage{InputTokens: d.inputTokens, OutputTokens: d.outputTokens}
+		msg.Usage = &agentcore.Usage{
+			InputTokens:      d.inputTokens,
+			OutputTokens:     d.outputTokens,
+			CacheReadTokens:  d.cacheRead,
+			CacheWriteTokens: d.cacheWrite,
+		}
 	}
 
 	idx := make([]int, len(d.order))
