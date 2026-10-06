@@ -6,16 +6,15 @@
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
 - **当前阶段**：**T3.4 canonical context edit 完成（2026-10-06，当日落地，
-  待提交）**——agentcore `ContextEditMessage` 编辑条目（编辑即历史：随树
-  持久/重放幂等/分支继承）+ `context_edit` 内置工具（call-id/seq 双句柄 +
-  内容摘要锚，loop 注入 AgentContext 零驱动接线）+ 投影管线第四投影
-  （marker→微压缩→编辑→repair）；**随件修复 T3.3 潜伏缺陷（规格 D-6）**：
-  投影全程 view→raw 映射（`ProjectViewMapped`/`ViewRawOf`）替换 marker 锚
-  公式，loop/repl/rebuild 四调用点切换。全量 38 包 exit=0。规格偏差
-  D-1/2/3/5/6 登记 = **wiki/port/canonical-context-edit.md §8**。
-  **下一步 = 提交**（建议三段式，见 handoff 新卡"接手者第一步"）；提交后
-  第 3 期仅剩期验收（真实会话 token 曲线留档 + rewind 全闭环回归）。
-  T3.1 遗留 flake（TestREPLExportImportRoundTrip 整包偶发）未动。待拍板项
+  四 commit）**——`541289a`（S1 agentcore `ContextEditMessage` 编辑条目：
+  编辑即历史，随树持久/重放幂等/分支继承）→ `b3c570e`（S2 投影第四级 +
+  **随件修复 D-6**：投影全程 view→raw 映射 `ProjectViewMapped`/`ViewRawOf`
+  替换漂移的 marker 锚公式）→ `a4e4c82`（S3 `context_edit` 工具：call-id/
+  seq 双句柄，loop 注入 AgentContext 零驱动接线）→ `10525c7`（docs）。
+  全量 38 包 exit=0。规格偏差 D-1/2/3/5/6 登记 =
+  **wiki/port/canonical-context-edit.md §8**。下一步 = 第 3 期收口评估
+  （期验收 = 真实会话 token 曲线留档 + rewind 全闭环回归）；T3.1 遗留
+  flake（TestREPLExportImportRoundTrip 整包偶发）未动。待拍板项
   （**T3.3.1 压缩策略管线抽象——用户点名，趁热切片 0.5–1d**、pi-durable
   切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
   code mode、TUI 风格对齐 grok——**风格迁移需求已按用户截图提取为
