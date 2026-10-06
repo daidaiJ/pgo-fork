@@ -26,6 +26,10 @@ Save to `handoff/` under the current project root directory.
   identifiable information.
 - If the user passed arguments, treat them as a description of what the next
   session will focus on and tailor the doc accordingly.
+- When describing the agent's self-modification protection surface, never
+  infer or invent entries: the authoritative list is the implementation in
+  `internal/toolrules/selfedit.go` (currently trust.json, permissions.json,
+  config.toml only — project docs like AGENTS.md are NOT protected files).
 
 ## Resuming in a new session
 
