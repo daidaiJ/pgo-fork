@@ -5,27 +5,18 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 6 期第四批：T6.8 MCP 实作（含 D-2 HTTP 扩口）+ T6.9
-  slash 交互面，双双落地（2026-10-06，代码在工作区未提交）**——
-  ①`internal/mcp`（stdio + **最小 Streamable HTTP**，D-2 扩口：会话头 /
-  SSE 解析 / 404 会话失效一次重握手）+ `[[mcp.servers]]` 两级开关
-  （server `enabled` **高于** tool `disabled_tools`→hidden 档）+ 命名
-  `mcp__<server>__<tool>` + 默认 deferred + `BuildPlanWithSources`
-  （`mcp:<server>` Source 真值化）；**实测**：本地 cbm（stdio，4 工具）+
-  8338（http，3 工具）端到端通过。②`/skills`（`[skills] disabled` 过滤
-  收口 `run.LoadSkills` 单点）+ `/mcp`（server/per-tool 启停 + reload 双校验）
-  + `/status` 提升进共享注册中心（TUI 也有了）扩三节；**配置写盘 =
-  `config/persist.go` 文本补丁**（保注释，歧义拒写）。偏差：**D-7 生效时点
-  = 下个会话**（声明面每 run 构建一次，实证修正 §2.3）/ D-8 TUI /status
-  部分节 / D-9 CLI 镜像 deferred。任务表 T6.8/T6.9 已 ✅ 回填。
-- **接手者第一步（待用户拍板，二选一）**：①审工作区 → 提交本批（建议拆
-  T6.8 / T6.9 两个 commit）；②回到原拍板 = **TUI 语义级别设计渲染对齐 grok
-  build proxy**（先出 `tui-render-semantics.md` 规格，参照物 =
-  `wiki/prototype/grok-build-proxy-agent.md` +
-  [tui-grok-style.md](wiki/port/tui-grok-style.md) +
-  [tui-crush-components.md](wiki/port/tui-crush-components.md)）。
-  **T6.4 pstack 精选 4+3 仍未拍板**（清单 =
-  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
+- **当前阶段**：**第 6 期第四批已提交（`d9cc9fe`，2026-10-07 复核 42 包
+  0 FAIL）+ TUI 语义渲染规格定稿（2026-10-07）**——T6.8 MCP（stdio +
+  最小 Streamable HTTP，D-2 扩口）+ T6.9 slash 交互面（/skills /mcp
+  /status 提升 + persist.go 文本补丁）双双落地并入库；偏差 D-7 生效时点
+  = 下个会话 / D-8 TUI /status 部分节 / D-9 CLI 镜像 deferred（详见
+  handoff-archive 2026-10-06 卡）。原拍板件**规格已出**：
+  [tui-render-semantics.md](wiki/port/tui-render-semantics.md)——grok
+  pager 四层（块模型/身份/代数/缓存/布局）对表 pigo TUI，五缺口 +
+  契约 C1–C5 定稿 + S1–S14 语义映射 + 四切片 2.5–3.5d，**待用户拍板排期**。
+- **接手者第一步（待用户拍板）**：①拍板 TUI 语义渲染规格排期（四切片，
+  建议①契约层先行，行为不变重构）；②**T6.4 pstack 精选 4+3 仍未拍板**
+  （清单 = [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
