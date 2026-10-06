@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/agenttool"
 )
 
 // ToolPolicy is the user-declared tool boundary for a run: the --allowed-tools
@@ -210,5 +211,8 @@ func nameSet(names []string) map[string]struct{} {
 // model could dispatch a sub-agent and run bash there instead. Any future spawn
 // path must route through here for the same reason.
 func ChildToolSet(cwd string, policy ToolPolicy) []agentcore.AgentTool {
-	return ApplyToolPolicy(BuiltinToolsExcept(cwd, false, "task"), policy)
+	// ask_user is excluded too (T4.2, deviation D-4): a sub-agent shares the
+	// parent's single stdin/panel channel while the main run is in flight, so
+	// a child questionnaire would interleave with the main session.
+	return ApplyToolPolicy(BuiltinToolsExcept(cwd, false, "task", agenttool.AskName), policy)
 }

@@ -151,6 +151,12 @@ type Model struct {
 	// above the spinner; it contributes zero rows when empty.
 	subagents subagentPanel
 
+	// askPort is the ask_user questionnaire port (T4.2), wired by Run alongside
+	// the session; nil for session-less models. ask is the live question panel
+	// state while the user is answering a questionnaire (nil otherwise).
+	askPort *teaAskPort
+	ask     *askPanel
+
 	// pastes stores the full text of collapsed multi-line pastes, keyed by the id
 	// shown in the "[Pasted text #N +M lines]" placeholder left in the composer.
 	// submit expands the placeholders back to their content before sending, so a
@@ -234,7 +240,7 @@ func (m Model) withSession(s *runSession, history []agentcore.Message) Model {
 // can show the branch/dirty state as soon as it resolves; the alt-screen is
 // requested declaratively via the AltScreen field on the View returned by View.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchGitCmd(m.cwd), m.input.Focus(), func() tea.Msg {
+	return tea.Batch(fetchGitCmd(m.cwd), m.input.Focus(), m.waitAsk(), func() tea.Msg {
 		return tea.RequestBackgroundColor()
 	})
 }
@@ -343,6 +349,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case askUserMsg:
+		// An ask_user tool in the running turn handed its questionnaire over
+		// (T4.2). A stale arrival after the run ended (a cancel raced the
+		// request send) is dropped; either way keep exactly one waitAsk in
+		// flight so the next questionnaire is never lost.
+		if m.running {
+			m.ask = newAskPanel(msg.q)
+			m.relayout()
+		}
+		return m, m.waitAsk()
 
 	case spinnerTickMsg:
 		// Advance the working animation and schedule the next frame, but only while
@@ -514,8 +531,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runCh = nil
 		m.spinner.stop()
 		// The run is over: any still-open sub-agent rows are stale (their tasks ended
-		// with the run), so clear the panel to reclaim its height.
+		// with the run), so clear the panel to reclaim its height. A still-open
+		// question panel is likewise stale (the tool returned via ctx cancellation).
 		m.subagents = subagentPanel{}
+		m.ask = nil
 		m.relayout()
 		if msg.err != nil {
 			m.transcript.addSystem("Run ended: " + msg.err.Error())
@@ -595,6 +614,24 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.submitSlashSelected()
+		}
+	}
+
+	// While a question panel is open (T4.2), the composer is disabled and the
+	// panel owns the keys: option numbers, o/s shortcuts, or free-text entry in
+	// other mode. Submitting the last step sends the reply back over the port,
+	// which unblocks the ask_user tool and closes the panel.
+	if m.running && m.ask.active() {
+		consumed, done := m.ask.handleKey(msg)
+		if consumed {
+			if done != nil {
+				if m.askPort != nil {
+					m.askPort.replies <- *done
+				}
+				m.ask = nil
+				m.relayout()
+			}
+			return m, nil
 		}
 	}
 
@@ -1337,6 +1374,12 @@ func (m Model) renderContent() string {
 			b.WriteString(panel)
 			b.WriteByte('\n')
 		}
+		// The ask_user question panel (T4.2) renders in the same slot, above the
+		// spinner, while the user is answering a questionnaire.
+		if panel := m.ask.view(m.theme, width); panel != "" {
+			b.WriteString(panel)
+			b.WriteByte('\n')
+		}
 		if line := m.spinner.view(width); line != "" {
 			b.WriteString(line)
 			b.WriteByte('\n')
@@ -1431,6 +1474,8 @@ func (m *Model) relayout() {
 		// wrapped output lines of the expanded row (if any); an empty panel reserves
 		// nothing so the single-run layout is unchanged.
 		rows -= m.subagents.lineCount(m.width)
+		// The question panel (T4.2) reserves its rendered rows the same way.
+		rows -= m.ask.lineCount()
 	}
 	if rows < 0 {
 		rows = 0

@@ -5,21 +5,26 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T4.3 BTW 侧会话落地（2026-10-06，用户拍板先于 T4.2）**——
-  `/btw` 侧线程从纯内存升级为**持久 peek 会话**：`peek_` purpose 前缀（不改
-  schema，SchemaVersion 保持 3）+ `internal/session/peek.go`
-  （`PeekSession` 落盘句柄 / `Store.LatestPeek` 跨进程 reopen / `List()`
-  单点过滤 peek、`ListAll()` 放行）+ `cli.Host` 增 `Peek/SetPeek`（repl
-  实现、TUI parity，`/fork`·`/clone`·`/import` 随 `lastBtw` 置 nil）+ btw
-  包每轮落盘侧 Q&A（**不复制主背景**、主会话零写入）。随件修 `NewID` 微秒
-  冲突（新增 `Store.uniqueID`，Import/Fork/OpenPeek 接线）——根治既有 flake
-  `TestREPLExportImportRoundTrip`（经 worktree HEAD 基线对比确认为既有偶发）。
-  偏差 D-1~D-9 登记 [btw-peek-session.md](wiki/port/btw-peek-session.md) §7。
-  基线 **39 包 0 FAIL**（`.gtmp/t43-test.txt`）。
-  此前 T4.1（`58aedec`）、T3.3.1（`1768d08`）、T4.4 均清。
-  **下一步待用户拍板**：第 4 期余下 **T4.2 问卷（2–3d）**；可随时插入
-  **T4.1 期验收 1（defer 档 token A/B，需 API key）**。
-  其余待拍板项（pi-durable 切片 1、/ui 面板、skill-as-tool、
+- **当前阶段**：**T4.2 questionnaire 结构化提问落地（2026-10-06，第 4 期实作面
+  全部收口）**——多步问卷 schema + `ask_user` 工具 + TUI 问题面板：内核 =
+  `internal/questionnaire` 叶子包（minimax V2 schema 子集：1..4 步/每步 0..4
+  选项/recommended 唯一/single·multiple/allow_other/显式 skip + Normalize/
+  DegradedReply/ResultText）+ `agenttool.AskUserTool`（**阻塞式 QuestionPort
+  端口**，zcode/kimi 形态而非 minimax 停轮模型，D-1；sequential 执行；nil
+  端口降级 = 自动答 recommended→首选项、`requires_explicit_response` 给
+  "state your assumption" 指引，D-3）；问答经普通 role=tool 条目入史。
+  接线 = `run.SetAskPort` finder + REPL stdin 端口（ConfirmMu + trust 同款
+  安全论证，Enter=recommended）+ TUI `teaAskPort`/`askPanel`（单步向导、
+  Warn 统一等待徽章、恒一个 waitAsk 在途）+ task 子代理剔除 ask_user（D-4）。
+  偏差 D-1~D-8 登记
+  [questionnaire-ask-user.md](wiki/port/questionnaire-ask-user.md) §7。
+  基线 **39 包 0 FAIL**（`.gtmp/t42-full.txt`）。
+  此前 T4.3（`4b84390`，BTW peek 会话 + uniqueID 根治既有 flake）、
+  T4.1（`58aedec`）、T3.3.1（`1768d08`）、T4.4 均清——**第 4 期
+  T4.1/T4.2/T4.3/T4.4 实作面全部 ✅**。
+  **下一步待用户拍板**：第 4 期收口验收（T4.1 期验收 1 defer 档 token A/B
+  仍未做，需 API key 可随时插入）；第 5 期排期；其余待拍板项
+  （pi-durable 切片 1、/ui 面板、skill-as-tool、
   供应商韧性 S 件族、dynamic-workflow、code mode、TUI 风格对齐 grok——
   tui-grok-style.md 14 条 S 需求待排期）见 implementation-plan 待议段；
   其余均见 handoff。

@@ -374,7 +374,26 @@ func BuiltinTools(cwd string, disabled bool) []agentcore.AgentTool {
 		&agenttool.ContextEditTool{},
 		&agenttool.WebFetchTool{},
 		&agenttool.WebSearchTool{},
+		// ask_user (T4.2): Port is injected per driver via SetAskPort after
+		// SetupEnv; a nil port (headless/SDK/webhook) degrades to auto-answered
+		// defaults, so BuiltinTools needs no interactive wiring.
+		&agenttool.AskUserTool{},
 	}
+}
+
+// SetAskPort injects the interactive question port (T4.2) into the run's
+// ask_user tool instance. Drivers call it after SetupEnv with the env.Tools
+// slice: the *AskUserTool pointer is shared with the ToolRegistry built from
+// the same slice, so the field reaches the executor. It reports whether a
+// tool matched (false = tools disabled or ask_user was filtered away).
+func SetAskPort(tools []agentcore.AgentTool, port agenttool.QuestionPort) bool {
+	for _, t := range tools {
+		if at, ok := t.(*agenttool.AskUserTool); ok {
+			at.Port = port
+			return true
+		}
+	}
+	return false
 }
 
 // BuiltinToolsExcept returns the default builtin tool set (BuiltinTools) with

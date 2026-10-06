@@ -209,6 +209,13 @@ func Run(opts Options) error {
 	// read from the same buffer.
 	reader := bufio.NewReaderSize(os.Stdin, replScanBufInit)
 
+	// ask_user port (T4.2): questionnaires render on stdout and read from the
+	// shared reader under the same mutex as the trust/shellguard confirmations,
+	// so all three prompts serialize on one stdin. The mutex is created here and
+	// shared with replDeps.confirmMu.
+	askMu := &sync.Mutex{}
+	run.SetAskPort(opts.Tools, &stdinAskPort{out: os.Stdout, in: reader, mu: askMu})
+
 	// Wire slash-commands: built-ins (compile-time) plus any user templates under
 	// ~/.pigo/commands (mirrors the commands/*.md convention) plus skills under
 	// ~/.agents/skills. A load error is non-fatal — the REPL still runs with the
@@ -265,7 +272,7 @@ func Run(opts Options) error {
 		trust:      mgr,
 		cwd:        cwd,
 		in:         reader,
-		confirmMu:  &sync.Mutex{},
+		confirmMu:  askMu,
 		curLeaf:    curLeaf,
 		persisted:  len(history),
 		memoryRoot: run.MemoryRootFromTools(opts.Tools),
