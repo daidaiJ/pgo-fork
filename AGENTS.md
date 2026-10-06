@@ -14,7 +14,11 @@
   登记；D-1 切点锚用 KeptBefore 相对量替代 step 的 entry id、D-4 openai
   cache 桶不单列防双重计数）。T3.1 遗留 flake 未动：
   TestREPLExportImportRoundTrip 整包偶发（疑似 NewID 微秒碰撞），待排查；
-  真实 provider 端到端 token 曲线待观察（期验收项）。下一步 = T3.4
+  真实 provider 端到端 token 曲线待观察（期验收项）。**2026-10-06 收口评估
+  登记**：压缩策略管线抽象接口化（触发编排从 loop 归位 compaction 模块，
+  Pipeline 两调用点）进待议段；下一轮缺口族（readCache 最小基座+edit 新鲜度
+  守卫、闲置触发时间戳验证、reminder 内容快照档）进 implementation-plan
+  下一轮段。下一步 = T3.4
   canonical context edit（在 T3.3 marker 模型上做）；待拍板项
   （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
   dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移需求已按
