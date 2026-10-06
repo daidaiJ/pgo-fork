@@ -559,7 +559,7 @@ func maybeAutoCompact(ctx context.Context, agentCtx *agentcore.AgentContext, cfg
 	// Live-state re-injection (zcode 随件): surface the recently-read files the
 	// summary replaced so the model re-reads before trusting stale memory.
 	if cmp != nil {
-		cmp.postCompactReminder = postCompactReminder(view[max(prevIdx+1, 0):cut])
+		cmp.postCompactReminder = postCompactReminder(view[max(prevIdx+1, 0):cut], agentCtx.ReadFiles)
 	}
 	// Persist a checkpoint of the collapsed prefix before inserting the marker so
 	// a later run can reload it (infinite context, #480/#481). It reuses the
@@ -802,12 +802,24 @@ func revokeResidencyForEvictions(agentCtx *agentcore.AgentContext, view agentcor
 	}
 }
 
-// postCompactReminder renders the one-shot system-reminder body listing the
-// files read in the compacted range (newest first, capped at 5 — zcode's cap
-// table; pigo has no readFileState content snapshots, so this is the
-// reference-hint form, spec deviation D-5). Returns "" when the range read
-// nothing.
-func postCompactReminder(rangeMsgs []agentcore.Message) string {
+// reminderMaxFileChars / reminderMaxTotalChars are the zcode cap table for the
+// post-compaction content re-injection: per-file and aggregate snapshot
+// budgets (5 files / 5K per file / 50K total; the aggregate cannot be reached
+// under the per-file cap and file count — it guards the table changing).
+const (
+	reminderMaxFileChars  = 5 * 1024
+	reminderMaxTotalChars = 50 * 1024
+)
+
+// postCompactReminder renders the one-shot system-reminder for the files read
+// in the compacted range (newest first, capped at 5 — zcode's cap table).
+// When the readFileState ledger holds content snapshots for them (T3.5 随件③,
+// closing the D-5 deviation), the reminder carries the snapshot contents so
+// the model keeps working without an immediate re-read; without a snapshot
+// (restored session, snapshot evicted) it degrades to the reference-hint form.
+// Snapshots are from the last read and may be stale — the body says so.
+// Returns "" when the range read nothing.
+func postCompactReminder(rangeMsgs []agentcore.Message, st *agentcore.ReadFileState) string {
 	var paths []string
 	seen := make(map[string]bool)
 	for i := len(rangeMsgs) - 1; i >= 0 && len(paths) < 5; i-- {
@@ -828,10 +840,42 @@ func postCompactReminder(rangeMsgs []agentcore.Message) string {
 	if len(paths) == 0 {
 		return ""
 	}
+	var snaps []string
+	anySnap := false
+	if st != nil {
+		snaps = make([]string, len(paths))
+		for i, p := range paths {
+			snaps[i], _ = st.ContentByArgPath(p)
+			if snaps[i] != "" {
+				anySnap = true
+			}
+		}
+	}
 	var b strings.Builder
-	b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files, whose exact contents may no longer be in context — re-read them before relying on precise details:\n")
-	for _, p := range paths {
-		b.WriteString("- " + p + "\n")
+	if !anySnap {
+		b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files, whose exact contents may no longer be in context — re-read them before relying on precise details:\n")
+		for _, p := range paths {
+			b.WriteString("- " + p + "\n")
+		}
+		return WrapSystemReminder(strings.TrimRight(b.String(), "\n"))
+	}
+	b.WriteString("Your earlier tool results were compacted into a summary. You recently read these files; the content below is a snapshot from your last read and may be stale — re-read a file before relying on precise details:\n")
+	total := 0
+	for i, p := range paths {
+		snap := snaps[i]
+		if snap == "" {
+			b.WriteString("- " + p + " (no content snapshot; re-read if needed)\n")
+			continue
+		}
+		if len(snap) > reminderMaxFileChars {
+			snap = snap[:reminderMaxFileChars] + "\n… (snapshot truncated)"
+		}
+		if total+len(snap) > reminderMaxTotalChars {
+			b.WriteString("- " + p + " (snapshot budget exhausted; re-read if needed)\n")
+			continue
+		}
+		total += len(snap)
+		b.WriteString("- " + p + "\n" + snap + "\n")
 	}
 	return WrapSystemReminder(strings.TrimRight(b.String(), "\n"))
 }
