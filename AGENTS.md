@@ -5,23 +5,22 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 5 期收口验收完成 + T4.1 期验收 1（token A/B）收账 +
-  Windows 插件 bug 修复（2026-10-06，`300e2b1`/`ff100d8`）**——
-  ①T5.2/T5.3 收口验收过目 ✅：T5.2 行为变化知悉（判定序/自改面/deny 终局/
-  plugin 受 gate/fail-closed，实跑活样本两例），skill 双件实跑达标
-  （/handoff 产物合规并揪出 AGENTS.md 工期笔误已修；/defect-detective
-  行为达标）；②**T4.1 token A/B ✅**：hello 单轮实测 direct 9002 /
-  deferred 8561 inputTokens，净省 441 tok（插件面 811 tok 的 54%），
-  provider 确认 schema 计入 usage——deferred 档价值实证，数字见
-  implementation-plan T4.1 行；③**随实跑修复 Windows 插件加载 bug**
-  （`300e2b1`）：`internal/plugin` `isExecutable` 只看 execute 位 →
-  Windows os.Stat 对 .exe 报 0666 → Discover 静默跳过全部插件；修复 =
-  os/exec LookPath 式扩展名判定 + 单测锁行为。
-  **下一步待用户拍板**：第 6 期立项排序（**skill-as-tool 完整体
-  ~1–1.5d 首位**，T5.4 结论；handoff 产物建议首批 = skill-as-tool +
-  T6.7）；小改进项：handoff SKILL.md 补"自改面清单以 selfedit.go 为准"
-  （防实跑中出现的模型幻觉）；pigo 记忆库污染现象（两次实测）可议立项。
-  其余遗留与待议段小件见 implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**第 6 期首批实作收口：T6.5 skill-as-tool 完整体 +
+  T6.7 截断挽救（2026-10-06，`5f8a1e8`/`19df959`/`58d940a`，全量测试
+  全绿）**——
+  ①**T6.7 截断挽救**：`internal/provider/salvage.go` grok 默认态
+  （CompleteToolCalls）——length 停 + 全部 tool_calls 完整 → 改写
+  stop=tool_use 丢弃残尾；openai/anthropic 两解码器 finishDone 接线；
+  ②**T6.5 skill-as-tool**：技能物化为子 Agent 工具（可失败工厂
+  `NewRunConfigE`，spawn 期失败走信封 D-7）；frontmatter `model` 消费 =
+  子代理重解析 provider/凭证（铁律两条兑现）；子面 = ChildToolSet +
+  共享信号量；README 已对齐。**遗留**：skill-as-tool 未真链路实跑（19
+  内置技能均无 frontmatter model，钉模型路径待低成本实测——sensenova
+  flash-lite + 隔离 PIGO_HOME）；skill 工具面 token 成本（18 技能全物化）
+  与 T4.1 deferred 理念的张力可议。
+  **下一步待拍板**：T6.5 实跑验收方式；第 6 期第二批排序（上卡建议 =
+  T6.3 usage MVP + T6.1 写租约，T6.6 最后单独收）；记忆库污染现象立项
+  与否。其余见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
