@@ -356,6 +356,21 @@ func (r *SlashRegistry) Lookup(name string) (SlashCommand, bool) {
 	return cmd, ok
 }
 
+// Remove deletes a command by name (without the leading "/"), regardless of
+// tier. It backs the config-surface commands (T6.9): disabling a skill takes
+// its /name command off the list immediately, and /skills reload re-registers
+// the survivors. Returns false when the name was not registered. Remove is
+// deliberately not tier-aware — the surface controllers know exactly which
+// commands they own (they track the names they registered), so a blanket
+// delete is the honest primitive.
+func (r *SlashRegistry) Remove(name string) bool {
+	if _, ok := r.commands[name]; !ok {
+		return false
+	}
+	delete(r.commands, name)
+	return true
+}
+
 // List returns all commands sorted by name.
 func (r *SlashRegistry) List() []SlashCommand {
 	out := make([]SlashCommand, 0, len(r.commands))

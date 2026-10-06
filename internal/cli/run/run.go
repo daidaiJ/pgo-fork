@@ -7,6 +7,7 @@
 package run
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/smallnest/pigo/internal/builtinskills"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/hooks"
+	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
@@ -46,6 +48,13 @@ type Env struct {
 	// Plugins holds any loaded external plugins so the caller can Close them when
 	// the run ends. It is nil when no plugins were discovered.
 	Plugins *plugin.Manager
+
+	// MCP holds any connected MCP servers (T6.8) so the caller can Close them
+	// when the run ends, and so front-ends can report their status. It is a
+	// non-nil (possibly empty) manager whenever tools are enabled and the
+	// config declares servers; nil when tools are disabled or no server is
+	// configured. Tools from it are already in Tools.
+	MCP *mcp.Manager
 
 	// Memory is the persistent memory store opened once for the run (issue #481),
 	// or nil when persistent memory is disabled (memory.enabled=false), tools are
@@ -93,7 +102,7 @@ type Env struct {
 // uncapable model falls back to direct declaration before any request is
 // built. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, policy ToolPolicy) (env Env, err error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, policy ToolPolicy) (env Env, err error) {
 	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
 	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
 	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
@@ -199,6 +208,12 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// external tool surface the spec's MCP face maps onto; deviation D-1).
 	var mgr *plugin.Manager
 	var pluginTools []agentcore.AgentTool
+	// mcpMgr / mcpTools mirror the plugin pair: the connected servers (closed by
+	// the caller through Env.MCP) and their adapted tools. mcpSources labels
+	// each connected tool's surface for the declaration plan.
+	var mcpMgr *mcp.Manager
+	var mcpTools []agentcore.AgentTool
+	var mcpSources map[string]string
 	if !noTools {
 		pluginsSpan := spans.Begin("startup.setup_env.plugins")
 		if m, err := plugin.Discover(PluginsDir(), os.Stderr, os.Stderr); err == nil {
@@ -209,6 +224,28 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 			fmt.Fprintf(os.Stderr, "pigo: plugin discovery failed: %v\n", err)
 		}
 		pluginsSpan.End()
+
+		// MCP servers (T6.8) are the second external tool surface, connected
+		// with the same fault tolerance as plugin discovery: a server that
+		// fails to start or handshake is logged and skipped, and the run
+		// continues. Their tools join the same external face the deferred
+		// declaration machinery defers, and each tool registers as
+		// mcp__<server>__<tool> — the name the per-tool switch addresses.
+		// mcpSources maps each registry name to its server so the declaration
+		// plan can label the tool's surface mcp:<server> (deviation D-6).
+		if len(mcpCfg.Servers) > 0 {
+			mcpSpan := spans.Begin("startup.setup_env.mcp")
+			mcpMgr = mcp.Connect(context.Background(), mcpServerConfigs(mcpCfg), os.Stderr, os.Stderr)
+			for _, t := range mcpMgr.Tools() {
+				mcpTools = append(mcpTools, t)
+				if mcpSources == nil {
+					mcpSources = map[string]string{}
+				}
+				mcpSources[t.Name()] = t.Server()
+			}
+			tools = append(tools, mcpTools...)
+			mcpSpan.End()
+		}
 	}
 	// Load skills once (shared between prompt injection, /skill-name
 	// registration and skill-as-tool materialization). A partial parse error
@@ -272,7 +309,29 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 	// removed tool never enters the plan → never claimable).
 	if !noTools && (toolsCfg.DeclarationMode == config.ToolDeclarationDeferred || len(toolsCfg.Deferred) > 0) {
 		if deferredCapable(prov, model, toolsCfg.DeferredCapable) {
-			toolPlan = tooldecl.BuildPlan(toolsCfg.DeclarationMode, toolsCfg.Deferred, toolsCfg.Direct, toolsCfg.Hidden, tools, pluginTools)
+			// The deferred face covers BOTH external surfaces (T6.8, spec
+			// mcp-integration-shape.md §3.2): MCP tools defer by default, in
+			// direct mode too — a server can advertise dozens of tools and
+			// materializing them all costs real tokens per turn (T6.5 measured
+			// +5435 token/turn for 18 built-ins). hiddenNames folds in each
+			// server's disabled_tools: a disabled tool is not declared and not
+			// discoverable, while its connection stays up (grok stash
+			// semantics, §3.1). sourceOf labels each tool's surface so the
+			// announcement says mcp:<server> instead of a blanket "plugin".
+			external := make([]agentcore.AgentTool, 0, len(pluginTools)+len(mcpTools))
+			external = append(external, pluginTools...)
+			external = append(external, mcpTools...)
+			hiddenNames := toolsCfg.Hidden
+			if mcpMgr != nil {
+				hiddenNames = append(hiddenNames, mcpMgr.HiddenNames()...)
+			}
+			sourceOf := func(name string) string {
+				if s, ok := mcpSources[name]; ok {
+					return "mcp:" + s
+				}
+				return ""
+			}
+			toolPlan = tooldecl.BuildPlanWithSources(toolsCfg.DeclarationMode, toolsCfg.Deferred, toolsCfg.Direct, hiddenNames, tools, external, sourceOf)
 			if toolPlan != nil {
 				tools = append(tools, &agenttool.SearchToolsTool{})
 			}
@@ -301,11 +360,35 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		SysPrompt:    sysPrompt,
 		Skills:       skills,
 		Plugins:      mgr,
+		MCP:          mcpMgr,
 		Memory:       memStore,
 		Schedule:     sched,
 		MaxContext:   maxCtx,
 		ToolPlan:     toolPlan,
 	}, nil
+}
+
+// mcpServerConfigs converts the file config's [[mcp.servers]] entries into the
+// runtime shape internal/mcp launches. The two structs stay separate so the
+// config package carries no transport concerns (config.go's MCP comment).
+func mcpServerConfigs(cfg config.MCPConfig) []mcp.ServerConfig {
+	out := make([]mcp.ServerConfig, 0, len(cfg.Servers))
+	for _, s := range cfg.Servers {
+		out = append(out, mcp.ServerConfig{
+			Name:           s.Name,
+			Type:           s.Type,
+			URL:            s.URL,
+			Command:        s.Command,
+			Args:           s.Args,
+			Env:            s.Env,
+			Dir:            s.Dir,
+			Enabled:        s.Enabled,
+			TimeoutSeconds: s.TimeoutSeconds,
+			MaxParallel:    s.MaxParallel,
+			DisabledTools:  s.DisabledTools,
+		})
+	}
+	return out
 }
 
 // deferredCapable resolves the capability gate for the deferred tool
@@ -675,6 +758,11 @@ func SkillsDir() string {
 // LoadSkills discovers skills from SkillsDir() once, for both prompt injection
 // and /skill-name registration. Under --no-skills it is a no-op. Built-in skills
 // are bootstrapped into the skills dir first, then the directory is loaded.
+// Skills named in [skills] disabled (T6.9) are filtered here — the single
+// choke point every downstream face (prompt ads, skill-as-tool
+// materialization, slash registration) shares — so a disabled skill is
+// uniformly absent while its file stays on disk (hidden-tier semantics,
+// spec slash-config-surface.md §2.2).
 func LoadSkills(noSkills bool) ([]*runtime.Skill, error) {
 	if noSkills {
 		return nil, nil
@@ -688,7 +776,27 @@ func LoadSkills(noSkills bool) ([]*runtime.Skill, error) {
 	if dir == "" {
 		return nil, nil
 	}
-	return runtime.LoadSkillsDir(dir)
+	skills, err := runtime.LoadSkillsDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	cfg, cfgErr := config.LoadFileConfig(config.FileConfigPath())
+	if cfgErr != nil {
+		// A malformed config already failed earlier in startup; treat it as
+		// "nothing disabled" here so the skill face never goes dark by accident.
+		cfg = config.FileConfig{}
+	}
+	if len(cfg.Skills.Disabled) == 0 {
+		return skills, nil
+	}
+	out := skills[:0:0]
+	for _, s := range skills {
+		if cfg.Skills.SkillDisabled(s.Frontmatter.Name) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // PluginsDir returns the directory external plugins are discovered from:

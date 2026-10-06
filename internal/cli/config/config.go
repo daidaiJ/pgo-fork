@@ -80,6 +80,38 @@ type FileConfig struct {
 	// call-level rules (allow/deny per tool + pattern). Pure config plumbing;
 	// engine assembly lives in internal/cli/run (BuildPermissionEngine).
 	Permissions PermissionsConfig `toml:"permissions"`
+	// MCP is the [[mcp.servers]] TOML table (T6.8): MCP servers pigo launches
+	// and speaks the Model Context Protocol with over stdio. Pure config
+	// plumbing; connection and tool adaptation live in internal/mcp, and the
+	// assembly into the tool face lives in internal/cli/run (SetupEnv).
+	MCP MCPConfig `toml:"mcp"`
+	// Skills is the [skills] TOML table (T6.9): the skill-face switch. Pure
+	// config plumbing; the filtering of the loaded skill set lives in
+	// internal/cli/run (LoadSkills), and /skills writes it through
+	// SetSkillsDisabled.
+	Skills SkillsConfig `toml:"skills"`
+}
+
+// SkillsConfig is the [skills] TOML table (T6.9). Disabled names skills that
+// stay on disk but leave every face — prompt ads, skill-as-tool
+// materialization, and the /name slash command (the hidden-tier semantics
+// applied to skills; spec slash-config-surface.md §2.2). Absent key or empty
+// list means every discovered skill is active, which is the default a user
+// expects.
+type SkillsConfig struct {
+	Disabled []string `toml:"disabled"`
+}
+
+// SkillDisabled reports whether the named skill is switched off. Matching is
+// case-insensitive and whitespace-trimmed, matching how [tools] name lists
+// behave.
+func (c SkillsConfig) SkillDisabled(name string) bool {
+	for _, n := range c.Disabled {
+		if strings.EqualFold(strings.TrimSpace(n), name) {
+			return true
+		}
+	}
+	return false
 }
 
 // ToolDeclarationMode values for ToolsConfig.DeclarationMode.
@@ -123,6 +155,44 @@ type ToolsConfig struct {
 	// child's registry keeps its policy-filtered direct face and records the
 	// rest of the parent plan as deferred (能力只减不增, spec §3.4).
 	SubagentDefer bool `toml:"subagent_defer"`
+}
+
+// MCPServerConfig is one [[mcp.servers]] entry (T6.8). It is the user-facing
+// shape of an MCP server; internal/mcp.ServerConfig is the runtime shape it is
+// converted to (they are kept separate so the config package stays free of
+// transport concerns).
+//
+// Tool naming: a server's tools register as mcp__<name>__<tool>, so Name may
+// not contain '_' (validated in internal/mcp.ServerConfig.Validate).
+//
+// DisabledTools is the per-tool switch: a named tool stays out of the declared
+// face while its connection is kept, so re-enabling never re-runs tools/list
+// (grok's stash semantics, spec mcp-integration-shape.md §3.1).
+type MCPServerConfig struct {
+	Name string `toml:"name"`
+	// Type selects the transport: "stdio" (default) launches Command and speaks
+	// line-delimited JSON-RPC over its stdio; "http" speaks Streamable HTTP
+	// against URL (one POST per message, Mcp-Session-Id session header).
+	Type string `toml:"type"`
+	// URL is the Streamable HTTP endpoint (type = "http").
+	URL string `toml:"url"`
+	// Command is the executable to launch (stdio transport).
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
+	Env     []string `toml:"env"`
+	Dir     string   `toml:"dir"`
+	// Enabled is a pointer so an absent key (nil) defaults to on, which is
+	// what a user expects from a server they just described.
+	Enabled        *bool    `toml:"enabled"`
+	TimeoutSeconds int      `toml:"timeout_seconds"`
+	MaxParallel    int      `toml:"max_parallel"`
+	DisabledTools  []string `toml:"disabled_tools"`
+}
+
+// MCPConfig is the [[mcp.servers]] TOML table (T6.8). Empty means no MCP
+// servers, which is the default: pigo ships without any.
+type MCPConfig struct {
+	Servers []MCPServerConfig `toml:"servers"`
 }
 
 // ShellguardConfig is the [shellguard] TOML table. Mode is one of "off",

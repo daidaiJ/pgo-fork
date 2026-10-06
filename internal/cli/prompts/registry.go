@@ -389,7 +389,6 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		{"import", "import a JSONL export as a new session: /import <path.jsonl>"},
 		{"copy", "copy the most recent assistant reply to the clipboard"},
 		{"session", "show session stats: messages, tokens, model, compactions"},
-		{"status", "show session status: runtime config, context, telemetry, credentials, environment"},
 		{"goal", "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear"},
 		{"btw", "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)"},
 		{"dream", "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing"},

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 	"github.com/smallnest/pigo/internal/cli/headless"
 	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
+	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/dream"
+	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -104,6 +107,11 @@ type Options struct {
 	// Permissions is the user's [permissions] rules table (T5.2), loaded
 	// into the permission engine alongside the persisted permissions file.
 	Permissions config.PermissionsConfig
+
+	// MCP is the live MCP manager (T6.8, run.Env.MCP). It backs the /mcp
+	// surface commands and the status MCP section; nil when tools are
+	// disabled or no server is configured.
+	MCP *mcp.Manager
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -252,6 +260,21 @@ func Run(opts Options) error {
 	}
 	trust.RegisterCommand(slash, mgr, cwd)
 
+	// Config-surface commands (T6.9): /skills and /mcp project the config face
+	// interactively — every toggle writes config.toml (persist.go) and mirrors
+	// into live state; the commands are registered ONCE here so the REPL and
+	// the TUI (which calls the same prompts wiring) expose identical surfaces.
+	// skillsView aliases opts.Skills so /skills reload can swap the view
+	// without reaching into run state the registry cannot see.
+	skillsView := &opts.Skills
+	prompts.RegisterSurfaceCommands(slash, prompts.SurfaceDeps{
+		MCP:        opts.MCP,
+		Skills:     func() []*runtime.Skill { return *skillsView },
+		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
+		SkillsDir:  run.SkillsDir(),
+		ConfigPath: config.FileConfigPath(),
+	})
+
 	// --approve grants the launch directory session trust up front (mirrors pi's
 	// --approve/-a), so the first-launch prompt is skipped and side-effect tools
 	// run without per-call confirmation. Otherwise, on the first launch in an
@@ -277,7 +300,7 @@ func Run(opts Options) error {
 	// signal wiring) and is closed by runREPL's first prompt print.
 	uiInit := spans.Begin("startup.ui_init")
 
-	return runREPL(os.Stdin, os.Stdout, replDeps{
+	deps := replDeps{
 		uiInit:     uiInit,
 		store:      store,
 		header:     header,
@@ -304,7 +327,19 @@ func Run(opts Options) error {
 		shellguard: opts.Shellguard,
 		toolPlan:   opts.ToolPlan,
 		permEngine: permEngine,
+		mcpMgr:     opts.MCP,
+		skillsView: skillsView,
+	}
+	// Promoted /status (T6.9 G-4): registered here — after deps exists — so
+	// the Action renders the full status.RunStatus report through the Host;
+	// the REPL's former hardcoded intercept is gone (D-1: behavior change is
+	// the point — the TUI gets /status from the same registry).
+	prompts.RegisterStatusCommand(slash, func() string {
+		var b strings.Builder
+		status.RunStatus(&b, &deps)
+		return b.String()
 	})
+	return runREPL(os.Stdin, os.Stdout, deps)
 }
 
 // formatHelpLine renders one slash-command line for /help as

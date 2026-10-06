@@ -22,7 +22,9 @@ import (
 	"strings"
 
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/prompts"
+	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 )
@@ -51,7 +53,53 @@ func newSlashRegistry(opts Options, live *cli.LiveConfig) *runtime.SlashRegistry
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pigo: slash-commands: %v\n", err)
 	}
+	// Config-surface commands (T6.9): the SAME /skills and /mcp the REPL gets,
+	// wired to the TUI's own state. skillsView aliases opts.Skills so /skills
+	// reload can swap the view. The promoted /status renders the sections the
+	// TUI can see here (runtime config, MCP, skills, permissions); the
+	// session/context sections are REPL-only for now (the TUI has no cli.Host;
+	// D-7 of slash-config-surface.md).
+	skillsView := &opts.Skills
+	deps := prompts.SurfaceDeps{
+		MCP:        opts.MCP,
+		Skills:     func() []*runtime.Skill { return *skillsView },
+		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
+		SkillsDir:  run.SkillsDir(),
+		ConfigPath: config.FileConfigPath(),
+	}
+	prompts.RegisterSurfaceCommands(reg, deps)
+	prompts.RegisterStatusCommand(reg, func() string {
+		return tuiStatusReport(live, deps)
+	})
 	return reg
+}
+
+// tuiStatusReport renders the promoted /status for the TUI: the runtime config
+// section plus the MCP / Skills / Permissions sections through the surface
+// deps. The context/credentials/telemetry sections need the REPL's cli.Host;
+// they are listed as unavailable rather than dropped, so the TUI report states
+// what it shows instead of silently omitting.
+func tuiStatusReport(live *cli.LiveConfig, deps prompts.SurfaceDeps) string {
+	var b strings.Builder
+	b.WriteString("runtime config:\n")
+	fmt.Fprintf(&b, "  model: %s (provider: %s)\n", live.Model, live.ProviderName)
+	if live.ContextWindow > 0 {
+		fmt.Fprintf(&b, "  context window: %d tokens\n", live.ContextWindow)
+	}
+	skills := "none loaded"
+	if deps.Skills != nil && len(deps.Skills()) > 0 {
+		names := make([]string, 0, len(deps.Skills()))
+		for _, s := range deps.Skills() {
+			names = append(names, s.Frontmatter.Name)
+		}
+		skills = strings.Join(names, ", ")
+	}
+	fmt.Fprintf(&b, "\nskills: %s\n", skills)
+	b.WriteString("\n")
+	b.WriteString(deps.MCPList())
+	b.WriteString("\n\npermissions: see the REPL /status for the full report (TUI shows MCP / skills here)\n")
+	b.WriteString("(context, credentials and telemetry sections are REPL-only in this slice)")
+	return b.String()
 }
 
 // slashMenu is the autocomplete popup state. It holds the candidates matching

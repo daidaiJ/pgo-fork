@@ -188,6 +188,10 @@ type cliOptions struct {
 	// CLI flags, so applyFileConfig overlays it unconditionally and SetupEnv
 	// resolves the plan (capability gate + deferrable set) from it.
 	toolsCfg config.ToolsConfig
+	// mcpCfg is the [mcp] table (T6.8 MCP servers). Like toolsCfg it has no
+	// CLI flags; applyFileConfig overlays it unconditionally and SetupEnv
+	// connects the servers (per-server fault tolerance, never fatal).
+	mcpCfg config.MCPConfig
 }
 
 func main() {
@@ -439,6 +443,10 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	// overlay it unconditionally. Plan resolution (capability gate + deferrable
 	// set) lives in run.SetupEnv.
 	opts.toolsCfg = cfg.Tools
+	// The [mcp] table (T6.8 MCP servers) also has no CLI flags; overlay it
+	// unconditionally. Connection (per-server fault tolerance) lives in
+	// run.SetupEnv.
+	opts.mcpCfg = cfg.MCP
 	// The [dream] table also has no CLI flags; normalize it (defaults applied when
 	// the table is absent) so the interactive startup trigger has a resolved
 	// Config. NewConfig treats a nil enabled as true, so dream is on by default.
@@ -523,13 +531,16 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			return 2
 		}
 		modeDispatch.End()
-		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
 		}
 		if env.Plugins != nil {
 			defer closeWithSpan(env.Plugins.Close)
+		}
+		if env.MCP != nil {
+			defer closeWithSpan(env.MCP.Close)
 		}
 		if env.Memory != nil {
 			defer closeWithSpan(env.Memory.Close)
@@ -562,8 +573,9 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				Shellguard:        sgMode,
 				Skills:            env.Skills,
 				ToolPlan:          env.ToolPlan,
-				Plugins:           env.Plugins,
-				ConfigPrompts:     opts.configPrompts,
+					Plugins:           env.Plugins,
+					MCP:               env.MCP,
+					ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
 				MaxContext:        env.MaxContext,
@@ -593,6 +605,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			Shellguard:        sgMode,
 			Skills:            env.Skills,
 			Plugins:           env.Plugins,
+			MCP:               env.MCP,
 			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
 			ConfigPrompts:     opts.configPrompts,
@@ -617,7 +630,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		return 2
 	}
 
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
@@ -683,7 +696,7 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		fmt.Fprintf(errOut, "pigo: --github-review requires a webhook secret in $%s\n", opts.githubWebhookSecretEnv)
 		return 2
 	}
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)

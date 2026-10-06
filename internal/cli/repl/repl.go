@@ -33,11 +33,12 @@ import (
 	"github.com/smallnest/pigo/internal/cli/goal"
 	"github.com/smallnest/pigo/internal/cli/memstatus"
 	"github.com/smallnest/pigo/internal/cli/run"
-	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/clipboard"
 	"github.com/smallnest/pigo/internal/compaction"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/hooks"
+	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
@@ -100,6 +101,13 @@ type replDeps struct {
 	// ahead of the trust confirmation (hazardous verdicts ask even in
 	// trusted directories — allow-lists never waive them).
 	shellguard shellguard.Mode
+	// mcpMgr is the live MCP manager (T6.8/T6.9). It backs the status MCP
+	// section through the MCPSurfaceSource capability; nil when no server is
+	// configured.
+	mcpMgr *mcp.Manager
+	// skillsView aliases the caller's skill slice so the status Skills section
+	// and the /skills surface see the same (reloadable) view.
+	skillsView *[]*runtime.Skill
 	// cwd is the directory pigo was launched in, used as the trust key and as
 	// the directory side-effect tools are gated against. It does not change
 	// during a session (pigo does not cd).
@@ -204,6 +212,26 @@ type replDeps struct {
 	// orphaned. nil when the shell tool is disabled.
 	jobs *agenttool.BashJobStore
 }
+
+// MCPSurface implements status.MCPSurfaceSource (T6.9 optional capability; the
+// cli.Host interface itself is unchanged).
+func (d *replDeps) MCPSurface() *mcp.Manager { return d.mcpMgr }
+
+// SkillsSurface implements status.SkillsSurfaceSource: the current (filtered,
+// reloadable) skill view plus the disabled names from config.
+func (d *replDeps) SkillsSurface() ([]*runtime.Skill, []string) {
+	if d.skillsView == nil {
+		return nil, nil
+	}
+	var disabled []string
+	if cfg, err := config.LoadFileConfig(config.FileConfigPath()); err == nil {
+		disabled = cfg.Skills.Disabled
+	}
+	return *d.skillsView, disabled
+}
+
+// PermEngine implements status.PermEngineSource.
+func (d *replDeps) PermEngine() *toolrules.Engine { return d.permEngine }
 
 // replScanBufInit is the initial size of the shared input reader. A REPL user
 // may paste a long single line (a big prompt or a pasted file); bufio.Reader
@@ -486,14 +514,6 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			// derived from deps.header + the in-memory context — state a pure
 			// string→string Action closure cannot see.
 			runSession(out, &deps)
-			continue
-		}
-		if line == "/status" || strings.HasPrefix(line, "/status ") {
-			// /status prints a colored multi-section status report with runtime
-			// config, context usage, and more — state a pure string→string Action
-			// closure cannot see. The exact-or-space-prefix guard keeps "/statusfoo"
-			// from being mistaken for "/status".
-			status.RunStatus(out, &deps)
 			continue
 		}
 		if line == "/memory" || strings.HasPrefix(line, "/memory ") {

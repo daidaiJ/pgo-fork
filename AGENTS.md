@@ -5,30 +5,27 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 6 期第二批：T6.5 真链路实跑验收 + T6.1 会话写租约
-  实作收口（2026-10-06，全量 41 包 0 FAIL）**——
-  ①**T6.5 实跑验收（上卡遗留①关闭）**：用户提供 sensenova key，隔离环境
-  在 `.gtmp/t65env/`（XDG_CONFIG_HOME/PIGO_HOME/PIGO_SKILLS_DIR；key 落在
-  被 gitignore 的 `config.toml`）→ 钉模型路由**成立**（frontmatter
-  `model: deepseek-v4-flash` → `PINNED_OK`），反证：钉不存在模型时上游 404
-  经 **D-7 信封**返回（不静默降级）；**踩坑**：skill 物化工具非 ReadOnly，
-  headless 未信任目录 fail-closed，`[permissions]` allow 规则的 **pattern
-  必须为空**（其他工具 = 整个工具，非 glob）；**实测**18 内置技能全物化 →
-  首轮 input 6074→11509（+89%，单技能 ≈300 token），是否并入 deferred 面
-  待拍板。②**T6.1 会话写租约**：锁 = **内核锁**（`flock`/`LockFileEx`，
-  常驻 `<id>.jsonl.lock` 不删）+ 同进程带超时信号量，acquire+release
-  **76μs vs O_EXCL 版 429μs**；`atomicWrite` 补 temp 名唯一/fsync/sha256
-  幂等 sentinel；截断恢复**只认末行**（中间损坏仍报错），`Append` 自愈、
-  `Repair` 显式修复（**未接线**）；根治 Windows"残留锁文件使目录不可删 →
-  挂掉不相干测试"的 flake（runtime 17.5s→5.1s）。规格 =
-  [session-write-lease.md](wiki/port/session-write-lease.md)。
-  ③**T6.4 pstack 盘点完成**（只出清单）：pstack 作者集合 50 个技能 = 23 条
-  `principle-*` + 23 个 playbook + `setup-pstack`（已被 T6.5 吸收，不立项）
-  + benny 3 件（依赖 headless 续跑，不立项）；**49/50 是 slash-only，内置不
-  增每轮工具面 token**；建议精选 4+3 件待拍板。清单 =
-  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)。
-  **下一步**：T6.4 精选清单拍板；之后第 6 期第三批排序待拍板。本机跑测试
-  带 `TMP/TEMP/TMPDIR=D:\tmp`。其余见 handoff。
+- **当前阶段**：**第 6 期第四批：T6.8 MCP 实作（含 D-2 HTTP 扩口）+ T6.9
+  slash 交互面，双双落地（2026-10-06，代码在工作区未提交）**——
+  ①`internal/mcp`（stdio + **最小 Streamable HTTP**，D-2 扩口：会话头 /
+  SSE 解析 / 404 会话失效一次重握手）+ `[[mcp.servers]]` 两级开关
+  （server `enabled` **高于** tool `disabled_tools`→hidden 档）+ 命名
+  `mcp__<server>__<tool>` + 默认 deferred + `BuildPlanWithSources`
+  （`mcp:<server>` Source 真值化）；**实测**：本地 cbm（stdio，4 工具）+
+  8338（http，3 工具）端到端通过。②`/skills`（`[skills] disabled` 过滤
+  收口 `run.LoadSkills` 单点）+ `/mcp`（server/per-tool 启停 + reload 双校验）
+  + `/status` 提升进共享注册中心（TUI 也有了）扩三节；**配置写盘 =
+  `config/persist.go` 文本补丁**（保注释，歧义拒写）。偏差：**D-7 生效时点
+  = 下个会话**（声明面每 run 构建一次，实证修正 §2.3）/ D-8 TUI /status
+  部分节 / D-9 CLI 镜像 deferred。任务表 T6.8/T6.9 已 ✅ 回填。
+- **接手者第一步（待用户拍板，二选一）**：①审工作区 → 提交本批（建议拆
+  T6.8 / T6.9 两个 commit）；②回到原拍板 = **TUI 语义级别设计渲染对齐 grok
+  build proxy**（先出 `tui-render-semantics.md` 规格，参照物 =
+  `wiki/prototype/grok-build-proxy-agent.md` +
+  [tui-grok-style.md](wiki/port/tui-grok-style.md) +
+  [tui-crush-components.md](wiki/port/tui-crush-components.md)）。
+  **T6.4 pstack 精选 4+3 仍未拍板**（清单 =
+  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认

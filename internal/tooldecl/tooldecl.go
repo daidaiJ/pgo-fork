@@ -107,6 +107,18 @@ func (p Plan) Intersect(names map[string]bool) *Plan {
 // The returned plan is nil when nothing defers, which is the loop's inert
 // signal.
 func BuildPlan(mode string, deferredNames, directNames, hiddenNames []string, all, external []agentcore.AgentTool) *Plan {
+	return BuildPlanWithSources(mode, deferredNames, directNames, hiddenNames, all, external, nil)
+}
+
+// BuildPlanWithSources is BuildPlan plus a per-tool surface label, so the
+// announcement and diagnostics can say where a tool came from instead of
+// calling every external tool "plugin" (T6.8: with MCP in the face there are
+// two external surfaces, plus per-server granularity inside the MCP one).
+//
+// sourceOf maps a registry name to its surface label ("plugin", "mcp:<server>");
+// a nil sourceOf — or one returning "" for a name — falls back to the
+// pre-existing behaviour, so every caller that does not care is unaffected.
+func BuildPlanWithSources(mode string, deferredNames, directNames, hiddenNames []string, all, external []agentcore.AgentTool, sourceOf func(string) string) *Plan {
 	norm := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 	byLower := make(map[string]string, len(all)) // lower → registry name
 	for _, t := range all {
@@ -120,19 +132,28 @@ func BuildPlan(mode string, deferredNames, directNames, hiddenNames []string, al
 	for _, t := range external {
 		externalNames[t.Name()] = true
 	}
+	// label resolves a tool's surface, preferring the caller's map.
+	label := func(name, fallback string) string {
+		if sourceOf != nil {
+			if s := strings.TrimSpace(sourceOf(name)); s != "" {
+				return s
+			}
+		}
+		return fallback
+	}
 
 	deferMode := strings.TrimSpace(strings.ToLower(mode)) == Deferred
 	deferred := map[string]ToolInfo{}
 	if deferMode {
 		for _, t := range external {
-			deferred[t.Name()] = ToolInfo{Name: t.Name(), Description: oneLine(t.Description()), Source: "plugin"}
+			deferred[t.Name()] = ToolInfo{Name: t.Name(), Description: oneLine(t.Description()), Source: label(t.Name(), "plugin")}
 		}
 	}
 	for _, n := range deferredNames {
 		if name, ok := byLower[norm(n)]; ok {
 			source := "config"
 			if externalNames[name] {
-				source = "plugin"
+				source = label(name, "plugin")
 			}
 			deferred[name] = ToolInfo{Name: name, Description: desc[name], Source: source}
 		}

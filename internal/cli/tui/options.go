@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -54,6 +55,11 @@ type Options struct {
 	// Plugins holds the loaded plugin manager so the TUI can deliver lifecycle
 	// events to subscribed plugins (US-017, #133). It may be nil (no plugins).
 	Plugins *plugin.Manager
+
+	// MCP is the live MCP manager (T6.8/T6.9, run.Env.MCP). It backs the /mcp
+	// surface commands and the status MCP section; nil when tools are disabled
+	// or no server is configured.
+	MCP *mcp.Manager
 
 	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil for
 	// direct declaration. Passed through from run.SetupEnv's Env.ToolPlan.

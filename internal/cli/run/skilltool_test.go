@@ -24,7 +24,7 @@ func TestSetupEnvMaterializesSkillTools(t *testing.T) {
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 	writeSkillFile(t, skillsDir, "secret", "---\nname: secret\ndescription: hidden skill\ndisable-model-invocation: true\n---\nSlash only.")
 
-	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestSetupEnvNoToolsSkipsSkillTools(t *testing.T) {
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 
-	env, err := SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}

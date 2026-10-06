@@ -35,6 +35,10 @@ func RunStatus(out io.Writer, host cli.Host) {
 	printEnvStatus(out, color, host)
 	fmt.Fprintln(out)
 	printCredentialsStatus(out, color, host)
+	// T6.9: the MCP / Skills / Permissions sections sit before Telemetry
+	// (spec slash-config-surface.md §5); each renders its neutral state when
+	// the host carries no such capability.
+	printSurfaceStatus(out, color, host)
 	fmt.Fprintln(out)
 	printTelemetryStatus(out, color, host)
 }

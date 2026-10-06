@@ -20,6 +20,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/prompts"
+	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -93,6 +94,14 @@ func newTestDepsOnStore(t *testing.T, p provider.Provider, store *session.Store,
 		slash:    reg,
 		creds:    provider.NewCredentialStore(nil),
 	}
+	// The promoted /status (T6.9): tests exercise the same registry-registered
+	// command production wires in interactive.go — the old hardcoded intercept
+	// is gone (D-1).
+	prompts.RegisterStatusCommand(reg, func() string {
+		var b bytes.Buffer
+		status.RunStatus(&b, &deps)
+		return b.String()
+	})
 	return deps
 }
 
