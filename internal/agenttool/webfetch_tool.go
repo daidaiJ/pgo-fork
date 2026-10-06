@@ -59,6 +59,13 @@ type webFetchArgs struct {
 // Name implements AgentTool.
 func (t *WebFetchTool) Name() string { return "webfetch" }
 
+// Effect declares webfetch as a read-only network tool (T5.2): GET-side
+// effects on third parties are accepted, matching the old trust behavior
+// (webfetch was never gated).
+func (t *WebFetchTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNetwork}
+}
+
 // Description implements AgentTool.
 func (t *WebFetchTool) Description() string {
 	return "Fetch a URL and return its main text content as simplified Markdown. " +

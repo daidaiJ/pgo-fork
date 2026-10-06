@@ -66,6 +66,12 @@ type readToolArgs struct {
 // Name implements AgentTool.
 func (t *ReadTool) Name() string { return "read" }
 
+// Effect declares read as read-only (T5.2): it never passes the permission
+// gate.
+func (t *ReadTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
+
 // Description implements AgentTool.
 func (t *ReadTool) Description() string {
 	return "Read a text file's contents by path, with optional line offset/limit. " +

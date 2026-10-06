@@ -73,4 +73,8 @@ type Options struct {
 	// It lowers the resolved compaction window when set (config wins over the
 	// model-derived default); see cli.ResolveContextWindow.
 	MaxContext config.MaxContext
+
+	// Permissions is the user's [permissions] rules table (T5.2), loaded
+	// into the permission engine alongside the persisted permissions file.
+	Permissions config.PermissionsConfig
 }

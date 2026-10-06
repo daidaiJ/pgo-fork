@@ -30,6 +30,12 @@ type bashOutputArgs struct {
 // Name implements AgentTool.
 func (t *BashOutputTool) Name() string { return "bash_output" }
 
+// Effect declares bash_output as read-only (T5.2): it only drains output
+// from a job the agent itself started.
+func (t *BashOutputTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool.
 func (t *BashOutputTool) Description() string {
 	return "Read new output from a background command started with bash " +
@@ -105,6 +111,12 @@ type bashKillArgs struct {
 
 // Name implements AgentTool.
 func (t *BashKillTool) Name() string { return "kill_bash" }
+
+// Effect declares kill_bash as a mutating tool scoped to the agent's own
+// background jobs (T5.2): not read-only, so an untrusted directory gates it.
+func (t *BashKillTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeNone}
+}
 
 // Description implements AgentTool.
 func (t *BashKillTool) Description() string {

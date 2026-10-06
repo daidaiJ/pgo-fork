@@ -46,6 +46,7 @@ import (
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/tooldecl"
+	"github.com/smallnest/pigo/internal/toolrules"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -86,7 +87,14 @@ type replDeps struct {
 	// trust persists project-trust decisions (US-018, #134). It is nil when
 	// trust is disabled (e.g. the store could not be loaded); when nil the
 	// BeforeToolCall hook is not installed and the first-run prompt is skipped.
+	// (T5.2: the manager now feeds the permission engine as the trusted-
+	// directory fast path; the confirmation UX moved to the engine's ask port.)
 	trust *trust.Manager
+	// permEngine is the permission rule engine (T5.2): deny/allow rules,
+	// side-effect contract, self-edit surface, and the stdin ask channel.
+	// Always non-nil (a config error aborts startup), so the seam is
+	// installed unconditionally — unlike the old trust hook.
+	permEngine *toolrules.Engine
 	// shellguard is the resolved bash-command static-analysis mode (T2.1).
 	// Off (default) leaves the seam uninstalled; ask/strict gate bash calls
 	// ahead of the trust confirmation (hazardous verdicts ask even in

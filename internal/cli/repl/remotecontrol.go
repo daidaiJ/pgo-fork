@@ -178,12 +178,21 @@ func remoteControlStatus(out io.Writer, deps *replDeps) {
 // skipped entirely, so the returned func is exactly the local seam — the
 // non-remote path is byte-identical to before (#443).
 func beforeToolCall(deps replDeps, out io.Writer) agentcore.BeforeToolCallFunc {
-	local := trust.BeforeToolCall(deps.trust, deps.cwd, deps.in, out, deps.confirmMu)
+	// T5.2: the permission engine (rules + effect contract + self-edit +
+	// trust fast path + stdin ask port) IS the local seam now; the old
+	// trust.BeforeToolCall hook is retired in its favor.
+	local := deps.permEngine.BeforeToolCall
 	var next agentcore.BeforeToolCallFunc
 	if deps.remote == nil {
 		next = local
 	} else {
-		next = bridgeBeforeToolCall(deps.trust, deps.cwd, deps.remote, out, deps.confirmMu, local)
+		// The deny layer runs AHEAD of the remote confirm channel so a
+		// paired browser's "allow" can never override a terminal deny rule;
+		// the full engine remains the fallback when no browser answers.
+		next = agenttool.ChainBeforeToolCall(
+			deps.permEngine.RuleSeam(),
+			bridgeBeforeToolCall(deps.trust, deps.cwd, deps.remote, out, deps.confirmMu, local),
+		)
 	}
 	// Shellguard (T2.1) runs AHEAD of the trust gate: a Hazardous verdict asks
 	// even in a trusted directory (allow-lists never waive it), and a Safe

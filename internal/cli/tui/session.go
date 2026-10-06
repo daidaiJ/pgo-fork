@@ -36,6 +36,7 @@ import (
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/tooldecl"
+	"github.com/smallnest/pigo/internal/toolrules"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -65,6 +66,11 @@ type runSession struct {
 	// trust is disabled (store could not be loaded / no cwd); when nil /status
 	// reports "disabled" and the trust-gated hook layer is skipped.
 	trust *trust.Manager
+	// permEngine is the permission rule engine (T5.2): deny/allow rules,
+	// side-effect contract, self-edit guard. Its ask channel routes to the
+	// paired browser when remote control is active and fails closed
+	// otherwise — the TUI has no local per-call prompt.
+	permEngine *toolrules.Engine
 	// shellguard is the resolved bash-command static-analysis mode (T2.1).
 	// Off (default) leaves the seam uninstalled; with no per-call channel in
 	// the TUI, ask/strict deny flagged bash commands outright (fail closed).
@@ -247,6 +253,19 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 	// registered here rather than in newSlashRegistry. A nil mgr is a no-op.
 	trust.RegisterCommand(s.slash, mgr, cwd)
 
+	// Permission engine (T5.2): rules + side-effect contract + self-edit
+	// guard over the trust manager's directory fast path. The ask channel
+	// dereferences s.remote at call time so /remote-control toggling after
+	// assembly keeps working. A config or store error aborts the launch: a
+	// boundary the user believes is in force must not silently vanish.
+	trustedFn := func(dir string) bool { return mgr != nil && mgr.IsTrusted(dir) }
+	permEngine, engineErr := run.BuildPermissionEngine(cwd, opts.Tools, opts.Permissions,
+		engineAskViaRemote(func() *remoteSession { return s.remote }, mgr, cwd), trustedFn)
+	if engineErr != nil {
+		return nil, nil, fmt.Errorf("permission engine: %w", engineErr)
+	}
+	s.permEngine = permEngine
+
 	// Wire hooks uniformly with every other driver (#425): resolve the trust-gated
 	// hook set, build the dispatcher, dispatch SessionStart once, and compose the
 	// SessionEnd/PreCompact observer with the plugin notifier. Trust is granted by
@@ -346,19 +365,14 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 	if s.schedule != nil {
 		cfg.GetFollowUpMessages = s.schedule.FollowUpMessages
 	}
-	// When remote control is active, route side-effect tool-call confirmations to
-	// the paired browser (no-op when no client is connected or the cwd is trusted,
-	// so the non-remote path is unchanged). The trust manager is read from the
-	// shared store; a nil manager disables the seam.
-	if s.remote != nil {
-		if mgr, err := trust.NewManager(trust.DefaultPath()); err == nil {
-			cfg.Batch.ToolExecutorConfig.BeforeToolCall = remoteConfirmSeam(s.remote, mgr, s.hookDeps.ProjectDir)
-		}
-	}
+	// Permission engine (T5.2) is the primary seam: rules + effect contract +
+	// self-edit guard + trust fast path; its ask port routes to the paired
+	// browser when one is connected and fails closed otherwise.
+	cfg.Batch.ToolExecutorConfig.BeforeToolCall = s.permEngine.BeforeToolCall
 	// Shellguard (T2.1): the TUI has no per-call confirmation channel, so
 	// ask and strict modes both deny flagged bash commands outright (fail
-	// closed). Off installs nothing. The seam runs ahead of the remote
-	// confirm seam so a Safe command falls through unchanged.
+	// closed). Off installs nothing. The seam runs ahead of the permission
+	// engine so a Safe command falls through unchanged.
 	if sg := agenttool.ShellguardSeam(s.shellguard, nil); sg != nil {
 		cfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(sg, cfg.Batch.ToolExecutorConfig.BeforeToolCall)
 	}

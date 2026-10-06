@@ -70,6 +70,11 @@ type searchResult struct {
 // Name implements AgentTool.
 func (t *WebSearchTool) Name() string { return "websearch" }
 
+// Effect declares websearch as a read-only network tool (T5.2).
+func (t *WebSearchTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNetwork}
+}
+
 // Description implements AgentTool.
 func (t *WebSearchTool) Description() string {
 	return "Search the web and return the top results (title, URL, snippet). " +

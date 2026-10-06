@@ -96,6 +96,13 @@ type bashToolArgs struct {
 // Name implements AgentTool.
 func (t *BashTool) Name() string { return "bash" }
 
+// Effect declares bash (T5.2): a shell escapes the workspace (ScopeSystem).
+// Timeout stays zero — the tool manages its own deadlines and background
+// jobs, and the executor must not wrap its context.
+func (t *BashTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeSystem}
+}
+
 // Description implements AgentTool.
 func (t *BashTool) Description() string {
 	return "Run a shell command, streaming stdout/stderr. Supports a timeout " +

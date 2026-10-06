@@ -28,6 +28,7 @@ import (
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/tooldecl"
+	"github.com/smallnest/pigo/internal/toolrules"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -99,6 +100,10 @@ type Options struct {
 	// It lowers the resolved compaction window when set (config wins over the
 	// model-derived default); see cli.ResolveContextWindow.
 	MaxContext config.MaxContext
+
+	// Permissions is the user's [permissions] rules table (T5.2), loaded
+	// into the permission engine alongside the persisted permissions file.
+	Permissions config.PermissionsConfig
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -216,6 +221,20 @@ func Run(opts Options) error {
 	askMu := &sync.Mutex{}
 	run.SetAskPort(opts.Tools, &stdinAskPort{out: os.Stdout, in: reader, mu: askMu})
 
+	// Permission engine (T5.2): rules + side-effect contract + self-edit
+	// guard, with the stdin ask channel (y/n/a/s) and the trust manager as
+	// the trusted-directory fast path. A config or store error is fatal: a
+	// boundary the user believes is in force must not silently vanish.
+	var trustedFn toolrules.TrustedFunc
+	if mgr != nil {
+		trustedFn = mgr.IsTrusted
+	}
+	permEngine, engineErr := run.BuildPermissionEngine(cwd, opts.Tools, opts.Permissions,
+		trust.StdinAskPort(os.Stdout, reader, askMu, mgr, cwd), trustedFn)
+	if engineErr != nil {
+		return fmt.Errorf("permission engine: %w", engineErr)
+	}
+
 	// Wire slash-commands: built-ins (compile-time) plus any user templates under
 	// ~/.pigo/commands (mirrors the commands/*.md convention) plus skills under
 	// ~/.agents/skills. A load error is non-fatal — the REPL still runs with the
@@ -284,6 +303,7 @@ func Run(opts Options) error {
 		telemetry:  cli.NewTelemetryHolder(),
 		shellguard: opts.Shellguard,
 		toolPlan:   opts.ToolPlan,
+		permEngine: permEngine,
 	})
 }
 

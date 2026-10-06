@@ -170,6 +170,10 @@ type cliOptions struct {
 	// defaults applied. The interactive REPL consumes it to decide the startup
 	// background auto-consolidation (US-008). Like memory it has no CLI flags.
 	dreamCfg dream.Config
+	// permsCfg is the [permissions] rules table (T5.2), passed through from
+	// applyFileConfig. Like memory/dream it has no CLI flags; every driver
+	// loads it into the permission engine.
+	permsCfg config.PermissionsConfig
 	// allowedTools and disallowedTools are the --allowed-tools/--disallowed-tools
 	// values: the tool-level admission boundary for the run, filling the gap
 	// between "all tools" and --no-tools. Each is repeatable and each value may be
@@ -439,6 +443,7 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	// the table is absent) so the interactive startup trigger has a resolved
 	// Config. NewConfig treats a nil enabled as true, so dream is on by default.
 	opts.dreamCfg = dream.NewConfig(cfg.Dream.Enabled, cfg.Dream.IntervalDays, cfg.Dream.RecentSessions)
+	opts.permsCfg = cfg.Permissions
 }
 
 // dispatch runs the resolved command and returns a process exit code, writing
@@ -562,6 +567,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
 				MaxContext:        env.MaxContext,
+				Permissions:       opts.permsCfg,
 				})
 			exitTotal.End()
 			if err != nil {
@@ -593,6 +599,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			CliPrompts:        opts.promptTemplates,
 			NoPromptTemplates: opts.noPromptTemplates,
 			Dream:             opts.dreamCfg,
+			Permissions:       opts.permsCfg,
 		})
 		exitTotal.End()
 		if err != nil {
@@ -632,6 +639,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		ResumeID:             resumeID,
 		Shellguard:           sgMode,
 		NonInteractiveDenial: opts.nonInteractiveDenial,
+		Permissions:          opts.permsCfg,
 	}, out, errOut)
 	exitTotal.End()
 	return code

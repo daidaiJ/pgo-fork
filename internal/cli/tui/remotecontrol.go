@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/remotecontrol"
+	"github.com/smallnest/pigo/internal/toolrules"
 	"github.com/smallnest/pigo/internal/trust"
 )
 
@@ -77,45 +78,33 @@ func (s *runSession) stopRemote() {
 	s.remote = nil
 }
 
-// remoteConfirmSeam builds the BeforeToolCall seam that routes side-effect
-// tool-call confirmations to the paired browser while one is connected. When no
-// browser is connected (or the tool is not side-effecting, or the cwd is
-// trusted) it returns nil so the tool runs under the up-front trust the TUI
-// grants — the non-remote behavior is unchanged.
+// engineAskViaRemote adapts the permission engine's ask channel (T5.2) to the
+// remote-control bridge: with a paired browser the confirmation routes there
+// (the old remoteConfirmSeam behavior, now behind the engine's judgment
+// order); without one it fails closed — the TUI has no local per-call prompt.
+// getRs is dereferenced at call time so /remote-control can toggle after the
+// engine is built.
 //
 // A ctx cancellation (interrupt) makes Confirm return remote=false, which is
 // treated as a denial so an interrupted run does not silently proceed.
-func remoteConfirmSeam(rs *remoteSession, mgr *trust.Manager, cwd string) agentcore.BeforeToolCallFunc {
-	return func(ctx context.Context, call agentcore.AgentToolCall) *agentcore.BeforeToolCallDecision {
-		if !rs.hasClient() || mgr == nil {
-			return nil
-		}
-		if !trust.SideEffectTools[call.Name] {
-			return nil
-		}
-		if mgr.IsTrusted(cwd) {
-			return nil
+func engineAskViaRemote(getRs func() *remoteSession, mgr *trust.Manager, cwd string) toolrules.AskPort {
+	return func(ctx context.Context, call agentcore.AgentToolCall, _ toolrules.AskReason, _ toolrules.ProposedHint) (toolrules.AskDecision, toolrules.Rule) {
+		rs := getRs()
+		if rs == nil || !rs.hasClient() || ctx.Err() != nil {
+			return toolrules.AskDeny, toolrules.Rule{}
 		}
 		summary := trust.ToolCallSummary(call)
 		d, remote := rs.bridge.Confirm(ctx, call.Name, summary)
 		if !remote {
-			return blockRemoteToolCall(call, cwd)
+			return toolrules.AskDeny, toolrules.Rule{}
 		}
-		if d.Always {
+		if d.Always && mgr != nil {
 			mgr.SetSessionTrust(cwd)
 		}
 		if !d.Approve {
-			return blockRemoteToolCall(call, cwd)
+			return toolrules.AskDeny, toolrules.Rule{}
 		}
-		return nil
-	}
-}
-
-func blockRemoteToolCall(call agentcore.AgentToolCall, cwd string) *agentcore.BeforeToolCallDecision {
-	msg := fmt.Sprintf("tool %q blocked: %s is not trusted (use /trust to trust this project)", call.Name, cwd)
-	return &agentcore.BeforeToolCallDecision{
-		Block:   true,
-		Content: &agentcore.ContentList{agentcore.NewTextContent(msg)},
+		return toolrules.AskApprove, toolrules.Rule{}
 	}
 }
 

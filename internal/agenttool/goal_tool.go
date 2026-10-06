@@ -246,6 +246,11 @@ type goalCompleteArgs struct {
 // Name implements AgentTool.
 func (t *GoalCompleteTool) Name() string { return "goal_complete" }
 
+// Effect declares goal_complete as read-only (T5.2): an internal turn marker.
+func (t *GoalCompleteTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool.
 func (t *GoalCompleteTool) Description() string {
 	return "Declare the current goal COMPLETE. Call this ONLY after verifying, " +
@@ -317,6 +322,11 @@ type goalBlockedArgs struct {
 
 // Name implements AgentTool.
 func (t *GoalBlockedTool) Name() string { return "goal_blocked" }
+
+// Effect declares goal_blocked as read-only (T5.2): an internal turn marker.
+func (t *GoalBlockedTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
 
 // Description implements AgentTool.
 func (t *GoalBlockedTool) Description() string {

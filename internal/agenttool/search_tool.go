@@ -204,6 +204,11 @@ type grepToolArgs struct {
 }
 
 func (t *GrepTool) Name() string { return "grep" }
+
+// Effect declares grep as read-only (T5.2).
+func (t *GrepTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
 func (t *GrepTool) Description() string {
 	return "Search file contents by regular expression under the workspace, " +
 		"optionally filtering files by glob. Skips .gitignore'd paths."
@@ -330,6 +335,11 @@ type findToolArgs struct {
 }
 
 func (t *FindTool) Name() string { return "find" }
+
+// Effect declares find as read-only (T5.2).
+func (t *FindTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
 func (t *FindTool) Description() string {
 	return "Find files by base-name glob under the workspace. Skips .gitignore'd paths."
 }
@@ -427,6 +437,11 @@ type lsToolArgs struct {
 }
 
 func (t *LsTool) Name() string { return "ls" }
+
+// Effect declares ls as read-only (T5.2).
+func (t *LsTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
 func (t *LsTool) Description() string {
 	return "List a directory's entries, marking directories with a trailing slash."
 }

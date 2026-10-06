@@ -48,6 +48,13 @@ type contextEditToolArgs struct {
 // Name implements AgentTool.
 func (t *ContextEditTool) Name() string { return "context_edit" }
 
+// Effect declares context_edit as read-only for permission purposes (T5.2):
+// it edits the conversation's own history view (T3.4), an in-process effect
+// with no user-observable footprint outside the session.
+func (t *ContextEditTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool. It doubles as the prompt guidance the spec
 // asks for (§3.3): what the tool is for, what may be targeted, and the
 // discipline around it.

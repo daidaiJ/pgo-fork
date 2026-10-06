@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/smallnest/pigo/internal/toolrules"
+
 import (
 	"strings"
 	"testing"
@@ -69,14 +71,15 @@ func TestStartStopRemote(t *testing.T) {
 	s.stopRemote()
 }
 
-// TestBuildConfigInstallsRemoteSeam asserts buildConfig only installs the
-// BeforeToolCall confirm seam while a remote session is present: off by default
-// (up-front trust unchanged), wired once /remote-control is running.
+// TestBuildConfigInstallsPermissionSeam asserts buildConfig always installs
+// the BeforeToolCall permission seam (T5.2): the engine is unconditional —
+// its ask channel routes to the paired browser when one exists and fails
+// closed otherwise.
 func TestBuildConfigInstallsRemoteSeam(t *testing.T) {
 	s := newRemoteTestSession(t)
 
-	if cfg := s.buildConfig(); cfg.Batch.ToolExecutorConfig.BeforeToolCall != nil {
-		t.Error("BeforeToolCall should be nil when remote control is off")
+	if cfg := s.buildConfig(); cfg.Batch.ToolExecutorConfig.BeforeToolCall == nil {
+		t.Error("BeforeToolCall (permission engine) should always be installed")
 	}
 
 	if _, err := s.startRemote(); err != nil {
@@ -85,13 +88,13 @@ func TestBuildConfigInstallsRemoteSeam(t *testing.T) {
 	defer s.stopRemote()
 
 	if cfg := s.buildConfig(); cfg.Batch.ToolExecutorConfig.BeforeToolCall == nil {
-		t.Error("BeforeToolCall should be installed when remote control is on")
+		t.Error("BeforeToolCall should still be installed when remote control is on")
 	}
 }
 
-// TestRemoteConfirmSeamAllowsWhenNoClient verifies the confirm seam is a no-op
-// (returns nil = allow under up-front trust) when no browser is connected, so a
-// running-but-unpaired server never blocks tool calls.
+// TestRemoteAskDeniesWhenNoClient verifies the engine's ask adapter fails
+// closed when no browser is connected — a running-but-unpaired server must
+// not silently approve side-effect calls (T5.2).
 func TestRemoteConfirmSeamAllowsWhenNoClient(t *testing.T) {
 	s := newRemoteTestSession(t)
 	if _, err := s.startRemote(); err != nil {
@@ -99,10 +102,14 @@ func TestRemoteConfirmSeamAllowsWhenNoClient(t *testing.T) {
 	}
 	defer s.stopRemote()
 
-	// No client is paired, so hasClient() is false and the seam must allow.
-	seam := remoteConfirmSeam(s.remote, nil, "/tmp/project")
-	if d := seam(t.Context(), agentcore.AgentToolCall{Name: "bash"}); d != nil {
-		t.Errorf("seam should allow (nil) with no client, got %+v", d)
+	// No client is paired, so hasClient() is false and the ask must deny.
+	ask := engineAskViaRemote(func() *remoteSession { return s.remote }, nil, "/tmp/project")
+	decision, rule := ask(t.Context(), agentcore.AgentToolCall{Name: "bash"}, toolrules.AskUntrusted, toolrules.ProposedHint{})
+	if decision != toolrules.AskDeny {
+		t.Errorf("ask should deny with no client, got %v", decision)
+	}
+	if rule.Action != "" {
+		t.Errorf("no rule should be proposed, got %+v", rule)
 	}
 }
 

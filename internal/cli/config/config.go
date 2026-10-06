@@ -76,6 +76,10 @@ type FileConfig struct {
 	// Pure config plumbing; plan assembly + the capability gate live in
 	// internal/cli/run (SetupEnv).
 	Tools ToolsConfig `toml:"tools"`
+	// Permissions is the [permissions] TOML table (T5.2): user-authored
+	// call-level rules (allow/deny per tool + pattern). Pure config plumbing;
+	// engine assembly lives in internal/cli/run (BuildPermissionEngine).
+	Permissions PermissionsConfig `toml:"permissions"`
 }
 
 // ToolDeclarationMode values for ToolsConfig.DeclarationMode.
@@ -126,6 +130,24 @@ type ToolsConfig struct {
 // so the flag tier wins.
 type ShellguardConfig struct {
 	Mode string `toml:"mode"`
+}
+
+// PermRule is one [[permissions.rules]] entry: a call-level boundary for a
+// single tool. Pattern semantics are per-tool (toolrules.Rule): bash =
+// word-boundary command prefix, write/edit = path prefix, other tools =
+// the whole tool. Action "deny" is terminal — no trust grant overrides it.
+type PermRule struct {
+	Tool    string `toml:"tool"`
+	Pattern string `toml:"pattern"`
+	Action  string `toml:"action"`
+}
+
+// PermissionsConfig is the [permissions] TOML table (T5.2): user-authored
+// rules loaded at startup into the permission engine, alongside rules
+// settled interactively (the "save this rule" answer writes the same
+// permissions file).
+type PermissionsConfig struct {
+	Rules []PermRule `toml:"rules"`
 }
 
 // DreamConfig is the [dream] TOML table for /dream memory consolidation.

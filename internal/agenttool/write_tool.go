@@ -40,6 +40,12 @@ type writeToolArgs struct {
 // Name implements AgentTool.
 func (t *WriteTool) Name() string { return "write" }
 
+// Effect declares write (T5.2): a workspace-mutating tool, gated by the
+// permission engine (rules cannot skip it unless a rule allows its path).
+func (t *WriteTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeWorkspace}
+}
+
 // Description implements AgentTool.
 func (t *WriteTool) Description() string {
 	return "Create or overwrite a file at the given path, creating parent " +

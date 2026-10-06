@@ -91,6 +91,13 @@ type todoToolArgs struct {
 // Name implements AgentTool.
 func (t *TodoTool) Name() string { return "todo" }
 
+// Effect declares todo as read-only for permission purposes (T5.2): it
+// mutates only pigo's internal task bookkeeping, never user-observable
+// state — matching the old trust behavior (todo was never gated).
+func (t *TodoTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool.
 func (t *TodoTool) Description() string {
 	return "Record and update a structured task list to plan and track multi-step " +

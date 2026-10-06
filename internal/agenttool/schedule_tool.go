@@ -241,6 +241,12 @@ type scheduleCreateTool struct{ sched *Schedule }
 
 func (t *scheduleCreateTool) Name() string { return "schedule_create" }
 
+// Effect declares schedule_create (T5.2): it mutates the persisted schedule
+// store, so an untrusted directory gates it.
+func (t *scheduleCreateTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeNone}
+}
+
 func (t *scheduleCreateTool) ExecutionMode() agentcore.ToolExecutionMode {
 	return agentcore.ToolExecutionParallel
 }
@@ -300,6 +306,11 @@ type scheduleListTool struct{ sched *Schedule }
 
 func (t *scheduleListTool) Name() string { return "schedule_list" }
 
+// Effect declares schedule_list as read-only (T5.2).
+func (t *scheduleListTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 func (t *scheduleListTool) ExecutionMode() agentcore.ToolExecutionMode {
 	return agentcore.ToolExecutionParallel
 }
@@ -329,6 +340,12 @@ func (t *scheduleListTool) Execute(_ context.Context, _ string, _ json.RawMessag
 type scheduleDeleteTool struct{ sched *Schedule }
 
 func (t *scheduleDeleteTool) Name() string { return "schedule_delete" }
+
+// Effect declares schedule_delete (T5.2): it mutates the persisted schedule
+// store, so an untrusted directory gates it.
+func (t *scheduleDeleteTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeNone}
+}
 
 func (t *scheduleDeleteTool) ExecutionMode() agentcore.ToolExecutionMode {
 	return agentcore.ToolExecutionParallel

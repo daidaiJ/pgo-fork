@@ -76,13 +76,23 @@ func executeToolCall(ctx context.Context, cfg ToolExecutorConfig, call agentcore
 		return finalizeToolCall(ctx, cfg, call, *prep, isError, emit)
 	}
 
-	// 2. execute.
+	// 2. execute. A tool that declares a contract Timeout (T5.2) gets its
+	// context wrapped in WithTimeout for the execute phase only — finalize
+	// (afterToolCall + emit end event) still runs on the caller's ctx so an
+	// expired deadline cannot swallow the result shaping. Zero Timeout = the
+	// tool manages its own deadlines; nothing is wrapped.
+	execCtx := ctx
+	if eff := agentcore.EffectOf(tool); eff.Timeout > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, eff.Timeout)
+		defer cancel()
+	}
 	if emit != nil {
 		if err := emit(ctx, agentcore.ToolExecutionStartEvent{ToolCallID: call.ID, ToolName: call.Name, Args: args}); err != nil {
 			return errorToolResult(call, "aborted before execution: "+err.Error()), false
 		}
 	}
-	result, isError := runToolWithRetry(ctx, cfg, tool, call, args, emit)
+	result, isError := runToolWithRetry(execCtx, cfg, tool, call, args, emit)
 
 	// 3. finalize: afterToolCall overrides.
 	return finalizeToolCall(ctx, cfg, call, result, isError, emit)

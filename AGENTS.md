@@ -5,24 +5,24 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T5.1 子代理结果信封 + stop_reason 实作落地（2026-10-06，
-  第 5 期第一件）**——内核 = `internal/runtime/envelope.go`
-  （SubAgentEnvelope：agent_id/status/stop_reason/next_step；词表 completed/
-  max_tokens/error/cancelled/no_final_message；2000 字符 body 封顶）；
-  goroutine/process 双路径收尾点统一走信封，**失败从 Go error 改为普通
-  文本信封结果**（D-7，期验收①依赖父模型可读 next_step）；completed 文本
-  逐字返回仅 Details 挂信封（D-1，验收③不回归）；RPC `SubAgentRunResult`
-  增 stopReason/errorMessage（D-6）；TUI subagentpanel 失败行 Warn 保留至
-  runEnd。偏差 D-1~D-8 登记
-  [subagent-result-envelope.md](wiki/port/subagent-result-envelope.md) §7。
-  **第 5/6 期拍板（2026-10-06）**：T5.5/T5.6 双双移第 6 期（T6.6/T6.7），
-  第 5 期收敛核心 4 件；T6.2 MCP 保留 0.5d 评估。此前第 4 期
-  T4.1/T4.2/T4.3/T4.4 实作面全部 ✅（T4.1 期验收 1 token A/B 仍待 key）。
-  **下一步待用户拍板**：T5.1 收口验收；第 5 期后续件（T5.2 契约+权限规则
-  打包 3.5–4d / T5.3 内置 skill 双件 / T5.4 路由评估）；T4.1 期验收 1
-  （需 API key）；T6.5 候选池排序；其余待议段小件
-  （pi-durable 切片 1、/ui 面板、skill-as-tool、dynamic-workflow、code
-  mode、TUI 风格对齐 grok——tui-grok-style.md 14 条 S 需求待排期）见
+- **当前阶段**：**T5.2 工具副作用契约 + 权限规则层实作落地（2026-10-06，
+  第 5 期第二件，原 T5.1+T5.2 打包件当日收）**——内核三件：
+  ①`agentcore.ToolEffect` 契约（`effect.go`：ReadOnly/Destructive/Scope/
+  Timeout，可选接口 EffectAware，未声明=保守默认；21 内置工具全量声明+
+  快照测试；executor 执行阶段 WithTimeout 消费）；②`internal/toolrules`
+  叶子包（Rule/Store=permissions.json/词边界前缀 Match/**Engine 七步判定
+  次序**/SelfEdit symlink 穿透/AskPort 零 IO seam）——deny 规则终局
+  （trusted/bypass 不放行）+ ProposedRule 沉淀（REPL `s` 选项）+ 自改面
+  强制 ask（trust.json/permissions.json/config.toml 精确文件级）；
+  `[permissions]` 配置表；③接线：REPL engine 取代 trust 直连（remote
+  前置 RuleSeam 保 deny 终局）/TUI ask 走配对浏览器无浏览器 fail-closed
+  （**行为变化**）/headless nil ask fail-closed 可绕行；goal/btw 保留旧
+  seam（D-6）。规格 = [wiki/port/tool-rules-layer.md](wiki/port/tool-rules-layer.md)
+  （六参照融合 + 偏差 D-1~D-10 = §7）。全量基线 **41 包 0 FAIL**
+  （`.gtmp/t52-full2.txt`）。此前 T5.1 信封（`ebdf2e3`）、第 4 期四件均 ✅。
+  **下一步待用户拍板**：T5.2/T5.1 收口验收；第 5 期余件（T5.3 内置 skill
+  双件 1d + T5.4 路由评估 0.5d，建议连做收期）；T4.1 期验收 1（需 API
+  key）；T6.5 候选池排序（随 T5.4 结论）；其余待议段小件见
   implementation-plan 待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，

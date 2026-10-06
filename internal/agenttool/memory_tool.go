@@ -50,6 +50,11 @@ type memorySearchArgs struct {
 // Name implements AgentTool.
 func (t *MemorySearchTool) Name() string { return "memory_search" }
 
+// Effect declares memory_search as read-only (T5.2).
+func (t *MemorySearchTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
+
 // Description implements AgentTool.
 func (t *MemorySearchTool) Description() string {
 	return "Search the persistent memory library by relevance (BM25 full-text) " +

@@ -16,6 +16,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/compaction"
@@ -23,6 +24,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/shellguard"
+	"github.com/smallnest/pigo/internal/trust"
 )
 
 // RunParams carries the resolved inputs for one headless run. Mode and Env are
@@ -45,6 +47,9 @@ type RunParams struct {
 	// (--non-interactive-denial continue): a shellguard denial either aborts
 	// the run or becomes a failed tool result the agent can route around.
 	NonInteractiveDenial string
+	// Permissions is the user's [permissions] rules table (T5.2), loaded
+	// into the permission engine alongside the persisted permissions file.
+	Permissions config.PermissionsConfig
 }
 
 // Run executes one headless run over p.Prompt, writing agent output to out and
@@ -147,6 +152,25 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	if sgSeam != nil {
 		runCfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(runCfg.Batch.ToolExecutorConfig.BeforeToolCall, sgSeam)
 	}
+	// Permission engine (T5.2): rules + effect contract + self-edit guard,
+	// chained after the shellguard denial seam. There is no interactive
+	// channel, so the ask step fails closed — an untrusted directory's
+	// effect calls become failed tool results the agent can route around
+	// (the continue posture); read-only tools, allow rules, and trusted
+	// directories pass unchanged. A config or store error is a usage-level
+	// failure (exit 2): a boundary the user believes is in force must not
+	// silently vanish.
+	var trustMgr *trust.Manager
+	if m, merr := trust.NewManager(trust.DefaultPath()); merr == nil {
+		trustMgr = m
+	}
+	permEngine, engineErr := run.BuildPermissionEngine(env.Cwd, env.Tools, p.Permissions, nil,
+		func(cwd string) bool { return trustMgr != nil && trustMgr.IsTrusted(cwd) })
+	if engineErr != nil {
+		fmt.Fprintf(errOut, "pigo: %v\n", engineErr)
+		return 2
+	}
+	runCfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(runCfg.Batch.ToolExecutorConfig.BeforeToolCall, permEngine.BeforeToolCall)
 	// UserPromptSubmit runs before the prompt is handed to the loop: a block aborts
 	// the headless run non-zero; additionalContext is injected into this run only.
 	if d != nil {

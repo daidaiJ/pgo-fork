@@ -43,6 +43,12 @@ func (t *SearchToolsTool) Bind(st *tooldecl.State) { t.State = st }
 // Name implements AgentTool.
 func (t *SearchToolsTool) Name() string { return "search_tools" }
 
+// Effect declares search_tools as read-only (T5.2): claiming tools only
+// widens the declared face, an in-process bookkeeping effect.
+func (t *SearchToolsTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool. Static by design (prompt cache).
 func (t *SearchToolsTool) Description() string {
 	return "Search for additional tools that are not loaded yet. " +

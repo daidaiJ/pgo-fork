@@ -206,6 +206,13 @@ func NewSubAgentTool(spec SubAgentSpec) *SubAgentTool {
 
 func (t *SubAgentTool) Name() string { return t.spec.Name }
 
+// Effect declares the sub-agent tool (T5.2): not read-only — its children
+// can mutate anything the parent could — and its reach escapes the
+// workspace (ScopeSystem).
+func (t *SubAgentTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeSystem}
+}
+
 func (t *SubAgentTool) Description() string { return t.spec.Description }
 
 func (t *SubAgentTool) Schema() json.RawMessage {

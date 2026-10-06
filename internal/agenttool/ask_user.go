@@ -47,6 +47,11 @@ type askToolArgs = questionnaire.Input
 // Name implements AgentTool.
 func (t *AskUserTool) Name() string { return AskName }
 
+// Effect declares ask_user as read-only (T5.2): it only consults the user.
+func (t *AskUserTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeNone}
+}
+
 // Description implements AgentTool. The wording steers the model toward using
 // it for genuine decision points and writing concrete options.
 func (t *AskUserTool) Description() string {

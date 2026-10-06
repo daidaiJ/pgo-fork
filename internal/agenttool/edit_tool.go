@@ -40,6 +40,12 @@ type editToolArgs struct {
 // Name implements AgentTool.
 func (t *EditTool) Name() string { return "edit" }
 
+// Effect declares edit (T5.2): a workspace-mutating tool, gated by the
+// permission engine.
+func (t *EditTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{Scope: agentcore.ScopeWorkspace}
+}
+
 // Description implements AgentTool.
 func (t *EditTool) Description() string {
 	return "Replace an exact string in a file. old_string must be unique unless " +
