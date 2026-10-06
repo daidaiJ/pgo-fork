@@ -9,6 +9,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/compaction"
@@ -186,5 +187,91 @@ func TestPostCompactReminderEmptyWithoutReads(t *testing.T) {
 	maybeAutoCompact(context.Background(), agentCtx, &cfg, emit, nil, cmp)
 	if cmp.postCompactReminder != "" {
 		t.Fatalf("no reads in range ⇒ no reminder, got %q", cmp.postCompactReminder)
+	}
+}
+
+func TestMaybeMicrocompactRevokesReadResidency(t *testing.T) {
+	// #4239 closure (T3.5): evicting a file's read results withdraws the file's
+	// residency — the next edit on it is refused until the model re-reads —
+	// while files whose reads stay in the kept tail keep it.
+	cfg := RunConfig{LoopConfig: LoopConfig{
+		ContextWindow: 20_000,
+		Compaction:    compaction.CompactionSettings{Enabled: true, ReserveTokens: 2_000, KeepRecentTokens: 1_000},
+	}}
+	// Four fat a.go turns (oldest, all four evicted — at 40000 chars the
+	// low-water loop keeps taking groups until the fourth) + five thin b.go
+	// turns (newest 5 of 9 groups, never candidates). ≈40.4k ≥ micro line 16k
+	// ⇒ pressure.
+	var msgs agentcore.MessageList
+	for i := 0; i < 4; i++ {
+		id := "call-a" + string(rune('0'+i))
+		msgs = append(msgs, agentcore.AssistantMessage{
+			RoleField: agentcore.RoleAssistant,
+			Content: agentcore.ContentList{
+				agentcore.NewTextContent("working"),
+				agentcore.ToolCallContent{Type: "toolCall", ID: id, Name: "read", Arguments: []byte(`{"path":"a.go"}`)},
+			},
+			StopReason: agentcore.StopReasonToolUse,
+		})
+		msgs = append(msgs, agentcore.ToolResultMessage{
+			RoleField: agentcore.RoleToolResult, ToolCallID: id, ToolName: "read",
+			Content: agentcore.ContentList{agentcore.NewTextContent(strings.Repeat("x", 40000))},
+		})
+	}
+	for i := 0; i < 5; i++ {
+		id := "call-b" + string(rune('0'+i))
+		msgs = append(msgs, agentcore.AssistantMessage{
+			RoleField: agentcore.RoleAssistant,
+			Content: agentcore.ContentList{
+				agentcore.NewTextContent("working"),
+				agentcore.ToolCallContent{Type: "toolCall", ID: id, Name: "read", Arguments: []byte(`{"path":"b.go"}`)},
+			},
+			StopReason: agentcore.StopReasonToolUse,
+		})
+		msgs = append(msgs, agentcore.ToolResultMessage{
+			RoleField: agentcore.RoleToolResult, ToolCallID: id, ToolName: "read",
+			Content: agentcore.ContentList{agentcore.NewTextContent(strings.Repeat("y", 500))},
+		})
+	}
+	agentCtx := &agentcore.AgentContext{Messages: msgs, ReadFiles: agentcore.NewReadFileState()}
+	for i := 0; i < 4; i++ {
+		agentCtx.ReadFiles.RecordRead(agentcore.ReadRecord{
+			CallID: "call-a" + string(rune('0'+i)), ArgPath: "a.go", ResolvedPath: "/w/a.go",
+			Content: "aaa", ModTime: time.Now(), Size: 40000,
+		})
+	}
+	for i := 0; i < 5; i++ {
+		agentCtx.ReadFiles.RecordRead(agentcore.ReadRecord{
+			CallID: "call-b" + string(rune('0'+i)), ArgPath: "b.go", ResolvedPath: "/w/b.go",
+			Content: "bbb", ModTime: time.Now(), Size: 500,
+		})
+	}
+
+	maybeMicrocompact(context.Background(), agentCtx, &cfg, func(_ agentcore.AgentEvent) error { return nil })
+
+	if !agentCtx.ReadFiles.Residency("/w/b.go") {
+		t.Fatal("b.go reads stay in the kept tail — residency must survive")
+	}
+	if agentCtx.ReadFiles.Residency("/w/a.go") {
+		t.Fatal("a.go reads were evicted — residency must be revoked")
+	}
+}
+
+func TestMaybeMicrocompactUnmappableReadRevokesAll(t *testing.T) {
+	cfg := RunConfig{LoopConfig: LoopConfig{
+		ContextWindow: 20_000,
+		Compaction:    compaction.CompactionSettings{Enabled: true, ReserveTokens: 2_000, KeepRecentTokens: 1_000},
+	}}
+	agentCtx := &agentcore.AgentContext{Messages: fatReadTurns(8, 8000), ReadFiles: agentcore.NewReadFileState()}
+	// A ledger entry whose read call is NOT one of the evicted ids — recorded
+	// before the ledger existed (restored session). Any evicted read that
+	// cannot be reverse-mapped must revoke everything.
+	agentCtx.ReadFiles.RecordRead(agentcore.ReadRecord{
+		CallID: "ancient-1", ArgPath: "g.go", ResolvedPath: "/w/g.go",
+		Content: "ggg", ModTime: time.Now(), Size: 100,
+	})
+	maybeMicrocompact(context.Background(), agentCtx, &cfg, func(_ agentcore.AgentEvent) error { return nil })
+	if agentCtx.ReadFiles.Residency("/w/g.go") {
+		t.Fatal("unmappable evicted read must trigger the revoke-all branch")
 	}
 }

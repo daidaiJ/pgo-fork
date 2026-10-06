@@ -116,6 +116,11 @@ func (s *ReadFileState) RecordMutation(resolvedPath string, modTime time.Time, s
 func (s *ReadFileState) RevokeCall(callID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.revokeCallLocked(callID)
+}
+
+// revokeCallLocked is the lock-held body of RevokeCall.
+func (s *ReadFileState) revokeCallLocked(callID string) {
 	path, ok := s.byCall[callID]
 	if !ok {
 		return
@@ -131,16 +136,39 @@ func (s *ReadFileState) RevokeCall(callID string) {
 	}
 }
 
-// RevokeAllResidency is the #4239 "cannot reverse-map, revoke everything"
-// defense: when an evicted read call predates the ledger (session restore) its
-// file cannot be identified, so every file's residency is withdrawn at once.
-// Fingerprints and snapshots survive.
+// RevokeEvicted applies the #4239 eviction rule for one microcompaction pass:
+// readCallIDs are the evicted tool calls that were read invocations. Each
+// identified call loses its residency vote; a read call the reverse index
+// cannot identify (recorded before the ledger existed — a restored session)
+// triggers the #4239 "cannot reverse-map, revoke everything" defense and every
+// read-armed residency is withdrawn at once. Write/edit proven residency
+// survives either branch: those results are whitelist-exempt from eviction, so
+// the evidence is still in the history.
+func (s *ReadFileState) RevokeEvicted(readCallIDs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range readCallIDs {
+		if _, ok := s.byCall[id]; !ok {
+			for _, e := range s.files {
+				e.Calls = nil
+			}
+			s.byCall = make(map[string]string)
+			return
+		}
+	}
+	for _, id := range readCallIDs {
+		s.revokeCallLocked(id)
+	}
+}
+
+// RevokeAllResidency withdraws every read-armed residency at once (defensive
+// form, exposed for tests and callers without call-id granularity). The
+// fingerprints, snapshots, and write/edit proofs survive.
 func (s *ReadFileState) RevokeAllResidency() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, e := range s.files {
 		e.Calls = nil
-		e.Proven = false
 	}
 	s.byCall = make(map[string]string)
 }

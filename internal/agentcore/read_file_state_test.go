@@ -132,3 +132,43 @@ func TestReadFileStateSnapshotCapAndArgPathLookup(t *testing.T) {
 		t.Error("unknown arg path must not resolve")
 	}
 }
+
+func TestReadFileStateRevokeEvictedIdentified(t *testing.T) {
+	// Two files; the evicted read calls are identifiable via the reverse
+	// index → per-file revocation, the other file keeps residency.
+	s := NewReadFileState()
+	dir := t.TempDir()
+	aPath, aArg, aMod, aSize := seedLedgerFile(t, dir, "a.go", "a\n")
+	bPath, bArg, bMod, bSize := seedLedgerFile(t, dir, "b.go", "b\n")
+	s.RecordRead(ReadRecord{CallID: "call-a1", ArgPath: aArg, ResolvedPath: aPath, Content: "a\n", ModTime: aMod, Size: aSize})
+	s.RecordRead(ReadRecord{CallID: "call-b1", ArgPath: bArg, ResolvedPath: bPath, Content: "b\n", ModTime: bMod, Size: bSize})
+
+	s.RevokeEvicted([]string{"call-a1"})
+	if s.Residency(aPath) {
+		t.Error("evicted read must lose residency")
+	}
+	if !s.Residency(bPath) {
+		t.Error("unrelated file must keep residency")
+	}
+}
+
+func TestReadFileStateRevokeEvictedUnmappableRevokeAll(t *testing.T) {
+	// #4239: an evicted read call the reverse index cannot identify (recorded
+	// before the ledger existed) revokes EVERY read-armed residency — but
+	// write/edit proven residency survives (those results are whitelist-exempt
+	// from eviction, so the evidence is still in the history).
+	s := NewReadFileState()
+	dir := t.TempDir()
+	rPath, rArg, rMod, rSize := seedLedgerFile(t, dir, "r.go", "r\n")
+	wPath, _, wMod, wSize := seedLedgerFile(t, dir, "w.go", "w\n")
+	s.RecordRead(ReadRecord{CallID: "old-call", ArgPath: rArg, ResolvedPath: rPath, Content: "r\n", ModTime: rMod, Size: rSize})
+	s.RecordMutation(wPath, wMod, wSize)
+
+	s.RevokeEvicted([]string{"unrecorded-call"})
+	if s.Residency(rPath) {
+		t.Error("read-armed residency must be revoked by the unmappable branch")
+	}
+	if !s.Residency(wPath) {
+		t.Error("write-proven residency must survive the unmappable branch")
+	}
+}

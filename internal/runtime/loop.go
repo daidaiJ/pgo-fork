@@ -726,11 +726,48 @@ func maybeMicrocompact(ctx context.Context, agentCtx *agentcore.AgentContext, cf
 		return
 	}
 	agentCtx.Messages = append(agentCtx.Messages, dec.Marker(nowMillis()))
+	// #4239 eviction rule (T3.5): the evicted read results no longer evidence
+	// their files' residency — the next edit on those files is refused until
+	// the model re-reads. Needs the pre-eviction view (the assistant calls live
+	// there) and the ledger.
+	revokeResidencyForEvictions(agentCtx, view, dec.ClearedCallIDs)
 	_ = emit(agentcore.MicrocompactEvent{
 		Reason:       dec.Reason,
 		ClearedCount: len(dec.ClearedCallIDs),
 		SavedTokens:  dec.SavedTokens,
 	})
+}
+
+// revokeResidencyForEvictions applies the #4239 eviction rule (T3.5): every
+// evicted tool call that was a read withdraws that call's residency vote from
+// the ledger. The reverse index identifies each read call; a read the ledger
+// cannot identify (recorded before the ledger existed, e.g. a restored
+// session) triggers the defensive revoke-everything branch. Non-read tools
+// (bash/grep/…) carry no residency evidence and change nothing.
+func revokeResidencyForEvictions(agentCtx *agentcore.AgentContext, view agentcore.MessageList, cleared []string) {
+	st := agentCtx.ReadFiles
+	if st == nil || len(cleared) == 0 {
+		return
+	}
+	clearedSet := make(map[string]bool, len(cleared))
+	for _, id := range cleared {
+		clearedSet[id] = true
+	}
+	var readCalls []string
+	for _, m := range view {
+		a, ok := m.(agentcore.AssistantMessage)
+		if !ok {
+			continue
+		}
+		for _, c := range a.ToolCalls() {
+			if clearedSet[c.ID] && c.Name == "read" {
+				readCalls = append(readCalls, c.ID)
+			}
+		}
+	}
+	if len(readCalls) > 0 {
+		st.RevokeEvicted(readCalls)
+	}
 }
 
 // postCompactReminder renders the one-shot system-reminder body listing the
