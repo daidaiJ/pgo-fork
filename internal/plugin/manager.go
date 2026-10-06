@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 )
@@ -43,7 +45,7 @@ func Discover(dir string, warnLog, pluginStderr io.Writer) (*Manager, error) {
 			continue
 		}
 		info, err := e.Info()
-		if err != nil || !isExecutable(info.Mode()) {
+		if err != nil || !isExecutable(e.Name(), info.Mode()) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -59,9 +61,22 @@ func Discover(dir string, warnLog, pluginStderr io.Writer) (*Manager, error) {
 	return m, nil
 }
 
-// isExecutable reports whether the file mode has any execute bit set.
-func isExecutable(mode os.FileMode) bool {
-	return mode&0o111 != 0
+// isExecutable reports whether the directory entry looks launchable. Unix
+// flavors rely on the execute bit. Windows stats every regular file 0666 —
+// the execute bits are never set — so a bare mode check silently skipped
+// every plugin there; fall back to the standard executable extensions,
+// mirroring os/exec LookPath (T4.1 期验收发现的 Windows 缺陷，2026-10-06).
+func isExecutable(name string, mode os.FileMode) bool {
+	if mode&0o111 != 0 {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".exe", ".bat", ".cmd", ".com":
+			return true
+		}
+	}
+	return false
 }
 
 // Tools returns the aggregated tools of every loaded plugin, in load order.

@@ -23,6 +23,26 @@ func TestDiscoverMissingDir(t *testing.T) {
 	}
 }
 
+// TestIsExecutableWindowsExtensions locks the Windows fallback: every regular
+// file stats 0666 there (no execute bits), so executables are recognized by
+// extension, mirroring os/exec LookPath. Regression cover for the bug that
+// silently skipped every plugin on Windows (found during the T4.1 acceptance
+// run, 2026-10-06).
+func TestIsExecutableWindowsExtensions(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("extension fallback is a windows-only path")
+	}
+	if !isExecutable("plugin.exe", 0o666) {
+		t.Error("plugin.exe with no execute bit should be launchable on windows")
+	}
+	if !isExecutable("run.bat", 0o666) {
+		t.Error("run.bat should be launchable on windows")
+	}
+	if isExecutable("notes.txt", 0o666) {
+		t.Error("notes.txt must not be treated as a plugin")
+	}
+}
+
 // TestDiscoverSkipsNonExecutable checks non-executable files are ignored.
 func TestDiscoverSkipsNonExecutable(t *testing.T) {
 	if runtime.GOOS == "windows" {
