@@ -5,25 +5,22 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**T3.3 微压缩 + 压缩持久模型改造完成（2026-10-06，三切片
-  当日落地）**——`f46e71b`（S1 前置结构件：marker-entry + ProjectView 请求
-  投影，修基线缺陷①②⑤，PersistTurn 双侧删压扁分支、v3 树 append-only）→
-  `f07d91b`（S2 微压缩主体：zcode 双闸门 + 白名单分组 + 256 门槛 + sticky
-  MicrocompactMessage）→ `139ecad`（S3：压缩后活状态 reminder 重注入）。
-  全量 38 包 exit=0。规格 = **wiki/port/micro-compaction.md**（偏差 D1–D6
-  登记；D-1 切点锚用 KeptBefore 相对量替代 step 的 entry id、D-4 openai
-  cache 桶不单列防双重计数）。T3.1 遗留 flake 未动：
-  TestREPLExportImportRoundTrip 整包偶发（疑似 NewID 微秒碰撞），待排查；
-  真实 provider 端到端 token 曲线待观察（期验收项）。**2026-10-06 收口评估
-  登记**：压缩策略管线抽象接口化（触发编排从 loop 归位 compaction 模块，
-  Pipeline 两调用点）进待议段；下一轮缺口族（readCache 最小基座+edit 新鲜度
-  守卫、闲置触发时间戳验证、reminder 内容快照档）进 implementation-plan
-  下一轮段。下一步 = T3.4
-  canonical context edit（在 T3.3 marker 模型上做）；待拍板项
-  （pi-durable 切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、
-  dynamic-workflow、code mode、TUI 风格对齐 grok——**风格迁移需求已按
-  用户截图提取为 tui-grok-style.md，14 条 S 需求待拍板排期**）见
-  implementation-plan 待议段；其余均见 handoff。
+- **当前阶段**：**T3.4 canonical context edit 完成（2026-10-06，当日落地，
+  待提交）**——agentcore `ContextEditMessage` 编辑条目（编辑即历史：随树
+  持久/重放幂等/分支继承）+ `context_edit` 内置工具（call-id/seq 双句柄 +
+  内容摘要锚，loop 注入 AgentContext 零驱动接线）+ 投影管线第四投影
+  （marker→微压缩→编辑→repair）；**随件修复 T3.3 潜伏缺陷（规格 D-6）**：
+  投影全程 view→raw 映射（`ProjectViewMapped`/`ViewRawOf`）替换 marker 锚
+  公式，loop/repl/rebuild 四调用点切换。全量 38 包 exit=0。规格偏差
+  D-1/2/3/5/6 登记 = **wiki/port/canonical-context-edit.md §8**。
+  **下一步 = 提交**（建议三段式，见 handoff 新卡"接手者第一步"）；提交后
+  第 3 期仅剩期验收（真实会话 token 曲线留档 + rewind 全闭环回归）。
+  T3.1 遗留 flake（TestREPLExportImportRoundTrip 整包偶发）未动。待拍板项
+  （**T3.3.1 压缩策略管线抽象——用户点名，趁热切片 0.5–1d**、pi-durable
+  切片 1、/ui 面板、skill-as-tool、供应商韧性 S 件族、dynamic-workflow、
+  code mode、TUI 风格对齐 grok——**风格迁移需求已按用户截图提取为
+  tui-grok-style.md，14 条 S 需求待拍板排期**）见 implementation-plan
+  待议段；其余均见 handoff。
 - **交接台账（L0.5 必读，2026-10-05 起瘦身版）**：
   [wiki/port/handoff.md](wiki/port/handoff.md) 只保留**最新一条交接卡**，
   历史条目在 [wiki/port/handoff-archive.md](wiki/port/handoff-archive.md)
