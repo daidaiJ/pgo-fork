@@ -100,9 +100,11 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	// run.NewConfig leaves ContextWindow and Compaction zero, and the REPL/TUI
 	// seed both on their live config themselves — headless print did neither,
 	// so both microcompaction (ContextWindow<=0 short-circuits) and full
-	// compaction (Enabled=false) were silently off in print mode. Seed the
-	// same defaults the interactive drivers use.
-	runCfg.ContextWindow = cli.DefaultContextWindow
+	// compaction (Enabled=false) were silently off in print mode. Resolve the
+	// window the same way the interactive drivers do: the model's catalog
+	// window (fallback cli.DefaultContextWindow) lowered by an explicit
+	// [compaction] max_context.
+	runCfg.ContextWindow = cli.ResolveContextWindow(env.Provider, p.Model, env.MaxContext)
 	runCfg.Compaction = compaction.DefaultCompactionSettings
 	runCfg.SessionID = hs.header.ID
 	// Route auto-compaction checkpoints to the shared memory root so a rebuild can

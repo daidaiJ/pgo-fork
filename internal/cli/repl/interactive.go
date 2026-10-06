@@ -16,6 +16,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/headless"
 	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
@@ -88,6 +89,11 @@ type Options struct {
 	// Off (the default) never installs the seam; ask consults the interactive
 	// confirmation prompt; strict denies outright.
 	Shellguard shellguard.Mode
+
+	// MaxContext is the user's [compaction] max_context config (env.MaxContext).
+	// It lowers the resolved compaction window when set (config wins over the
+	// model-derived default); see cli.ResolveContextWindow.
+	MaxContext config.MaxContext
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -169,7 +175,11 @@ func Run(opts Options) error {
 		BaseURL:       opts.BaseURL,
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
-		ContextWindow: cli.DefaultContextWindow,
+		MaxContext:    opts.MaxContext,
+		// The effective window follows the selected model's catalog window
+		// (fallback DefaultContextWindow), lowered by an explicit
+		// [compaction] max_context — re-derived on /model switches.
+		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the

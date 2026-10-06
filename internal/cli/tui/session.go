@@ -196,7 +196,8 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		BaseURL:       opts.BaseURL,
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
-		ContextWindow: cli.DefaultContextWindow,
+		MaxContext:    opts.MaxContext,
+		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the

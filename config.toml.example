@@ -84,9 +84,12 @@ no_skills = false
 # memory = 800
 # recall = 1200
 
-# [compaction] tunes auto-compaction.
+# [compaction] tunes auto-compaction. Without max_context the trigger derives
+# from the selected model's context window when known (the preset catalog), or
+# a conservative fallback; with it, this explicit setting wins and only lowers
+# the trigger point.
 # [compaction]
-# max_context accepts a token count (300000), a K/M suffix ("300K", "1M"), or a
-# percentage of the provider window ("50%"). It only lowers the trigger point and
-# is always clamped by the provider limit.
-# max_context = "300K"
+# max_context accepts a window fraction as a bare decimal ("0.80" = 80%), a
+# percentage ("50%"), a token count (300000), or a K/M suffix ("300K", "1M").
+# It only lowers the trigger point and is always clamped by the window.
+# max_context = "0.80"

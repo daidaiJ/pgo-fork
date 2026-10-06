@@ -189,7 +189,8 @@ func NewModel(opts Options) Model {
 		BaseURL:       opts.BaseURL,
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
-		ContextWindow: cli.DefaultContextWindow,
+		MaxContext:    opts.MaxContext,
+		ContextWindow: cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
 	}
 	return Model{
 		opts:       opts,

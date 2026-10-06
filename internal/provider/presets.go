@@ -23,6 +23,11 @@ type PresetModel struct {
 	ID string
 	// DisplayName is a friendly label shown in the picker; falls back to ID.
 	DisplayName string
+	// ContextWindow is the model's total context-token budget used to derive
+	// the auto-compaction trigger (0 = unknown → the conservative fallback
+	// applies). Populated only where the real window is well-known; an
+	// entry left at 0 degrades gracefully instead of guessing wrong.
+	ContextWindow int
 }
 
 // Label returns the display label for a preset, falling back to the id.
@@ -182,7 +187,7 @@ var PresetCatalog = []PresetModel{
 	// --- Together AI (ids from pi together.models.ts) ---
 	{Provider: "together", ID: "deepseek-ai/DeepSeek-V4-Pro", DisplayName: "DeepSeek V4 Pro (Together)"},
 	{Provider: "together", ID: "Qwen/Qwen3.7-Max", DisplayName: "Qwen3.7 Max (Together)"},
-	{Provider: "together", ID: "meta-llama/Llama-3.3-70B-Instruct-Turbo", DisplayName: "Llama 3.3 70B Turbo (Together)"},
+	{Provider: "together", ID: "meta-llama/Llama-3.3-70B-Instruct-Turbo", DisplayName: "Llama 3.3 70B Turbo (Together)", ContextWindow: 131072},
 
 	// --- Novita AI (OpenAI-compatible gateway; ids from novita.ai/docs/guides/llm-recommended) ---
 	{Provider: "novita", ID: "deepseek/deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro (Novita)"},
@@ -200,7 +205,7 @@ var PresetCatalog = []PresetModel{
 	{Provider: "xiaomi", ID: "mimo-v2.5-pro", DisplayName: "MiMo-V2.5-Pro"},
 
 	// --- Baidu AI Cloud Qianfan (OpenAI-compatible; ERNIE family) ---
-	{Provider: "qianfan", ID: "ernie-4.5-turbo-32k", DisplayName: "ERNIE 4.5 Turbo (Baidu Qianfan)"},
+	{Provider: "qianfan", ID: "ernie-4.5-turbo-32k", DisplayName: "ERNIE 4.5 Turbo (Baidu Qianfan)", ContextWindow: 32000},
 
 	// --- ByteDance Volcengine Ark (OpenAI-compatible; Doubao family) ---
 	// Some Ark models require an "inference endpoint ID (endpoint id)" instead of a model
@@ -214,8 +219,8 @@ var PresetCatalog = []PresetModel{
 	{Provider: "hunyuan", ID: "hunyuan-turbos-latest", DisplayName: "Hunyuan TurboS (Tencent Hunyuan)"},
 
 	// --- Ollama (local, no API key) ---
-	{Provider: "ollama", ID: "ollama/llama3.3", DisplayName: "Llama 3.3 (local Ollama)"},
-	{Provider: "ollama", ID: "ollama/qwen2.5-coder", DisplayName: "Qwen 2.5 Coder (local Ollama)"},
+	{Provider: "ollama", ID: "ollama/llama3.3", DisplayName: "Llama 3.3 (local Ollama)", ContextWindow: 128000},
+	{Provider: "ollama", ID: "ollama/qwen2.5-coder", DisplayName: "Qwen 2.5 Coder (local Ollama)", ContextWindow: 32768},
 }
 
 // LookupPreset returns the preset entry for a model id, if the id is in the

@@ -16,6 +16,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/builtinskills"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/plugin"
@@ -60,6 +61,13 @@ type Env struct {
 	// GetFollowUpMessages seam (see NewConfig) and front-ends can reach it via
 	// agenttool.ScheduleFromTools.
 	Schedule *agenttool.Schedule
+
+	// MaxContext is the user's [compaction] max_context config (already parsed;
+	// zero value = unset). Front-ends resolve the effective compaction window
+	// with cli.ResolveContextWindow(env.Provider, model, env.MaxContext): the
+	// model's catalog window (fallback cli.DefaultContextWindow) lowered by this
+	// explicit cap — the config is the highest-priority source for the trigger.
+	MaxContext config.MaxContext
 }
 
 // SetupEnv resolves the provider for model/baseURL, builds the tool set rooted
@@ -75,7 +83,7 @@ type Env struct {
 // fully assembled tool set and then applied, so an unknown tool name is a usage
 // error rather than a silently ineffective boundary. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, policy ToolPolicy) (env Env, err error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, policy ToolPolicy) (env Env, err error) {
 	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
 	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
 	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
@@ -222,6 +230,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 		Plugins:      mgr,
 		Memory:       memStore,
 		Schedule:     sched,
+		MaxContext:   maxCtx,
 	}, nil
 }
 

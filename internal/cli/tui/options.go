@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -62,4 +63,9 @@ type Options struct {
 	// settings, CLI); built-in slash commands are unaffected. Independent of
 	// --no-skills.
 	NoPromptTemplates bool
+
+	// MaxContext is the user's [compaction] max_context config (env.MaxContext).
+	// It lowers the resolved compaction window when set (config wins over the
+	// model-derived default); see cli.ResolveContextWindow.
+	MaxContext config.MaxContext
 }

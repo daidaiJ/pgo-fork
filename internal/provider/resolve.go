@@ -92,12 +92,12 @@ func ResolveProvider(model, baseURL, protocol, providerName string, env func(str
 	if p, ok := LookupPreset(model); ok {
 		switch p.Provider {
 		case "nvidia":
-			return NewNvidiaProvider(baseURL, []Model{{Provider: "nvidia", ID: model, SupportsImages: true}}), "nvidia", nil
+			return NewNvidiaProvider(baseURL, []Model{{Provider: "nvidia", ID: model, SupportsImages: true, ContextWindow: p.ContextWindow}}), "nvidia", nil
 		case "ollama":
 			id := strings.TrimPrefix(model, "ollama/")
-			return NewOllamaProvider(baseURL, []Model{{Provider: "ollama", ID: id, SupportsImages: true}}), "ollama", nil
+			return NewOllamaProvider(baseURL, []Model{{Provider: "ollama", ID: id, SupportsImages: true, ContextWindow: p.ContextWindow}}), "ollama", nil
 		case "", "openrouter":
-			return NewOpenRouterProvider(baseURL, []Model{{Provider: "openrouter", ID: model, SupportsImages: true}}), "openrouter", nil
+			return NewOpenRouterProvider(baseURL, []Model{{Provider: "openrouter", ID: model, SupportsImages: true, ContextWindow: p.ContextWindow}}), "openrouter", nil
 		default:
 			// Any other preset provider is a named built-in (e.g. deepseek,
 			// qianfan, dashscope): build it from the registry so the correct
@@ -109,12 +109,12 @@ func ResolveProvider(model, baseURL, protocol, providerName string, env func(str
 	// 2. Local Ollama by prefix or port.
 	if strings.HasPrefix(model, "ollama/") || strings.Contains(baseURL, "11434") {
 		id := strings.TrimPrefix(model, "ollama/")
-		return NewOllamaProvider(baseURL, []Model{{Provider: "ollama", ID: id, SupportsImages: true}}), "ollama", nil
+		return NewOllamaProvider(baseURL, []Model{{Provider: "ollama", ID: id, SupportsImages: true, ContextWindow: presetWindow(model)}}), "ollama", nil
 	}
 	// 3. NVIDIA NIM by prefix.
 	if strings.HasPrefix(model, "nvidia/") {
 		id := strings.TrimPrefix(model, "nvidia/")
-		return NewNvidiaProvider(baseURL, []Model{{Provider: "nvidia", ID: id, SupportsImages: true}}), "nvidia", nil
+		return NewNvidiaProvider(baseURL, []Model{{Provider: "nvidia", ID: id, SupportsImages: true, ContextWindow: presetWindow(model)}}), "nvidia", nil
 	}
 	// 4. Model-name inference: with no --provider/--protocol (both empty here) and
 	//    no --base-url, guess the provider from the model name's well-known prefix
@@ -136,6 +136,16 @@ func ResolveProvider(model, baseURL, protocol, providerName string, env func(str
 		return nil, "", fmt.Errorf("%q names a provider, not a model id; pass a model id (see /models) or select it with --provider %s", model, name)
 	}
 	return NewOpenRouterProvider(baseURL, []Model{{Provider: "openrouter", ID: model, SupportsImages: true}}), "openrouter", nil
+}
+
+// presetWindow returns the catalog's declared context window for a model id
+// (0 = unknown). Used to seed Model.ContextWindow at every construction point
+// so the compaction trigger can derive from the model's real window.
+func presetWindow(id string) int {
+	if p, ok := LookupPreset(id); ok {
+		return p.ContextWindow
+	}
+	return 0
 }
 
 // CanonicalizeModel maps a bare built-in provider name (e.g. "zai", "DEEPSEEK")
@@ -220,7 +230,7 @@ func ResolveNamedProvider(name, model, baseURL, protocol string, env func(string
 	// Base-URL precedence (US-004 / FR-8, FR-9): --base-url flag > provider-
 	// specific base-url env var(s) > generic <PROVIDER>_BASE_URL > spec default.
 	url := ResolveBaseURL(spec, baseURL, env)
-	models := []Model{{Provider: spec.Name, ID: model, SupportsImages: true}}
+	models := []Model{{Provider: spec.Name, ID: model, SupportsImages: true, ContextWindow: presetWindow(model)}}
 	// Note: spec.ExtraHeaders would be attached here, but the exported generic
 	// constructors do not yet accept custom headers; all built-in specs currently
 	// carry no ExtraHeaders, so this is a no-op today (refined alongside #188).

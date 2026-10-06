@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/cli/config"
 )
 
 // writePolicySkill drops a minimal valid skill into dir so LoadSkills has
@@ -26,7 +28,7 @@ func setupToolNames(t *testing.T, policy ToolPolicy) []string {
 	t.Helper()
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("PIGO_HOME", t.TempDir()) // isolate plugin/skill discovery
-	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, policy)
+	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, policy)
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestSetupEnvUnconstrainedIsUnchanged(t *testing.T) {
 func TestSetupEnvRejectsUnknownToolName(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("PIGO_HOME", t.TempDir())
-	_, err := SetupEnv("openrouter/free", "", "", "", "", false, true, "", nil, false, NewToolPolicy([]string{"raed"}, nil))
+	_, err := SetupEnv("openrouter/free", "", "", "", "", false, true, "", nil, false, config.MaxContext{}, NewToolPolicy([]string{"raed"}, nil))
 	if err == nil {
 		t.Fatal("SetupEnv = nil error, want a failure for the misspelled tool name")
 	}
@@ -146,7 +148,7 @@ func TestSetupEnvSkillsGatedOnFilteredReadTool(t *testing.T) {
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writePolicySkill(t, skillsDir, "weather", "get the weather")
 
-	withRead, err := SetupEnv("openrouter/free", "", "", "", "", false, false, "", nil, false, ToolPolicy{})
+	withRead, err := SetupEnv("openrouter/free", "", "", "", "", false, false, "", nil, false, config.MaxContext{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv (unconstrained): %v", err)
 	}

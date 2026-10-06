@@ -120,6 +120,13 @@ func TestParseMaxContext(t *testing.T) {
 		{"1.5M", true, 200000, 1500000},
 		{"50%", true, 200000, 100000},
 		{"25%", true, 400000, 100000},
+		// Bare decimals strictly between 0 and 1 read as window fractions
+		// ("0.80" = 80% of the window — user requirement); >= 1 stays absolute.
+		{"0.80", true, 200000, 160000},
+		{"0.5", true, 128000, 64000},
+		{"0.99", true, 32000, 31680},
+		{"1", true, 200000, 1},
+		{"0.8K", true, 200000, 800},
 	}
 	for _, c := range cases {
 		mc, err := ParseMaxContext(c.in)

@@ -199,11 +199,11 @@ func (m MaxContext) Resolve(window int) int {
 	return m.tokens
 }
 
-// ParseMaxContext parses the accepted max_context forms: a plain token count
-// ("300000"), a K/M-suffixed count ("300K", "1M", case-insensitive, fractions
-// allowed like "1.5M"), or a percentage of the provider window ("50%"). An
-// empty string is unset (no error); other malformed or non-positive values are
-// errors.
+// ParseMaxContext parses the accepted max_context forms: a fraction of the
+// window as a bare decimal strictly between 0 and 1 ("0.80"), a percentage
+// ("80%"), a plain token count ("300000"), or a K/M-suffixed count ("300K",
+// "1M", case-insensitive, fractions allowed like "1.5M"). An empty string is
+// unset (no error); other malformed or non-positive values are errors.
 func ParseMaxContext(s string) (MaxContext, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -231,6 +231,12 @@ func ParseMaxContext(s string) (MaxContext, error) {
 	n, err := strconv.ParseFloat(strings.TrimSpace(body), 64)
 	if err != nil {
 		return MaxContext{}, fmt.Errorf("max_context: invalid token count %q: %w", s, err)
+	}
+	// A bare decimal strictly between 0 and 1 is a window fraction ("0.80" =
+	// 80% of the window): a sub-1 token count is meaningless, so the ratio
+	// reading is the only sensible one. Values >= 1 stay absolute counts.
+	if n > 0 && n < 1 && mult == 1 {
+		return MaxContext{set: true, fraction: n}, nil
 	}
 	if n <= 0 {
 		return MaxContext{}, fmt.Errorf("max_context: must be positive %q", s)

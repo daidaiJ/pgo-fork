@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	cliconfig "github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -58,7 +59,8 @@ func New(opts ...Option) (*Session, error) {
 	// so an unknown tool name is reported as an error.
 	env, err := run.SetupEnv(
 		c.model, c.baseURL, c.protocol, c.provider, c.apiKey,
-		c.noTools, !c.skills, c.systemPrompt, c.appendSystemPrompt, c.memory, policy,
+		c.noTools, !c.skills, c.systemPrompt, c.appendSystemPrompt, c.memory,
+		cliconfig.MaxContext{}, policy,
 	)
 	if err != nil {
 		return nil, err
