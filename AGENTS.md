@@ -33,7 +33,11 @@
   ⑤**T7.3 slash 小功能批 + T7.4 主题系统已立项（后续会话实作）**——
   /model /rename+终端标题 /usage /stats /context /memory /recap /sessions
   交互设计 + 原型配色吸收，grok/qwen 双参照调研 + S1-S9 定稿 =
-  [tui-slash-ux.md](wiki/port/tui-slash-ux.md)，切片排期待拍板。
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md)，切片排期待拍板；
+  ⑥T7.5 grok 实用功能移植批已立项（全量普查 =
+  [grok-command-inventory.md](wiki/port/grok-command-inventory.md)，
+  P1 清单待排期）；⑦farewell 彩蛋已落地（🐼 Code together, cola
+  together 退出行）+ header 右段让位滚动条列已修（42 包 0 FAIL）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
