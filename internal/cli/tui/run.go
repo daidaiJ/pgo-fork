@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/smallnest/pigo/internal/cli/run"
@@ -35,5 +37,11 @@ func Run(opts Options) error {
 	m.uiProbe = spans.NewProbe(uiInit)
 	p := tea.NewProgram(m)
 	_, err = p.Run()
+	// Farewell easter egg (carried over from the grok fork's exit path): only
+	// on a graceful quit — p.Run returns after the alt-screen is restored, so
+	// the line lands in the user's scrollback via stderr.
+	if err == nil {
+		printFarewell(os.Stderr)
+	}
 	return err
 }

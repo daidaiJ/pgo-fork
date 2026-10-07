@@ -1385,8 +1385,14 @@ func (m Model) renderContent() string {
 	}
 
 	var b strings.Builder
-	// Page header (S1): branch + cwd left, context tokens/window right.
-	b.WriteString(m.header.render(m.theme, width))
+	// Page header (S1): branch + cwd left, context tokens/window right. The
+	// right readout yields one column to the transcript scrollbar whenever the
+	// transcript overflows, so the two never cross at the right edge.
+	rightInset := 0
+	if m.transcript.overflowing() {
+		rightInset = 1
+	}
+	b.WriteString(m.header.render(m.theme, width, rightInset))
 	b.WriteByte('\n')
 
 	// When the context panel is open it replaces the transcript region (it is

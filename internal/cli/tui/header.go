@@ -43,10 +43,17 @@ func (h *header) setTelemetry(tokens, window int) {
 
 // render draws the header to exactly width columns: "dev D:\C\ai\pgo-fork"
 // left, "3.0K / 1.0M" right, all dim chrome. Segments with no data (no git
-// repo, unknown window) drop silently.
-func (h header) render(theme Theme, width int) string {
+// repo, unknown window) drop silently. rightInset reserves trailing columns on
+// the right side: the transcript's one-column scrollbar (FR-10) occupies that
+// edge directly below the header, so the right-aligned readout stops short of
+// the bar column instead of visually crossing it.
+func (h header) render(theme Theme, width int, rightInset int) string {
 	if width <= 0 {
 		return ""
+	}
+	rightInset = min(rightInset, width-1)
+	if rightInset < 0 {
+		rightInset = 0
 	}
 	var left strings.Builder
 	if h.gitOK && h.branch != "" {
@@ -65,11 +72,11 @@ func (h header) render(theme Theme, width int) string {
 
 	lw := ui.Width(left.String())
 	rw := ui.Width(right)
-	if lw+rw+1 > width {
+	if lw+rw+1 > width-rightInset {
 		// Too narrow for both sides: keep the left only, truncated.
 		return theme.Chrome.Render(TruncateToWidth(left.String(), width))
 	}
-	gap := width - lw - rw
+	gap := width - rightInset - lw - rw
 	return theme.Chrome.Render(left.String()) + strings.Repeat(" ", gap) + theme.Chrome.Render(right)
 }
 
