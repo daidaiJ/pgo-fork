@@ -50,10 +50,16 @@
   /model /rename+终端标题 /usage /stats /context /memory /recap /sessions
   交互设计 + 原型配色吸收，grok/qwen 双参照调研 + S1-S9 定稿 =
   [tui-slash-ux.md](wiki/port/tui-slash-ux.md)，切片排期待拍板；
-  ⑥T7.5 grok 实用功能移植批已立项（全量普查 =
+  **2026-10-07 晚用户实测点名：现状 /sessions /model 的显示与 slash 交互
+  和 grok 完全不同——验收以 grok 实机交互逐条对表，S1+/sessions 件提
+  本批最前**；⑥T7.5 grok 实用功能移植批已立项（全量普查 =
   [grok-command-inventory.md](wiki/port/grok-command-inventory.md)，
   P1 清单待排期）；⑦farewell 彩蛋已落地（🐼 Code together, cola
-  together 退出行）+ header 右段让位滚动条列已修（42 包 0 FAIL）。
+  together 退出行）+ header 右段让位滚动条列已修（42 包 0 FAIL）；
+  ⑧**T7.6 审批模式三态批已立项（plan / ask / 全部允许的显示 + 切换
+  途径，用户点名现状缺失）**——对接 T5.2 trusted/ask seam，**强依赖
+  D-C1 本地审批面板**，建议合并设计，登记 =
+  [implementation-plan.md](wiki/port/implementation-plan.md) 第 7 期。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
