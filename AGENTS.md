@@ -29,7 +29,11 @@
   [subagent-resume.md](wiki/port/subagent-resume.md) §2.5，**实作排期
   待拍板**；④**T7.2 供应商自定义请求头 + opencode go 兼容头**（取证 +
   设计候选 A/B/C/D 已齐 =
-  [provider-headers.md](wiki/port/provider-headers.md)，落地排期待拍板）。
+  [provider-headers.md](wiki/port/provider-headers.md)，落地排期待拍板）；
+  ⑤**T7.3 slash 小功能批 + T7.4 主题系统已立项（后续会话实作）**——
+  /model /rename+终端标题 /usage /stats /context /memory /recap /sessions
+  交互设计 + 原型配色吸收，grok/qwen 双参照调研 + S1-S9 定稿 =
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md)，切片排期待拍板。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
