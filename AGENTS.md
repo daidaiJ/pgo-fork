@@ -18,6 +18,15 @@
   D-1~D-10，§10.12 = 打磨批）；真彩终端截图回归待用户实测核验。
   T6.10 主批 `1378131` + banner 重刷 `2c21725` + 打磨批 `cac34bb`（cache
   0%/think %/todo 渲染器/去 ATX/grok 提示语法/banner 居中）+ 指针 `c3f9bbb`。
+  **2026-10-07 晚追加：现场三缺陷批 `6787775`**（42 包全绿）——
+  A Thought 下空白带（供应商纯空白文本，transcript 三层防御 + renderAll
+  跳空块）、B header 上下文读数首帧不显示（withSession 播种 + turnEndMsg
+  每轮刷新）、C **TUI bash 权限静默拒绝**（TUI 从不 EstablishTrust，
+  `--approve` 没进引擎 trustedFn → 无持久化信任时连只读 `git log` 都被
+  unpaired-remote ask 通道 fail-closed 且文案误导"用户拒绝"；最小修复 =
+  trustedFn 纳入 opts.Approve）。C 的设计级待拍板（本地审批面板 / 拒绝
+  文案诚实化 / bash per-command 只读快路径）= D-C1~D-C3，登记在
+  [tui-blank-header-fixes.md](wiki/port/tui-blank-header-fixes.md) §5.4。
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
   tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
   仍未拍板**（清单 =
