@@ -289,7 +289,7 @@ func TestModelSuperVPastes(t *testing.T) {
 func TestModelSubagentPanelLifecycle(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 20})
 	m.running = true // the panel only renders while a run is in flight
-	m.spinner.begin(time.Now(), "")
+	m.spinner.begin(time.Now())
 
 	m = apply(t, m, toolStartMsg{id: "task-1", name: "task", input: map[string]any{"description": "build parser"}})
 	if got := m.subagents.active(); got != 1 {
@@ -327,10 +327,10 @@ func TestModelSubagentPanelLifecycle(t *testing.T) {
 func TestModelCompactionIndicator(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 20})
 	m.running = true
-	m.spinner.begin(time.Now(), "")
+	m.spinner.begin(time.Now())
 
 	m = apply(t, m, compactionStartMsg{})
-	if view := stripANSI(m.spinner.view(120)); !strings.Contains(view, "Compacting conversation…") {
+	if view := stripANSI(m.spinner.view(120, 0)); !strings.Contains(view, "Compacting conversation…") {
 		t.Errorf("spinner view %q should show the compaction label", view)
 	}
 
@@ -349,7 +349,7 @@ func TestModelCompactionIndicator(t *testing.T) {
 func TestModelSubagentPanelHeightReservation(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 20})
 	m.running = true
-	m.spinner.begin(time.Now(), "")
+	m.spinner.begin(time.Now())
 	m.relayout()
 	base := m.transcript.viewportHeight()
 
@@ -371,7 +371,7 @@ func TestModelSubagentPanelHeightReservation(t *testing.T) {
 func TestModelSubagentPanelNavigation(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.running = true
-	m.spinner.begin(time.Now(), "")
+	m.spinner.begin(time.Now())
 	m = apply(t, m, toolStartMsg{id: "a", name: "task", input: map[string]any{"description": "task A"}})
 	m = apply(t, m, toolStartMsg{id: "b", name: "task", input: map[string]any{"description": "task B"}})
 	// A sub-agent's forwarded text arrives as an incremental tool-update delta.
@@ -414,7 +414,7 @@ func TestModelSubagentPanelNavigation(t *testing.T) {
 func TestModelSubagentEscReturnsToInput(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.running = true
-	m.spinner.begin(time.Now(), "")
+	m.spinner.begin(time.Now())
 	m.input.Blur() // the composer is blurred for the duration of a run (startPrompt)
 	m = apply(t, m, toolStartMsg{id: "a", name: "task", input: map[string]any{"description": "task A"}})
 

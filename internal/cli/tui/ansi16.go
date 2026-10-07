@@ -2,6 +2,7 @@ package tui
 
 import (
 	"image/color"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -220,3 +221,11 @@ func writeTruecolor(buf *strings.Builder, introducer int, c color.Color) {
 	buf.WriteByte(';')
 	buf.WriteString(strconv.Itoa(int(b >> 8)))
 }
+
+// ansiRE strips SGR escape sequences so width math and tests can inspect the
+// raw text independent of the theme's coloring. Cursor-control sequences are
+// handled separately (StripCursorControl); this covers color only.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// stripANSI removes SGR color sequences from s.
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }

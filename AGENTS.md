@@ -5,18 +5,20 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 6 期第四批已提交（`d9cc9fe`，2026-10-07 复核 42 包
-  0 FAIL）+ TUI 语义渲染规格定稿（2026-10-07）**——T6.8 MCP（stdio +
-  最小 Streamable HTTP，D-2 扩口）+ T6.9 slash 交互面（/skills /mcp
-  /status 提升 + persist.go 文本补丁）双双落地并入库；偏差 D-7 生效时点
-  = 下个会话 / D-8 TUI /status 部分节 / D-9 CLI 镜像 deferred（详见
-  handoff-archive 2026-10-06 卡）。原拍板件**规格已出**：
-  [tui-render-semantics.md](wiki/port/tui-render-semantics.md)——grok
-  pager 四层（块模型/身份/代数/缓存/布局）对表 pigo TUI，五缺口 +
-  契约 C1–C5 定稿 + S1–S14 语义映射 + 四切片 2.5–3.5d，**待用户拍板排期**。
-- **接手者第一步（待用户拍板）**：①拍板 TUI 语义渲染规格排期（四切片，
-  建议①契约层先行，行为不变重构）；②**T6.4 pstack 精选 4+3 仍未拍板**
-  （清单 = [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
+- **当前阶段**：**第 6 期第五批：T6.10 TUI 语义级别渲染对齐 grok，实作落地
+  （2026-10-07，代码入 dev 待推）**——契约 C1–C5（display_mode 统一折叠 /
+  轮次归属+历史轮 dim / 块级渲染缓存 / 布局区域序 / blockMeta 时间戳）+
+  S1–S14（页眉、用户背景带、单行菱形工具行+卡牌退役展开态、thinking
+  ◇/◆、运行状态行、圆角输入框+model·审批标签、usage 行、键位行）+
+  **/context 上下文面板**（用户补图驱动：面板语义 + 菱形网格 + 分解行 +
+  Tab 会话信息；Dashboard 其余 tab 留待）。42 包 0 FAIL。规格 =
+  [tui-render-semantics.md](wiki/port/tui-render-semantics.md)（§10 偏差
+  D-1~D-10）；真彩终端截图回归待用户实测核验。
+  上一批 T6.8 MCP + T6.9 slash 已提交（`d9cc9fe`，2026-10-07 复核 0 FAIL）。
+- **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
+  tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
+  仍未拍板**（清单 =
+  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认

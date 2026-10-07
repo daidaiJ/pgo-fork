@@ -29,95 +29,101 @@ func TestFormatElapsed(t *testing.T) {
 	}
 }
 
-// TestSpinnerViewStats verifies a running spinner renders its verb with an
-// ellipsis and the elapsed/token/effort stats, and that a stopped spinner
-// renders nothing.
-func TestSpinnerViewStats(t *testing.T) {
+// TestSpinnerViewActivity verifies a running spinner renders its activity text
+// with the turn elapsed on the left and the run total + output estimate +
+// [停止] on the right, and that a stopped spinner renders nothing.
+func TestSpinnerViewActivity(t *testing.T) {
 	s := newSpinner(DefaultTheme())
-	s.begin(time.Now().Add(-114*time.Second), "medium")
+	s.begin(time.Now().Add(-114 * time.Second))
+	s.setActivity("Thinking")
 	s.chars = 968 // 968/4 = 242 estimated tokens
 
-	view := stripANSI(s.view(120))
-	if !strings.Contains(view, s.verb+"…") {
-		t.Errorf("view %q should contain the verb with an ellipsis", view)
+	view := stripANSI(s.view(120, 8*time.Second))
+	if !strings.Contains(view, "Thinking") {
+		t.Errorf("view %q should contain the activity text", view)
 	}
-	for _, want := range []string{"1m 54s", "↓ 242 tokens", "medium effort"} {
+	for _, want := range []string{"8s", "1m 54s", "↓242", "[停止]"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view %q missing stat %q", view, want)
 		}
 	}
 
 	s.stop()
-	if got := s.view(120); got != "" {
+	if got := s.view(120, 0); got != "" {
 		t.Errorf("stopped spinner should render nothing, got %q", got)
 	}
 }
 
-// TestSpinnerPinOverridesVerb verifies a pinned label replaces the random verb
-// and survives verb re-rolls, and that unpin restores the cycling verb.
-func TestSpinnerPinOverridesVerb(t *testing.T) {
+// TestSpinnerDefaultActivity verifies the activity falls back to "Working"
+// when no event has described the phase yet.
+func TestSpinnerDefaultActivity(t *testing.T) {
 	s := newSpinner(DefaultTheme())
-	s.begin(time.Now(), "")
+	s.begin(time.Now())
+	if view := stripANSI(s.view(80, 0)); !strings.Contains(view, "Working") {
+		t.Errorf("view %q should show the default activity", view)
+	}
+}
+
+// TestSpinnerPinOverridesActivity verifies a pinned phase label replaces the
+// event-driven activity until unpinned.
+func TestSpinnerPinOverridesActivity(t *testing.T) {
+	s := newSpinner(DefaultTheme())
+	s.begin(time.Now())
+	s.setActivity("Thinking")
 	s.pin("Compacting conversation")
 
-	// Advance well past the re-roll interval: a pinned label must not change.
-	for i := 0; i < verbRerollFrames*2; i++ {
-		s.advance()
-	}
-	view := stripANSI(s.view(120))
-	if !strings.Contains(view, "Compacting conversation…") {
+	if view := stripANSI(s.view(120, 0)); !strings.Contains(view, "Compacting conversation") {
 		t.Errorf("pinned spinner view %q should show the pinned label", view)
+	}
+	if view := stripANSI(s.view(120, 0)); strings.Contains(view, "Thinking") {
+		t.Errorf("pinned spinner view %q should hide the activity text", view)
 	}
 
 	s.unpin()
-	if got := stripANSI(s.view(120)); strings.Contains(got, "Compacting conversation") {
+	if got := stripANSI(s.view(120, 0)); strings.Contains(got, "Compacting conversation") {
 		t.Errorf("after unpin, view %q should not show the pinned label", got)
 	}
 }
-// tokens stream and the effort stat is hidden with no thinking level.
-func TestSpinnerViewOmitsEmptyStats(t *testing.T) {
-	s := newSpinner(DefaultTheme())
-	s.begin(time.Now(), "")
 
-	view := stripANSI(s.view(120))
-	if strings.Contains(view, "tokens") {
-		t.Errorf("view %q should not show a token stat before any deltas", view)
-	}
-	if strings.Contains(view, "effort") {
-		t.Errorf("view %q should not show an effort stat with no thinking level", view)
+// TestSpinnerViewNoTokenEstimateWithoutDeltas verifies the ↓ estimate stays
+// hidden until some output has streamed.
+func TestSpinnerViewNoTokenEstimateWithoutDeltas(t *testing.T) {
+	s := newSpinner(DefaultTheme())
+	s.begin(time.Now())
+	if view := stripANSI(s.view(80, 0)); strings.Contains(view, "↓0") {
+		t.Errorf("view %q should not show a zero token estimate", view)
 	}
 }
 
-// TestSpinnerAdvanceRerollsVerb verifies the animation frame advances and the
-// verb is re-picked on the reroll cadence.
-func TestSpinnerAdvanceRerollsVerb(t *testing.T) {
+// TestSpinnerAdvanceStepsFrame verifies the animation frame advances.
+func TestSpinnerAdvanceStepsFrame(t *testing.T) {
 	s := newSpinner(DefaultTheme())
-	s.begin(time.Now(), "")
+	s.begin(time.Now())
 	if s.frame != 0 {
 		t.Fatalf("fresh spinner frame = %d, want 0", s.frame)
 	}
-	for i := 0; i < verbRerollFrames; i++ {
+	for i := 0; i < 40; i++ {
 		s.advance()
 	}
-	if s.frame != verbRerollFrames {
-		t.Errorf("frame after %d advances = %d", verbRerollFrames, s.frame)
+	if s.frame != 40 {
+		t.Errorf("frame after 40 advances = %d", s.frame)
 	}
 }
 
 // TestModelRunningShowsSpinnerRow verifies that while a run is in flight the
-// spinner occupies its own row above the input and the shell still fills exactly
-// the terminal height (relayout shrinks the transcript by the spinner row).
+// running line occupies its own row above the input and the shell still fills
+// exactly the terminal height (relayout shrinks the transcript by that row).
 func TestModelRunningShowsSpinnerRow(t *testing.T) {
 	m := apply(t, NewModel(Options{Model: "test-model"}), tea.WindowSizeMsg{Width: 60, Height: 10})
 	m.running = true
-	m.spinner.begin(time.Now(), "medium")
+	m.spinner.begin(time.Now())
 	m.relayout()
 
 	view := m.renderContent()
 	if got := strings.Count(view, "\n"); got != 9 {
 		t.Errorf("running newline count = %d, want 9 (10 rows)", got)
 	}
-	if !strings.Contains(stripANSI(view), m.spinner.verb+"…") {
-		t.Errorf("running view should contain the spinner verb, got:\n%s", stripANSI(view))
+	if !strings.Contains(stripANSI(view), "Working") {
+		t.Errorf("running view should contain the activity text, got:\n%s", stripANSI(view))
 	}
 }

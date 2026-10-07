@@ -2,47 +2,45 @@ package tui
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/smallnest/pigo/internal/cli/ui"
 )
 
-// This file implements the "working" spinner shown while an agent run is in
-// flight, mirroring Claude Code's animated status line: a cycling asterisk
-// glyph, a whimsical present-progressive verb ("Whirring…"), and a live stats
-// readout — elapsed wall-clock time, an estimate of streamed output tokens, and
-// the configured thinking effort. It renders on the row just above the input
-// while running and disappears when the run ends.
+// This file implements the running status line shown while an agent run is in
+// flight (S11, tui-render-semantics.md C4): a pulsing glyph + the current
+// activity text + the current turn's elapsed time on the left, and the run's
+// total elapsed time + cumulative output estimate + a "[停止]" stop affordance
+// on the right — the grok running line's layout. The witty-phrase verb
+// roulette is retired per the negative list (implementation-plan 明确不做):
+// the slot carries what the agent is actually doing.
 
 // spinnerTickMsg advances the spinner animation. The model re-issues a tick
-// after each frame while a run is in flight and lets the tick lapse once the run
-// ends, so the animation stops without a running goroutine.
+// after each frame while a run is in flight and lets the tick lapse once the
+// run ends, so the animation stops without a running goroutine.
 type spinnerTickMsg time.Time
 
 // spinnerInterval is the frame cadence. ~120ms is brisk enough to read as motion
 // without churning the render loop.
 const spinnerInterval = 120 * time.Millisecond
 
-// verbRerollFrames re-picks the verb roughly every this many frames (~5s) so a
-// long run cycles through several verbs the way Claude Code does.
-const verbRerollFrames = 40
-
 // spinnerFrames is the asterisk animation cycled one glyph per tick. The glyphs
 // grow from a dim dot to a full star and back, reading as a pulsing sparkle.
 var spinnerFrames = []string{"·", "✢", "✳", "∗", "✺", "✻", "✽", "✻", "✺", "∗", "✳", "✢"}
 
-// spinner is the animated working indicator. It is a plain value held by the
-// Model: begin() arms it at run start, advance() steps the frame on each tick,
-// addTokens() grows the streamed-token estimate, and view() renders the line.
+// spinner is the animated running indicator. It is a plain value held by the
+// Model: begin() arms it at run start, setActivity/pin describe the current
+// phase, advance() steps the frame on each tick, and view() renders the line.
 type spinner struct {
 	theme    Theme
 	running  bool
 	frame    int
-	verb     string
+	activity string // what the agent is doing right now ("Thinking", "Running bash", …)
 	start    time.Time
 	chars    int    // runes streamed this run (the token estimate divides this)
-	thinking string // thinking-effort label, e.g. "medium"; "" hides that stat
-	pinned   string // when set, overrides the random verb and stops re-rolling
+	pinned   string // when set, overrides the activity and stays fixed
 }
 
 // newSpinner builds an idle spinner bound to the theme.
@@ -50,38 +48,34 @@ func newSpinner(theme Theme) spinner {
 	return spinner{theme: theme}
 }
 
-// begin arms the spinner for a fresh run: it records the start time, picks the
-// first verb, resets the frame and token estimate, and stores the thinking-effort
-// label to show in the stats.
-func (s *spinner) begin(now time.Time, thinking string) {
+// begin arms the spinner for a fresh run: it records the start time, resets
+// the frame and token estimate, and clears the activity text.
+func (s *spinner) begin(now time.Time) {
 	s.running = true
 	s.frame = 0
 	s.start = now
 	s.chars = 0
-	s.thinking = thinking
-	s.verb = randomVerb()
+	s.activity = ""
 	s.pinned = ""
 }
 
-// pin fixes the spinner label to a specific phrase (e.g. "Compacting
-// conversation") and stops verb re-rolling until unpin, so a long-running phase
-// reads as one steady message rather than cycling words.
+// setActivity describes the in-flight phase ("Thinking", "Running bash");
+// used as the running line's text when nothing is pinned.
+func (s *spinner) setActivity(a string) { s.activity = a }
+
+// pin fixes the activity to a specific phase (e.g. "Compacting
+// conversation") until unpin, so a long-running phase reads as one steady
+// message rather than flickering with events.
 func (s *spinner) pin(label string) { s.pinned = label }
 
-// unpin restores the normal cycling verb after a pinned phase ends.
+// unpin restores event-driven activity after a pinned phase ends.
 func (s *spinner) unpin() { s.pinned = "" }
 
 // stop parks the spinner when a run ends so view() renders nothing.
 func (s *spinner) stop() { s.running = false }
 
-// advance steps the animation one frame and periodically re-rolls the verb so a
-// long run does not sit on one word.
-func (s *spinner) advance() {
-	s.frame++
-	if s.pinned == "" && s.frame%verbRerollFrames == 0 {
-		s.verb = randomVerb()
-	}
-}
+// advance steps the animation one frame.
+func (s *spinner) advance() { s.frame++ }
 
 // addTokens folds a streamed text delta into the running output-token estimate.
 // The count is approximate (≈4 chars per token) — enough for a live spinner
@@ -90,42 +84,64 @@ func (s *spinner) addTokens(delta string) {
 	s.chars += len([]rune(delta))
 }
 
-// view renders the spinner line, e.g. "✻ Whirring… (1m 54s · ↓ 242 tokens ·
-// medium effort)". It returns "" when not running or before a width is known.
-// The glyph and verb take the accent color; the parenthetical stats are dim.
-func (s spinner) view(width int) string {
+// view renders the running line to exactly width columns:
+// "✻ Thinking… 8.0s" left, "49s ↓26.4k [停止]" right-aligned at the edge. It
+// returns "" when not running or before a width is known. turnElapsed is the
+// current turn's wall time; the right side is the whole run.
+func (s spinner) view(width int, turnElapsed time.Duration) string {
 	if !s.running || width <= 0 {
 		return ""
 	}
-	glyph := spinnerFrames[s.frame%len(spinnerFrames)]
-	verb := s.verb
+	glyph := s.theme.Spinner.Render(spinnerFrames[s.frame%len(spinnerFrames)])
+	activity := s.activity
 	if s.pinned != "" {
-		verb = s.pinned
+		activity = s.pinned
 	}
-	head := s.theme.Spinner.Render(glyph + " " + verb + "…")
+	if activity == "" {
+		activity = "Working"
+	}
+	left := glyph + " " + s.theme.User.Render(activity) +
+		s.theme.Chrome.Render("… "+formatElapsed(turnElapsed))
 
-	var stats strings.Builder
-	fmt.Fprintf(&stats, "%s", formatElapsed(time.Since(s.start)))
+	runElapsed := formatElapsed(time.Since(s.start))
+	right := s.theme.Chrome.Render(runElapsed)
+	rw := ui.Width(runElapsed)
 	if tokens := s.chars / 4; tokens > 0 {
-		fmt.Fprintf(&stats, " · ↓ %s tokens", humanizeInt(tokens))
+		right += " " + s.theme.Chrome.Render("↓"+humanTokens(tokens))
+		rw += 1 + ui.Width("↓"+humanTokens(tokens))
 	}
-	if s.thinking != "" {
-		fmt.Fprintf(&stats, " · %s effort", s.thinking)
+	right += " " + s.theme.User.Render("[停止]")
+	rw += 1 + ui.Width("[停止]")
+
+	if rw >= width {
+		return truncatePlain(left, width)
 	}
-	line := head + " " + s.theme.System.Render("("+stats.String()+")")
-	return TruncateToWidth(line, width)
+	// Left keeps at least the glyph + activity; truncate before squeezing the gap.
+	left = truncatePlain(left, width-rw-1)
+	gap := width - ui.Width(left) - rw
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
-// randomVerb picks one of the built-in present-progressive verbs.
-func randomVerb() string {
-	return spinnerVerbs[rand.Intn(len(spinnerVerbs))]
+// truncatePlain clips a styled string to width columns by dropping trailing
+// runes whole (width measured via ui.Width, which strips ANSI), so the styling
+// of the kept prefix survives.
+func truncatePlain(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	for ui.Width(s) > width && s != "" {
+		_, size := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-size]
+	}
+	return s
 }
 
 // formatElapsed renders a duration compactly: "42s", "1m 54s", or "1h 2m".
 func formatElapsed(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	secs := int(d.Seconds())
 	if secs < 60 {
 		return fmt.Sprintf("%ds", secs)
@@ -139,47 +155,3 @@ func formatElapsed(d time.Duration) string {
 	mins %= 60
 	return fmt.Sprintf("%dh %dm", hours, mins)
 }
-
-// spinnerVerbs is Claude Code's 185 built-in spinner verbs (present-progressive
-// flavor words shown while working). Sourced from the community catalog at
-// github.com/wynandw87/claude-code-spinner-verbs.
-var spinnerVerbs = []string{
-	"Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
-	"Beaming", "Beboppin'", "Befuddling", "Billowing", "Blanching",
-	"Bloviating", "Boogieing", "Boondoggling", "Booping", "Bootstrapping",
-	"Brewing", "Burrowing", "Calculating", "Canoodling", "Caramelizing",
-	"Cascading", "Catapulting", "Cerebrating", "Channeling", "Channelling",
-	"Choreographing", "Churning", "Clauding", "Coalescing", "Cogitating",
-	"Combobulating", "Composing", "Computing", "Concocting", "Considering",
-	"Contemplating", "Cooking", "Crafting", "Creating", "Crunching",
-	"Crystallizing", "Cultivating", "Deciphering", "Deliberating", "Determining",
-	"Dilly-dallying", "Discombobulating", "Doing", "Doodling", "Drizzling",
-	"Ebbing", "Effecting", "Elucidating", "Embellishing", "Enchanting",
-	"Envisioning", "Evaporating", "Fermenting", "Fiddle-faddling", "Finagling",
-	"Flambeing", "Flibbertigibbeting", "Flowing", "Flummoxing", "Fluttering",
-	"Forging", "Forming", "Frolicking", "Frosting", "Gallivanting",
-	"Galloping", "Garnishing", "Generating", "Germinating", "Gitifying",
-	"Grooving", "Gusting", "Harmonizing", "Hashing", "Hatching",
-	"Herding", "Honking", "Hullaballooing", "Hyperspacing", "Ideating",
-	"Imagining", "Improvising", "Incubating", "Inferring", "Infusing",
-	"Ionizing", "Jitterbugging", "Julienning", "Kneading", "Leavening",
-	"Levitating", "Lollygagging", "Manifesting", "Marinating", "Meandering",
-	"Metamorphosing", "Misting", "Moonwalking", "Moseying", "Mulling",
-	"Mustering", "Musing", "Nebulizing", "Nesting", "Newspapering",
-	"Noodling", "Nucleating", "Orbiting", "Orchestrating", "Osmosing",
-	"Perambulating", "Percolating", "Perusing", "Philosophising", "Photosynthesizing",
-	"Pollinating", "Pondering", "Pontificating", "Pouncing", "Precipitating",
-	"Prestidigitating", "Processing", "Proofing", "Propagating", "Puttering",
-	"Puzzling", "Quantumizing", "Razzle-dazzling", "Razzmatazzing", "Recombobulating",
-	"Reticulating", "Roosting", "Ruminating", "Sauteing", "Scampering",
-	"Schlepping", "Scurrying", "Seasoning", "Shenaniganing", "Shimmying",
-	"Simmering", "Skedaddling", "Sketching", "Slithering", "Smooshing",
-	"Sock-hopping", "Spelunking", "Spinning", "Sprouting", "Stewing",
-	"Sublimating", "Swirling", "Swooping", "Symbioting", "Synthesizing",
-	"Tempering", "Thinking", "Thundering", "Tinkering", "Tomfoolering",
-	"Topsy-turvying", "Transfiguring", "Transmuting", "Twisting", "Undulating",
-	"Unfurling", "Unravelling", "Vibing", "Waddling", "Wandering",
-	"Warping", "Whatchamacalliting", "Whirlpooling", "Whirring", "Whisking",
-	"Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging",
-}
-

@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/cli/ui"
 )
 
 // This file implements the scrolling transcript region of the full-screen TUI
@@ -48,45 +49,61 @@ const (
 	roleBanner
 )
 
-// thinkingCollapsedLines is how many body lines the thinking region shows while
-// collapsed (the default); the rest are summarized by a hidden-lines hint.
-const thinkingCollapsedLines = 10
-
-// thinkingTailWindowLines caps the expanded view of a very long thinking body:
-// the tail-window state shows only the last N lines with an earlier-lines
-// hint; one more Ctrl+T promotes to full. Short bodies skip the tail-window
-// step entirely (toggleThinking), so they keep the two-click toggle.
-const thinkingTailWindowLines = 200
-
-// thinkingView is the three-state view machine of a thinking block (ported
-// from crush's thinkingViewMode): Ctrl+T cycles collapsed → tail-window →
-// full → collapsed, with the tail-window step skipped when the body fits
-// within thinkingTailWindowLines.
-type thinkingView int
+// displayMode is the unified fold state of a block (tui-render-semantics.md C1).
+// Every foldable block kind — thinking (Ctrl+T) and tool calls (Ctrl+O) — walks
+// the same three states; non-foldable kinds (user/assistant/system/banner) sit
+// at displayFull permanently. The former thinkingView and the tool card's
+// expanded bool are folded into this one type.
+type displayMode int
 
 const (
-	thinkCollapsed thinkingView = iota
-	thinkTailWindow
-	thinkFull
+	displayCollapsed displayMode = iota
+	displayTail
+	displayFull
+)
+
+// thinkingCollapsedLines and thinkingTailWindowLines are the fold thresholds of
+// a thinking block: collapsed shows only the summary footer once closed (grok
+// finished_display_mode=folded; the streaming body stays visible while the
+// block is open), tail shows the last N lines, full shows everything.
+const (
+	thinkingCollapsedLines  = 10
+	thinkingTailWindowLines = 200
 )
 
 // transcriptBlock is one rendered turn in the transcript. text is the raw
 // (unstyled, unwrapped) message body; the role selects the theme style and any
 // prefix applied at render time. For roleTool blocks text is unused and card
-// points at the live tool card (#389); the pointer lets a later toolEndMsg /
-// Ctrl+O mutate the card in place and have it re-render on the next reflow.
-// roleThinking blocks use expanded (Ctrl+T three-state view: collapsed ≤10
-// lines by default, tail-window when the body is long, full when toggled
-// through) and done/started/ended to time the "Thought for Xs" footer shown
-// once the block closes.
+// points at the live tool card; the pointer lets a later toolEndMsg / Ctrl+O
+// mutate the card in place and have it re-render on the next reflow.
+//
+// display is the block's fold state (C1). turn records which user prompt the
+// block belongs to (C2) — history tool/thinking rows (turn < current) render
+// dimmed (grok brightness layering, S6). started/ended time the thinking
+// footer and the block timestamps (C5). cacheKey/cacheOut memoize the
+// finalized render (C3); any mutation clears the key.
 type transcriptBlock struct {
 	role     blockRole
 	text     string
 	card     *toolCard
-	expanded thinkingView
+	display  displayMode
 	done     bool
 	started  time.Time
 	ended    time.Time
+	turn     int
+	cacheKey blockCacheKey
+	cacheOut string
+}
+
+// blockCacheKey captures every input that can change a finalized block's
+// render: content width, fold state, history dim, and a content version (text
+// length plus the done/ended flags, which is exact for finalized content —
+// streaming never touches the cache). tool cards keep their own richer cache.
+type blockCacheKey struct {
+	width   int
+	display displayMode
+	dim     bool
+	version int
 }
 
 // transcript is the scrolling message log. It wraps a viewport.Model and keeps
@@ -120,6 +137,12 @@ type transcript struct {
 	// treat the final message's thinking as the authoritative body of the block
 	// the turn already showed, instead of appending a duplicate.
 	lastThinking int
+
+	// turn is the current user-prompt counter (C2): addUser increments it and
+	// every block created afterwards records it, so history tool/thinking rows
+	// (turn < current) render dimmed (S6) and derived faces get a stable
+	// generation key.
+	turn int
 
 	// follow is the stick-to-bottom intent: while true, every reflow snaps the
 	// viewport to the newest line so streamed output stays visible. It is set
@@ -175,8 +198,13 @@ func (t *transcript) setSize(width, height int) {
 // (e.g. reading the startup banner) — otherwise the streamed reply would
 // accumulate off-screen and look like nothing happened. Subsequent streaming
 // deltas keep the bottom via follow, which the user can pause by scrolling up.
+// The turn counter increments first (C2): every block created from now on
+// belongs to the new turn.
 func (t *transcript) addUser(text string) {
-	t.blocks = append(t.blocks, transcriptBlock{role: roleUser, text: text})
+	t.turn++
+	t.blocks = append(t.blocks, transcriptBlock{
+		role: roleUser, text: text, turn: t.turn, started: time.Now(),
+	})
 	t.activeAssistant = -1
 	t.activeThinking = -1
 	t.lastThinking = -1
@@ -187,7 +215,7 @@ func (t *transcript) addUser(text string) {
 // addSystem appends a system / meta notice (used for run lifecycle and other
 // inline notes).
 func (t *transcript) addSystem(text string) {
-	t.blocks = append(t.blocks, transcriptBlock{role: roleSystem, text: text})
+	t.blocks = append(t.blocks, transcriptBlock{role: roleSystem, text: text, turn: t.turn})
 	t.reflow()
 }
 
@@ -195,26 +223,29 @@ func (t *transcript) addSystem(text string) {
 // emitted verbatim by renderBlock, so its colors and horizontal layout survive
 // reflow untouched.
 func (t *transcript) addBanner(text string) {
-	t.blocks = append(t.blocks, transcriptBlock{role: roleBanner, text: text})
+	t.blocks = append(t.blocks, transcriptBlock{role: roleBanner, text: text, turn: t.turn})
 	t.reflow()
 }
 
 // addToolCard appends a rich tool-call card (#389) as an ordered block so it
 // renders inline in the transcript. The card is held by pointer, so a later
 // state change (toolEndMsg) or expand toggle (Ctrl+O) followed by reflow
-// re-renders it in place.
+// re-renders it in place. New cards start collapsed (S5): the single-line
+// diamond summary is the default face, Ctrl+O expands to the full card.
 func (t *transcript) addToolCard(c *toolCard) {
-	t.blocks = append(t.blocks, transcriptBlock{role: roleTool, card: c})
+	t.blocks = append(t.blocks, transcriptBlock{role: roleTool, card: c, turn: t.turn})
 	t.reflow()
 }
 
 // appendThinking grows the current thinking block by delta, creating the block
 // (and starting its "Thought for Xs" clock) on the first delta of a turn. The
-// block stays open — dimmed and collapsed — until real reply text arrives or
-// the turn ends.
+// block stays open — header line plus dimmed rail body — until real reply text
+// arrives or the turn ends.
 func (t *transcript) appendThinking(delta string) {
 	if t.activeThinking < 0 {
-		t.blocks = append(t.blocks, transcriptBlock{role: roleThinking, started: time.Now()})
+		t.blocks = append(t.blocks, transcriptBlock{
+			role: roleThinking, started: time.Now(), turn: t.turn,
+		})
 		t.activeThinking = len(t.blocks) - 1
 		t.lastThinking = t.activeThinking
 	}
@@ -224,7 +255,9 @@ func (t *transcript) appendThinking(delta string) {
 
 // closeThinking seals the open thinking block: it stops the footer clock and
 // detaches it as the delta target so subsequent text starts a fresh assistant
-// block. A no-op when no thinking block is open.
+// block. A no-op when no thinking block is open. The closed block defaults to
+// collapsed — a single "Thought for Xs" summary line (grok
+// finished_display_mode=folded) — still expandable via Ctrl+T.
 func (t *transcript) closeThinking() {
 	if t.activeThinking < 0 {
 		return
@@ -232,13 +265,14 @@ func (t *transcript) closeThinking() {
 	blk := &t.blocks[t.activeThinking]
 	blk.done = true
 	blk.ended = time.Now()
+	blk.display = displayCollapsed
 	t.activeThinking = -1
 	t.reflow()
 }
 
-// toggleThinking cycles the three-state view of the most recent thinking block
-// and re-flows (Ctrl+T): collapsed → tail-window → full → collapsed, with the
-// tail-window step skipped when the raw body fits within
+// toggleThinking cycles the three-state fold of the most recent thinking block
+// and re-flows (Ctrl+T, C1): collapsed → tail-window → full → collapsed, with
+// the tail-window step skipped when the raw body fits within
 // thinkingTailWindowLines so short blocks keep the two-click toggle. The skip
 // heuristic counts raw source lines (cheap; no re-render just to count) and
 // can over-trigger on many short lines, where the tail-window render is
@@ -249,18 +283,44 @@ func (t *transcript) toggleThinking() {
 		if t.blocks[i].role != roleThinking {
 			continue
 		}
-		switch t.blocks[i].expanded {
-		case thinkCollapsed:
+		switch t.blocks[i].display {
+		case displayCollapsed:
 			if 1+strings.Count(t.blocks[i].text, "\n") > thinkingTailWindowLines {
-				t.blocks[i].expanded = thinkTailWindow
+				t.blocks[i].display = displayTail
 			} else {
-				t.blocks[i].expanded = thinkFull
+				t.blocks[i].display = displayFull
 			}
-		case thinkTailWindow:
-			t.blocks[i].expanded = thinkFull
+		case displayTail:
+			t.blocks[i].display = displayFull
 		default:
-			t.blocks[i].expanded = thinkCollapsed
+			t.blocks[i].display = displayCollapsed
 		}
+		t.reflow()
+		return
+	}
+}
+
+// toggleTool cycles the most recent tool block's fold state (Ctrl+O, C1+S5):
+// collapsed diamond row → card with capped response → card with the full
+// response tree → back to the collapsed row.
+func (t *transcript) toggleTool() {
+	for i := len(t.blocks) - 1; i >= 0; i-- {
+		if t.blocks[i].role != roleTool || t.blocks[i].card == nil {
+			continue
+		}
+		blk := &t.blocks[i]
+		switch {
+		case blk.display == displayCollapsed:
+			blk.display = displayFull
+			blk.card.expanded = false
+		case !blk.card.expanded:
+			blk.card.expanded = true
+		default:
+			blk.display = displayCollapsed
+			blk.card.expanded = false
+		}
+		blk.card.clearCache()
+		blk.cacheKey = blockCacheKey{}
 		t.reflow()
 		return
 	}
@@ -276,11 +336,13 @@ func (t *transcript) toggleThinking() {
 func (t *transcript) appendDelta(delta string) {
 	t.closeThinking()
 	if t.activeAssistant < 0 {
-		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant})
+		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant, turn: t.turn, started: time.Now()})
 		t.activeAssistant = len(t.blocks) - 1
 		t.streamMd = nil
 	}
-	t.blocks[t.activeAssistant].text += delta
+	blk := &t.blocks[t.activeAssistant]
+	blk.text += delta
+	blk.cacheKey = blockCacheKey{} // streaming content: never serve the cache
 	t.reflow()
 }
 
@@ -316,12 +378,14 @@ func (t *transcript) finalizeTurn(msg agentcore.AssistantMessage) {
 			// The stream already showed this turn's thinking: replace its body
 			// with the authoritative final text rather than appending a
 			// duplicate block.
-			t.blocks[t.lastThinking].text = thinking
+			blk := &t.blocks[t.lastThinking]
+			blk.text = thinking
+			blk.cacheKey = blockCacheKey{}
 			t.reflow()
 		} else {
 			now := time.Now()
 			t.blocks = append(t.blocks, transcriptBlock{
-				role: roleThinking, text: thinking,
+				role: roleThinking, text: thinking, turn: t.turn,
 				done: true, started: now, ended: now,
 			})
 			t.lastThinking = len(t.blocks) - 1
@@ -333,11 +397,18 @@ func (t *transcript) finalizeTurn(msg agentcore.AssistantMessage) {
 	t.lastThinking = -1
 	text := agentcore.ContentToText(msg.Content)
 	if t.activeAssistant >= 0 {
+		blk := &t.blocks[t.activeAssistant]
 		if text != "" {
-			t.blocks[t.activeAssistant].text = text
+			blk.text = text
 		}
+		blk.done = true
+		blk.ended = time.Now()
+		blk.cacheKey = blockCacheKey{} // the authoritative body may differ in content
 	} else if text != "" {
-		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant, text: text})
+		t.blocks = append(t.blocks, transcriptBlock{
+			role: roleAssistant, text: text, turn: t.turn,
+			done: true, started: time.Now(), ended: time.Now(),
+		})
 	}
 	t.activeAssistant = -1
 	t.streamMd = nil
@@ -537,95 +608,184 @@ func (t *transcript) reflow() {
 // a new user turn so requests read as visually distinct.
 func (t *transcript) renderAll() string {
 	var b strings.Builder
-	for i, blk := range t.blocks {
+	for i := range t.blocks {
 		if i > 0 {
 			b.WriteByte('\n')
-			if blk.role == roleUser {
+			if t.blocks[i].role == roleUser {
 				b.WriteByte('\n')
 			}
 		}
-		b.WriteString(t.renderBlock(blk, i == t.activeAssistant))
+		b.WriteString(t.renderBlock(&t.blocks[i], i == t.activeAssistant))
 	}
 	return b.String()
 }
 
-// renderBlock wraps a block's text to the content width and applies the role's
-// theme style. Wrapping happens on the raw text (measured in display columns via
-// WrapToWidth) before styling so ANSI escapes never confuse the width math and
-// no double-width rune is split. A finalized assistant block is rendered as
-// Markdown (fix #3, mirroring the REPL's turn-end render); the still-streaming
-// block (streaming==true) renders through the stable-prefix streaming cache
-// (T2.2) so formatting appears while the reply arrives. No theme.Assistant
-// wrapper is applied on either path — the glamour palette owns the colors, and
-// styling only the streaming half would make the finalize switch flash.
-func (t *transcript) renderBlock(blk transcriptBlock, streaming bool) string {
-	if blk.role == roleTool && blk.card != nil {
-		return blk.card.render(t.theme, t.width)
-	}
+// renderBlock renders one block to the current content width. Finalized
+// non-streaming blocks serve repeat renders from the per-block cache (C3) —
+// key = width + fold state + history dim + content version — so scrolling and
+// resizing a long conversation no longer re-renders every settled block.
+// Streaming assistant blocks bypass the cache and render through the
+// stable-prefix streaming markdown path (T2.2).
+func (t *transcript) renderBlock(blk *transcriptBlock, streaming bool) string {
+	dim := t.historyDim(blk)
 	switch blk.role {
-	case roleBanner:
-		return blk.text
-	case roleUser:
-		return t.theme.User.Render(WrapToWidth(blk.text, t.width))
-	case roleSystem:
-		return t.theme.System.Render(WrapToWidth(blk.text, t.width))
-	case roleThinking:
-		return t.renderThinking(blk)
-	default:
-		if streaming {
-			return t.streamRender(blk.text, t.width)
+	case roleTool:
+		if blk.card == nil {
+			return ""
 		}
-		return renderMarkdown(blk.text, t.width)
+		return blk.card.render(t.theme, t.width, blk.display == displayFull, dim)
+	case roleBanner:
+		return t.cached(blk, blk.text, dim)
 	}
+
+	if streaming {
+		return t.streamRender(blk.text, t.width)
+	}
+
+	key := blockCacheKey{
+		width:   t.width,
+		display: blk.display,
+		dim:     dim,
+		version: len(blk.text),
+	}
+	if blk.done {
+		key.version++
+	}
+	if blk.role == roleThinking && blk.display == displayCollapsed && blk.done {
+		key.version += 2 // closed-collapsed renders the footer line only
+	}
+	if blk.cacheKey == key && blk.cacheOut != "" {
+		return blk.cacheOut
+	}
+	var out string
+	switch blk.role {
+	case roleUser:
+		out = t.renderUserBand(blk)
+	case roleSystem:
+		out = t.theme.System.Render(WrapToWidth(blk.text, t.width))
+	case roleThinking:
+		out = t.renderThinking(*blk, dim)
+	default:
+		out = renderMarkdown(blk.text, t.width)
+		if blk.done && !blk.ended.IsZero() {
+			// Block timestamp (C5/S10): right-aligned dim, on the last content
+			// line when it fits, else on its own line (grok assistant block).
+			out = withRightMeta(out, t.width, timestamp(blk.ended), t.theme.Chrome)
+		}
+	}
+	blk.cacheKey = key
+	blk.cacheOut = out
+	return out
 }
 
-// renderThinking renders a reasoning-model thinking block: the body dimmed
-// behind a left rule, collapsed by default to its first few lines with a
-// hidden-lines hint, tail-windowed to the last thinkingTailWindowLines lines
-// when expanded and the body is longer than that (the earlier-lines hint sits
-// on top so the newest reasoning reads first), and full one Ctrl+T later. A
-// closed block ends with the "Thought for Xs" footer, so a collapsed block
-// still tells the user the model reasoned and for how long. The raw text
-// renders plain (not markdown): while streaming the block is incomplete and
-// markdown can only be laid out on the whole block, and the collapsed view
+// cached returns the verbatim render for a non-wrapping block (banner) through
+// the same cache machinery.
+func (t *transcript) cached(blk *transcriptBlock, out string, dim bool) string {
+	key := blockCacheKey{width: t.width, dim: dim, version: len(blk.text)}
+	if blk.cacheKey == key && blk.cacheOut != "" {
+		return blk.cacheOut
+	}
+	blk.cacheKey = key
+	blk.cacheOut = out
+	return out
+}
+
+// historyDim reports whether a block renders dimmed as past activity (S6):
+// tool and thinking rows from earlier user turns drop to the chrome gray while
+// the current turn's activity stays bright. User/assistant/system blocks are
+// never dimmed (grok keeps the assistant body bright).
+func (t *transcript) historyDim(blk *transcriptBlock) bool {
+	return blk.turn < t.turn && (blk.role == roleTool || blk.role == roleThinking)
+}
+
+// renderUserBand draws the user turn as a full-width background band one shade
+// above the terminal background: "❯" prompt at the left edge, the wrapped body,
+// and the block's timestamp right-aligned on the first line (S3/S4, grok user
+// band). Every line is padded to the full width so the band reads as one bar.
+func (t *transcript) renderUserBand(blk *transcriptBlock) string {
+	const prompt = "❯ "
+	body := WrapToWidth(blk.text, max(t.width-ui.Width(prompt), 1))
+	lines := strings.Split(body, "\n")
+	ts := timestamp(blk.started)
+	tsW := ui.Width(ts)
+	out := make([]string, 0, len(lines))
+	for i, l := range lines {
+		content := prompt + l
+		cw := ui.Width(content)
+		// First line carries the right-aligned timestamp; on a too-narrow
+		// terminal the timestamp drops rather than overlapping the text.
+		if i == 0 && t.width-cw >= tsW+2 {
+			content += strings.Repeat(" ", t.width-cw-tsW) + ts
+		} else if cw < t.width {
+			content += strings.Repeat(" ", t.width-cw)
+		}
+		out = append(out, t.theme.UserBand.Render(content))
+	}
+	return strings.Join(out, "\n")
+}
+
+// renderThinking renders a reasoning-model thinking block (S9, grok alignment):
+// while streaming it shows the "◇ Thinking…" activity header above the dimmed
+// rail body; once closed, the collapsed state is a single purple
+// "◆ Thought for Xs" summary line (grok finished_display_mode=folded) and the
+// tail/full states show the dimmed rail body plus the summary footer. The raw
+// text renders plain (not markdown): while streaming the block is incomplete
+// and markdown can only be laid out on the whole block, and the collapsed view
 // truncates anyway — the quiet treatment, not formatting, is the point.
-func (t transcript) renderThinking(blk transcriptBlock) string {
-	body := WrapToWidth(blk.text, t.width-2)
+func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
+	headStyle, bodyStyle := t.theme.ToolVerbThink, t.theme.Thinking
+	rail := t.theme.ThinkingBorder.Render("▌")
+	if dim {
+		headStyle, bodyStyle = t.theme.Chrome, t.theme.Chrome
+		rail = t.theme.Chrome.Render("▌")
+	}
+
+	footer := ""
+	if blk.done {
+		footer = thinkingFooter(blk, headStyle)
+	}
+	// Closed and collapsed: the summary line is the whole render (grok card).
+	if blk.done && blk.display == displayCollapsed {
+		return footer
+	}
+
+	var b strings.Builder
+	if !blk.done {
+		b.WriteString(t.theme.Chrome.Render("◇ Thinking…"))
+		b.WriteByte('\n')
+	}
+	body := WrapToWidth(blk.text, max(t.width-2, 1))
 	lines := strings.Split(body, "\n")
 	visible := lines
-	hidden := 0
 	var head []string
 	switch {
-	case blk.expanded == thinkCollapsed && len(lines) > thinkingCollapsedLines:
-		hidden = len(lines) - thinkingCollapsedLines
-		visible = lines[:thinkingCollapsedLines]
-	case blk.expanded == thinkTailWindow && len(lines) > thinkingTailWindowLines:
-		hidden = len(lines) - thinkingTailWindowLines
+	case blk.done && blk.display == displayTail && len(lines) > thinkingTailWindowLines:
+		hidden := len(lines) - thinkingTailWindowLines
 		visible = lines[hidden:]
 		head = []string{fmt.Sprintf("… %d earlier lines hidden (ctrl+t for full)", hidden)}
-		hidden = 0
+	case !blk.done && len(lines) > thinkingCollapsedLines:
+		// While streaming, cap the live body so a long reasoning run does not
+		// push the reply off-screen; the newest reasoning is what matters.
+		hidden := len(lines) - thinkingCollapsedLines
+		visible = lines[hidden:]
+		head = []string{fmt.Sprintf("… %d earlier lines hidden", hidden)}
 	}
-	rule := t.theme.ThinkingBorder.Render("▌")
-	var b strings.Builder
 	for _, l := range head {
-		b.WriteString(t.theme.Thinking.Render(l))
+		b.WriteString(bodyStyle.Render(l))
 		b.WriteByte('\n')
 	}
 	for i, l := range visible {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(rule)
+		b.WriteString(rail)
 		if l != "" {
-			b.WriteString(t.theme.Thinking.Render(l))
+			b.WriteString(bodyStyle.Render(l))
 		}
 	}
-	if hidden > 0 {
-		b.WriteString(t.theme.Thinking.Render(
-			fmt.Sprintf("\n… %d lines hidden (ctrl+t to expand)", hidden)))
-	}
-	if blk.done {
-		b.WriteString(t.theme.ThinkingFooter.Render(thinkingFooter(blk)))
+	if footer != "" {
+		b.WriteByte('\n')
+		b.WriteString(footer)
 	}
 	return b.String()
 }
@@ -634,10 +794,49 @@ func (t transcript) renderThinking(blk transcriptBlock) string {
 // measured from the first thinking delta to the first reply text (or turn
 // end). A block whose stream never surfaced thinking has no measurable
 // duration (started == ended), so the footer degrades to a plain "Thought".
-func thinkingFooter(blk transcriptBlock) string {
+func thinkingFooter(blk transcriptBlock, style lipgloss.Style) string {
 	d := blk.ended.Sub(blk.started)
+	diamond := style.Render("◆ ")
 	if d <= 0 {
-		return "\n✻ Thought"
+		return diamond + style.Render("Thought")
 	}
-	return fmt.Sprintf("\n✻ Thought for %.1fs", d.Seconds())
+	return diamond + style.Render("Thought") + timestring(d)
+}
+
+// timestring renders " for Xs" in the dim chrome style (footer tail).
+func timestring(d time.Duration) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(colorGray)).
+		Render(fmt.Sprintf(" for %.1fs", d.Seconds()))
+}
+
+// timestamp formats a block's wall-clock time the way the grok reference does:
+// 12-hour "2:19 PM".
+func timestamp(t time.Time) string { return t.Format("3:04 PM") }
+
+// withRightMeta appends meta right-aligned onto the last non-empty line of a
+// rendered block when at least two columns of separation fit, else onto its
+// own right-aligned line. ANSI styling of the base render is preserved; the
+// meta text arrives pre-styled.
+func withRightMeta(rendered string, width int, meta string, metaStyle lipgloss.Style) string {
+	lines := strings.Split(rendered, "\n")
+	tw := ui.Width(meta)
+	if tw >= width {
+		return rendered
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		lw := ui.Width(lines[i])
+		if lw == 0 {
+			continue
+		}
+		if lw+2+tw <= width {
+			lines[i] = lines[i] + strings.Repeat(" ", width-lw-tw) + metaStyle.Render(meta)
+			return strings.Join(lines, "\n")
+		}
+		break
+	}
+	pad := ""
+	if width > tw {
+		pad = strings.Repeat(" ", width-tw)
+	}
+	return rendered + "\n" + pad + metaStyle.Render(meta)
 }

@@ -55,7 +55,7 @@ func TestToolCardRender(t *testing.T) {
 				response: parseToolResult("line one\n  nested"),
 				state:    tc.state,
 			}
-			out := card.render(theme, 60)
+			out := card.render(theme, 60, true, false)
 			for _, want := range []string{"read_file", tc.icon, "Input arguments", "path: /tmp/x", "Response", "line one", "nested"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("render missing %q\n%s", want, out)
@@ -76,7 +76,7 @@ func TestToolCardMultiLineInputIndent(t *testing.T) {
 		input: map[string]any{"path": "/tmp/x", "content": "first line\nsecond line\nthird line"},
 		state: cardSuccess,
 	}
-	out := card.render(theme, 60)
+	out := card.render(theme, 60, true, false)
 	// lipgloss wraps every rendered line in ANSI escapes and the card frame adds
 	// border columns, so compare column positions within the plain text instead
 	// of matching raw substrings: each continuation line must start at the same
@@ -123,7 +123,7 @@ func TestToolCardExpandTruncation(t *testing.T) {
 	}
 	card := toolCard{name: "grep", response: parseToolResult(b.String()), state: cardSuccess}
 
-	collapsed := card.render(theme, 60)
+	collapsed := card.render(theme, 60, true, false)
 	if !strings.Contains(collapsed, "(Ctrl+O for more)") {
 		t.Errorf("collapsed card should show Ctrl+O hint\n%s", collapsed)
 	}
@@ -133,7 +133,7 @@ func TestToolCardExpandTruncation(t *testing.T) {
 	}
 
 	card.expanded = true
-	expanded := card.render(theme, 60)
+	expanded := card.render(theme, 60, true, false)
 	if strings.Contains(expanded, "(Ctrl+O for more)") {
 		t.Errorf("expanded card should not show Ctrl+O hint\n%s", expanded)
 	}
@@ -189,7 +189,7 @@ func TestToolCardDiffSection(t *testing.T) {
 		diff:     diff,
 		state:    cardSuccess,
 	}
-	out := card.render(theme, 60)
+	out := card.render(theme, 60, true, false)
 
 	for _, want := range []string{
 		"edit(f.txt)",
@@ -236,7 +236,7 @@ func TestToolCardDiffCollapseExpand(t *testing.T) {
 		state:    cardSuccess,
 	}
 
-	collapsed := card.render(theme, 60)
+	collapsed := card.render(theme, 60, true, false)
 	if !strings.Contains(collapsed, "(Ctrl+O for more)") {
 		t.Errorf("collapsed card should show Ctrl+O hint\n%s", collapsed)
 	}
@@ -247,7 +247,7 @@ func TestToolCardDiffCollapseExpand(t *testing.T) {
 	}
 
 	card.expanded = true
-	expanded := card.render(theme, 60)
+	expanded := card.render(theme, 60, true, false)
 	if strings.Contains(expanded, "(Ctrl+O for more)") {
 		t.Errorf("expanded card should not show Ctrl+O hint\n%s", expanded)
 	}
@@ -321,8 +321,10 @@ func TestModelToolEndDiff(t *testing.T) {
 	}
 }
 
-// TestModelCtrlOTogglesExpanded verifies Ctrl+O flips the most-recent card's
-// expanded flag so more response lines become visible.
+// TestModelCtrlOTogglesExpanded drives the Ctrl+O fold cycle (S5/C1): the tool
+// block starts as the collapsed diamond row, the first Ctrl+O expands to the
+// flat card (capped response), the second reveals the full response tree, and
+// the third returns to the collapsed row.
 func TestModelCtrlOTogglesExpanded(t *testing.T) {
 	m := NewModel(Options{})
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
@@ -339,19 +341,29 @@ func TestModelCtrlOTogglesExpanded(t *testing.T) {
 	next, _ = mm.Update(toolEndMsg{id: "t1", ok: true, result: b.String()})
 	mm = next.(Model)
 
-	if mm.lastToolCard.expanded {
-		t.Fatalf("card should start collapsed")
+	blk := &mm.transcript.blocks[0]
+	if blk.display != displayCollapsed || blk.card.expanded {
+		t.Fatalf("tool block should start collapsed, display=%v expanded=%v", blk.display, blk.card.expanded)
 	}
 	next, _ = mm.Update(ctrlKey('o'))
 	mm = next.(Model)
-	if !mm.lastToolCard.expanded {
-		t.Errorf("Ctrl+O should expand the most-recent card")
+	blk = &mm.transcript.blocks[0]
+	if blk.display != displayFull || blk.card.expanded {
+		t.Errorf("first Ctrl+O should expand to the flat card, display=%v expanded=%v", blk.display, blk.card.expanded)
 	}
-	// Toggling again collapses it.
+	// Second Ctrl+O reveals the full response tree.
 	next, _ = mm.Update(ctrlKey('o'))
 	mm = next.(Model)
-	if mm.lastToolCard.expanded {
-		t.Errorf("second Ctrl+O should collapse the card")
+	blk = &mm.transcript.blocks[0]
+	if blk.display != displayFull || !blk.card.expanded {
+		t.Errorf("second Ctrl+O should reveal the full tree, display=%v expanded=%v", blk.display, blk.card.expanded)
+	}
+	// Third Ctrl+O returns to the collapsed row.
+	next, _ = mm.Update(ctrlKey('o'))
+	mm = next.(Model)
+	blk = &mm.transcript.blocks[0]
+	if blk.display != displayCollapsed || blk.card.expanded {
+		t.Errorf("third Ctrl+O should collapse back to the row, display=%v expanded=%v", blk.display, blk.card.expanded)
 	}
 }
 
@@ -408,7 +420,7 @@ func TestToolCardFamilyFolding(t *testing.T) {
 			response: parseToolResult("line"),
 			state:    cardSuccess,
 		}
-		out := card.render(theme, 60)
+		out := card.render(theme, 60, true, false)
 		hasArgs := strings.Contains(out, "Input arguments")
 		if hasArgs != tc.wantArgs {
 			t.Errorf("%s: Input arguments present = %v, want %v\n%s", tc.name, hasArgs, tc.wantArgs, out)
@@ -458,17 +470,17 @@ func TestToolCardRenderCache(t *testing.T) {
 	}
 	card := &toolCard{name: "grep", response: parseToolResult(b.String()), state: cardSuccess}
 
-	first := card.render(theme, 60)
+	first := card.render(theme, 60, true, false)
 	if !card.hasCache {
 		t.Fatalf("render should populate the cache")
 	}
-	if again := card.render(theme, 60); again != first {
+	if again := card.render(theme, 60, true, false); again != first {
 		t.Errorf("cached render differs from the first render")
 	}
 
 	// Toggling through the capability interface invalidates the cache.
 	card.toggleExpanded()
-	expanded := card.render(theme, 60)
+	expanded := card.render(theme, 60, true, false)
 	if expanded == first {
 		t.Errorf("expanded render should differ after cache invalidation")
 	}
@@ -478,11 +490,11 @@ func TestToolCardRenderCache(t *testing.T) {
 
 	// A different width is a different cache identity: no stale reuse.
 	card.toggleExpanded() // back to collapsed
-	narrow := card.render(theme, narrowCardWidth-1)
+	narrow := card.render(theme, narrowCardWidth-1, true, false)
 	if narrow == "" {
 		t.Errorf("narrow render should not be empty")
 	}
-	if card.render(theme, 60) != first {
+	if card.render(theme, 60, true, false) != first {
 		t.Errorf("re-render at the original width should match the original output")
 	}
 }

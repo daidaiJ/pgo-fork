@@ -205,10 +205,15 @@ func (c toolCard) styledIcon(theme Theme) string {
 	}
 }
 
-// render draws the card at the given content width through its family
-// renderer, serving repeat calls (same width/state/expanded/body) from the
-// cache. This is the transcript's per-frame entry point (transcript.go).
-func (c *toolCard) render(theme Theme, width int) string {
+// render draws the tool call at the given content width. Collapsed (S5) it is
+// the single-line diamond activity row (toolrow.go); expanded it is the family
+// card laid flat — the rounded border is retired (grok has no cards), sections
+// render borderless at full width. The expanded body serves repeat calls from
+// the cache; the one-line row is cheap enough to render every frame.
+func (c *toolCard) render(theme Theme, width int, expanded, dim bool) string {
+	if !expanded {
+		return renderToolRow(c, theme, width, dim)
+	}
 	if width < 4 {
 		width = 4
 	}
@@ -221,32 +226,19 @@ func (c *toolCard) render(theme Theme, width int) string {
 	return out
 }
 
-// renderToolCard draws the shared frame — header line, the family's sections,
-// then either the flat layout or the rounded border — around one renderer's
-// section list.
+// renderToolCard draws the shared frame — header line, then the family's
+// sections — flat (borderless). The grok alignment (S5) retires the rounded
+// card border: history is a flat stream of rows, and the card's expanded view
+// keeps only the content.
 func renderToolCard(r toolCardRenderer, theme Theme, width int, c *toolCard) string {
-	// Below the narrow threshold the card renders flat: no border (its two
-	// columns are reclaimed) and the whole width is usable content.
+	// Below the narrow threshold the card renders flat with the argument
+	// sections omitted: the response payload crowds out the scarce columns.
 	narrow := width < narrowCardWidth
-	// The rounded border consumes one column on each side; wrap everything to the
-	// inner width so nothing overflows the frame.
-	inner := width - 2
-	if narrow {
-		inner = width
-	}
+	inner := width
 
 	lines := []string{c.headerLine(r, theme, inner)}
 	lines = append(lines, r.sections(c, theme, inner, narrow)...)
-
-	if narrow {
-		return strings.Join(lines, "\n")
-	}
-
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(colorGray)).
-		Width(inner)
-	return border.Render(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 // headerLine builds the card header: status icon + tool name, with the

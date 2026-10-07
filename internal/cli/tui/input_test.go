@@ -103,7 +103,7 @@ func TestInputNewlineRendersBothLines(t *testing.T) {
 	in, _ = in.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	in, _ = in.Update(runeKey('好'))
 
-	view := in.View()
+	view := in.View("", DefaultTheme())
 	if !strings.Contains(view, "你") || !strings.Contains(view, "好") {
 		t.Fatalf("rendered view missing content, want both 你 and 好:\n%s", view)
 	}

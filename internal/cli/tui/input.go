@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/smallnest/pigo/internal/cli/ui"
 )
 
 // This file implements the prompt input field of the full-screen TUI (US-007,
@@ -46,8 +50,12 @@ type input struct {
 // buffer itself is unbounded; beyond maxInputRows textarea scrolls internally.
 func newInput() input {
 	ta := textarea.New()
-	ta.Prompt = "> "
-	ta.Placeholder = "Type a message… (Enter to send, Shift+Enter for newline)"
+	ta.Prompt = "❯ "
+	// Keep the placeholder short enough to never wrap at the minimum editor
+	// width: the textarea's DynamicHeight re-wrap is lazy (it settles on the
+	// next Update/View, not on SetWidth), and a wrapped placeholder would
+	// desync the shell's first-frame row accounting.
+	ta.Placeholder = "Type a message… (Enter to send)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	// Let the textarea own its own height: DynamicHeight grows/shrinks it to the
@@ -153,15 +161,34 @@ func (in *input) SetWidth(w int) {
 }
 
 // View renders the editor to a string for embedding in the model's View. The
-// textarea is framed with a top and bottom rule (no side borders) in the muted
-// gray, mirroring Claude Code's composer — a pair of horizontal lines rather
-// than a background fill. The rules span the full editor width.
-func (in input) View() string {
+// textarea is framed with a full-width rounded border (S14, grok composer): a
+// closed rounded box rather than the old pair of horizontal rules. label, when
+// non-empty, is embedded into the bottom border's right end in the bright
+// style (grok's "model · approval" tag) — the border fill is cut to make room
+// so the label reads as part of the frame.
+func (in input) View(label string, theme Theme) string {
 	style := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, true, false).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(colorGray))
 	if in.width > 0 {
-		style = style.Width(in.width)
+		style = style.Width(in.width - 2)
 	}
-	return style.Render(in.ta.View())
+	box := style.Render(in.ta.View())
+	if label == "" || in.width <= 0 {
+		return box
+	}
+	lines := strings.Split(box, "\n")
+	last := len(lines) - 1
+	lw := ui.Width(label)
+	inner := in.width - 2 // columns between the two border corners
+	if lw+1 > inner || last < 1 || ui.Width(lines[last]) != in.width {
+		return box // too narrow for the tag (or frame shape unexpected): plain box
+	}
+	// Rebuild the bottom border: "╰" + fill ─ + bright label + "╯".
+	fill := inner - lw
+	lines[last] = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGray)).
+		Render("╰"+strings.Repeat("─", fill)) +
+		theme.User.Render(label) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color(colorGray)).Render("╯")
+	return strings.Join(lines, "\n")
 }

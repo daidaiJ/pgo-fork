@@ -3,124 +3,93 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli/ui"
 )
 
-// newTestStatusBar builds a status bar with a known cwd (already ~-abbreviated
-// by the caller's intent) so tests do not depend on the real $HOME.
+// newTestStatusBar builds a usage row with a fixed model name so tests do not
+// depend on the environment.
 func newTestStatusBar() statusBar {
-	opts := Options{Model: "claude-opus", ThinkingLevel: agentcore.ThinkingHigh}
-	s := newStatusBar(DefaultTheme(), opts, "/tmp/project")
-	s.cwd = "~/project"
-	return s
+	opts := Options{Model: "claude-opus", ProviderName: "test-provider"}
+	return newStatusBar(DefaultTheme(), opts, "/tmp/project")
 }
 
-func TestStatusBarRendersAllFields(t *testing.T) {
+func TestUsageRowRendersModelAndStats(t *testing.T) {
 	s := newTestStatusBar()
-	s.SetGit(gitInfoMsg{branch: "master", dirty: 3, ahead: 4, ok: true})
-	s.SetTelemetry(telemetryEventView{util: 0.42, window: 200000})
-	s.SetTask("running: Read")
+	now := time.Now()
+	s.usage.beginRun(now.Add(-time.Minute))
+	s.usage.markFirstDelta(now.Add(-50 * time.Second))
+	s.usage.foldTurn(43000, 400, 8000)
+	s.usage.foldTurn(700, 280, 0)
 
-	const width = 200
-	out := s.Render(width)
-
+	out := s.Render(200, now)
 	for _, want := range []string{
-		"pigo",          // app badge
-		"claude-opus",   // model
-		"high",          // thinking level
-		"~/project",     // cwd
-		"master",        // git branch
-		glyphDirty + "3", // dirty marker
-		glyphAhead + "4", // ahead marker
-		"42%",           // context usage
-		"running: Read", // task
+		"claude-opus (test-provider)", // model · provider
+		"✓ 2",                          // completed API turns
+		"in 44K",                     // summed prompt tokens
+		"out 680",                      // summed completion tokens
+		"cache",                        // cache hit share (observed)
+		"ttft",                         // first-token latency
+		"tok/s",                        // throughput
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("render missing %q; got %q", want, out)
+		if !strings.Contains(stripANSI(out), want) {
+			t.Errorf("usage row missing %q; got %q", want, stripANSI(out))
 		}
 	}
-
-	if w := ui.Width(out); w > width {
-		t.Errorf("render width %d exceeds terminal width %d", w, width)
+	if w := ui.Width(stripANSI(out)); w > 200 {
+		t.Errorf("render width %d exceeds terminal width 200", w)
 	}
 }
 
-func TestStatusBarHidesGitWhenNotRepo(t *testing.T) {
+func TestUsageRowHidesUnobservedSegments(t *testing.T) {
 	s := newTestStatusBar()
-	s.SetGit(gitInfoMsg{ok: false})
-
-	out := s.Render(120)
-	if strings.Contains(out, "master") || strings.Contains(out, "*") || strings.Contains(out, "+") {
-		t.Errorf("git segment should be hidden when ok=false; got %q", out)
+	out := stripANSI(s.Render(120, time.Now()))
+	if strings.Contains(out, "✓") || strings.Contains(out, "in ") || strings.Contains(out, "cache") {
+		t.Errorf("segments should stay hidden before any run data: %q", out)
+	}
+	if !strings.Contains(out, "claude-opus") {
+		t.Errorf("model name should always render: %q", out)
 	}
 }
 
-func TestStatusBarHidesContextWhenUnknown(t *testing.T) {
+func TestUsageRowHidesCacheWhenUnreported(t *testing.T) {
 	s := newTestStatusBar()
-	// No telemetry set (window 0) → context segment hidden.
-	s.SetTelemetry(telemetryEventView{util: 0.5, window: 0})
-
-	out := s.Render(120)
-	if strings.Contains(out, glyphCtx) {
-		t.Errorf("context segment should be hidden when window unknown; got %q", out)
+	now := time.Now()
+	s.usage.beginRun(now)
+	s.usage.foldTurn(500, 100, 0)
+	if out := stripANSI(s.Render(120, now)); strings.Contains(out, "cache") {
+		t.Errorf("cache segment should hide when the provider reports no cache tokens: %q", out)
 	}
 }
 
-func TestStatusBarTruncationKeepsPriorityFields(t *testing.T) {
+func TestUsageRowVeryNarrowNeverOverflows(t *testing.T) {
 	s := newTestStatusBar()
-	s.SetGit(gitInfoMsg{branch: "master", dirty: 3, ahead: 4, ok: true})
-	s.SetTelemetry(telemetryEventView{util: 0.42, window: 200000})
-	s.SetTask("TASK")
+	now := time.Now()
+	s.usage.beginRun(now.Add(-time.Minute))
+	s.usage.markFirstDelta(now.Add(-50 * time.Second))
+	s.usage.foldTurn(91000, 24000, 40000)
 
-	// Narrow width: only the highest-priority fields (task > model > token)
-	// should survive; cwd and git should drop first.
-	const width = 24
-	out := s.Render(width)
-
-	if w := ui.Width(out); w > width {
-		t.Fatalf("truncated render width %d exceeds %d: %q", w, width, out)
-	}
-	if !strings.Contains(out, "TASK") {
-		t.Errorf("highest-priority task field dropped under truncation: %q", out)
-	}
-	// cwd (lowest priority) must be gone before task.
-	if strings.Contains(out, "~/project") {
-		t.Errorf("lowest-priority cwd should drop first under truncation: %q", out)
-	}
-}
-
-func TestStatusBarVeryNarrowNeverOverflows(t *testing.T) {
-	s := newTestStatusBar()
-	s.SetTask("a-fairly-long-task-description-that-cannot-fit")
-
-	for _, width := range []int{1, 2, 3, 5, 8} {
-		out := s.Render(width)
-		if w := ui.Width(out); w > width {
-			t.Errorf("width %d: render width %d overflows: %q", width, w, out)
+	for _, width := range []int{1, 2, 3, 5, 8, 12} {
+		out := s.Render(width, now)
+		if w := ui.Width(stripANSI(out)); w > width {
+			t.Errorf("width %d: render width %d overflows: %q", width, w, stripANSI(out))
 		}
 	}
 }
 
-func TestStatusBarZeroWidthEmpty(t *testing.T) {
+func TestUsageRowZeroWidthEmpty(t *testing.T) {
 	s := newTestStatusBar()
-	if out := s.Render(0); out != "" {
+	if out := s.Render(0, time.Now()); out != "" {
 		t.Errorf("zero width should render empty, got %q", out)
 	}
 }
 
-// TestStatusBarContextTokenCount checks the context segment shows a
-// comma-grouped token count with the percentage once telemetry reports tokens.
-func TestStatusBarContextTokenCount(t *testing.T) {
+func TestUsageRowSetModelKeepsProviderSuffix(t *testing.T) {
 	s := newTestStatusBar()
-	s.SetTelemetry(telemetryEventView{util: 0.46, window: 200000, tokens: 90866})
-
-	out := s.Render(200)
-	for _, want := range []string{glyphCtx, "90,866", "46%"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("render missing %q; got %q", want, out)
-		}
+	s.SetModel("next-model")
+	if out := stripANSI(s.Render(120, time.Now())); !strings.Contains(out, "next-model (test-provider)") {
+		t.Errorf("/model switch should keep the provider suffix: %q", out)
 	}
 }
 
@@ -149,16 +118,14 @@ func TestAbbreviateHome(t *testing.T) {
 	}
 }
 
-// TestStatusBarGitTextFormatting checks the "*N +N" markers appear only when
-// non-zero.
-func TestStatusBarGitTextFormatting(t *testing.T) {
-	s := newTestStatusBar()
-	s.SetGit(gitInfoMsg{branch: "main", ok: true})
-	out := s.Render(120)
-	if strings.Contains(out, "*") || strings.Contains(out, "+") {
-		t.Errorf("clean tree should show no *N/+N markers: %q", out)
+func TestHumanTokens(t *testing.T) {
+	cases := map[int]string{
+		0: "0", 999: "999", 1000: "1.0K", 3000: "3.0K", 26000: "26K", 148766: "149K",
+		150340: "150K", 1000000: "1.0M", 2600000: "2.6M",
 	}
-	if !strings.Contains(out, "main") {
-		t.Errorf("branch name missing: %q", out)
+	for in, want := range cases {
+		if got := humanTokens(in); got != want {
+			t.Errorf("humanTokens(%d) = %q, want %q", in, got, want)
+		}
 	}
 }

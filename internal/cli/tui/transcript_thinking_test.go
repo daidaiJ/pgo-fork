@@ -25,9 +25,10 @@ func thinkingMsgs(n int) []thinkingDeltaMsg {
 func lastThinkingLine(n int) string { return strings.Repeat("x", n-1) + " line" }
 
 // TestTranscriptThinkingFlow streams thinking then reply text, asserting the
-// two-state view: the thinking block closes (footer clock stops) on the first
-// real text delta, the reply starts a fresh assistant block, and the finished
-// view carries the "Thought for" footer.
+// fold semantics: the thinking block closes (footer clock stops) on the first
+// real text delta, the reply starts a fresh assistant block, and the closed
+// block's collapsed face is the single "Thought for" summary line (grok
+// finished_display_mode=folded).
 func TestTranscriptThinkingFlow(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
 
@@ -48,6 +49,9 @@ func TestTranscriptThinkingFlow(t *testing.T) {
 	if thinking.role != roleThinking || !thinking.done {
 		t.Fatalf("block[0] = role %v done %v, want closed thinking", thinking.role, thinking.done)
 	}
+	if thinking.display != displayCollapsed {
+		t.Errorf("closed thinking display = %v, want collapsed", thinking.display)
+	}
 	if m.transcript.blocks[1].role != roleAssistant || m.transcript.blocks[1].text != "the answer" {
 		t.Fatalf("block[1] = %+v, want assistant text %q", m.transcript.blocks[1], "the answer")
 	}
@@ -57,17 +61,42 @@ func TestTranscriptThinkingFlow(t *testing.T) {
 	// Assert on renderAll (the full rendered body), not View(): the viewport
 	// only shows a height-limited slice and would clip the assertions.
 	content := stripANSI(m.transcript.renderAll())
-	if !strings.Contains(content, "✻ Thought") {
-		t.Errorf("rendered view missing 'Thought for' footer; got:\n%s", content)
+	if !strings.Contains(content, "Thought") {
+		t.Errorf("rendered view missing 'Thought for' summary; got:\n%s", content)
 	}
 	if !strings.Contains(content, "the answer") {
 		t.Errorf("rendered view missing reply text; got:\n%s", content)
 	}
 }
 
-// TestTranscriptThinkingCollapsedAndExpand covers the two-state view machine:
-// a block longer than the collapsed cap renders its first lines plus a
-// hidden-lines hint, and Ctrl+T expands to the full reasoning text.
+// TestTranscriptThinkingStreamsLiveBody verifies the in-progress block shows
+// the "◇ Thinking…" header above the dimmed live body (grok running face),
+// and that the body disappears into the summary line once closed.
+func TestTranscriptThinkingStreamsLiveBody(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 60, Height: 12})
+
+	m = apply(t, m, thinkingDeltaMsg{delta: "reasoning hard\n"})
+	content := stripANSI(m.transcript.renderAll())
+	if !strings.Contains(content, "Thinking…") {
+		t.Errorf("streaming view missing the Thinking header; got:\n%s", content)
+	}
+	if !strings.Contains(content, "reasoning hard") {
+		t.Errorf("streaming view should show the live body; got:\n%s", content)
+	}
+
+	m = apply(t, m, textDeltaMsg{delta: "answer"})
+	content = stripANSI(m.transcript.renderAll())
+	if strings.Contains(content, "reasoning hard") {
+		t.Errorf("closed collapsed view should fold the body away; got:\n%s", content)
+	}
+	if !strings.Contains(content, "Thought") {
+		t.Errorf("closed collapsed view missing the summary; got:\n%s", content)
+	}
+}
+
+// TestTranscriptThinkingCollapsedAndExpand covers the fold machine on a body
+// longer than the collapsed cap: closed+collapsed renders only the summary,
+// and Ctrl+T (short body skips the tail step) expands to the full text.
 func TestTranscriptThinkingCollapsedAndExpand(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
 
@@ -80,15 +109,14 @@ func TestTranscriptThinkingCollapsedAndExpand(t *testing.T) {
 	}})
 
 	content := stripANSI(m.transcript.renderAll())
-	if !strings.Contains(content, "lines hidden (ctrl+t to expand)") {
-		t.Fatalf("collapsed view missing hidden-lines hint; got:\n%s", content)
+	if strings.Contains(content, "lines hidden") {
+		t.Fatalf("collapsed view should fold the body entirely; got:\n%s", content)
 	}
-	// Collapsed shows the first cap lines but not the tail.
-	if !strings.Contains(content, lastThinkingLine(1)) {
-		t.Errorf("collapsed view missing first thinking line")
+	if strings.Contains(content, lastThinkingLine(1)) {
+		t.Errorf("collapsed view leaks body line %q", lastThinkingLine(1))
 	}
-	if strings.Contains(content, lastThinkingLine(lines)) {
-		t.Errorf("collapsed view leaks the tail line %q", lastThinkingLine(lines))
+	if !strings.Contains(content, "Thought") {
+		t.Errorf("collapsed view missing the summary line")
 	}
 
 	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
@@ -96,7 +124,7 @@ func TestTranscriptThinkingCollapsedAndExpand(t *testing.T) {
 	if strings.Contains(content, "lines hidden") {
 		t.Errorf("expanded view still shows hidden-lines hint; got:\n%s", content)
 	}
-	// Expanded: the tail line (hidden while collapsed) is now visible.
+	// Expanded: the body is visible including the tail.
 	if !strings.Contains(content, lastThinkingLine(lines)) {
 		t.Errorf("expanded view missing tail line %q; got:\n%s", lastThinkingLine(lines), content)
 	}
@@ -124,23 +152,23 @@ func TestTranscriptThinkingFinalizeOnly(t *testing.T) {
 	}
 }
 
-// TestThinkingFooterVariants pins the footer wording: a measurable duration
+// TestThinkingFooterVariants pins the summary wording: a measurable duration
 // reports seconds; a block with no measurable duration (thinking delivered
 // only at finalize) degrades to a plain "Thought".
 func TestThinkingFooterVariants(t *testing.T) {
 	now := time.Now()
-	if got := thinkingFooter(transcriptBlock{done: true, started: now, ended: now.Add(2300 * time.Millisecond)}); got != "\n✻ Thought for 2.3s" {
-		t.Errorf("timed footer = %q, want %q", got, "\n✻ Thought for 2.3s")
+	style := DefaultTheme().ToolVerbThink
+	if got := stripANSI(thinkingFooter(transcriptBlock{done: true, started: now, ended: now.Add(2300 * time.Millisecond)}, style)); got != "◆ Thought for 2.3s" {
+		t.Errorf("timed footer = %q, want %q", got, "◆ Thought for 2.3s")
 	}
-	if got := thinkingFooter(transcriptBlock{done: true, started: now, ended: now}); got != "\n✻ Thought" {
-		t.Errorf("instant footer = %q, want %q", got, "\n✻ Thought")
+	if got := stripANSI(thinkingFooter(transcriptBlock{done: true, started: now, ended: now}, style)); got != "◆ Thought" {
+		t.Errorf("instant footer = %q, want %q", got, "◆ Thought")
 	}
 }
 
 // TestTranscriptThinkingTailWindow covers the three-state cycle on a body
-// longer than the tail-window cap: collapsed → tail-window (only the tail
-// shown, the earlier-lines hint on top) → full → collapsed. Short bodies skip
-// the tail-window step (TestTranscriptThinkingCollapsedAndExpand pins that).
+// longer than the tail-window cap: collapsed (summary only) → tail-window
+// (only the tail shown, the earlier-lines hint on top) → full → collapsed.
 func TestTranscriptThinkingTailWindow(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
 
@@ -157,16 +185,13 @@ func TestTranscriptThinkingTailWindow(t *testing.T) {
 		Content: agentcore.ContentList{agentcore.NewTextContent("done")},
 	}})
 
-	// Collapsed: hidden-lines hint, head visible, tail not.
+	// Collapsed: summary only, no body.
 	content := stripANSI(m.transcript.renderAll())
-	if !strings.Contains(content, "lines hidden (ctrl+t to expand)") {
-		t.Fatalf("collapsed view missing hidden-lines hint; got:\n%s", content)
+	if strings.Contains(content, "head-unique-line") {
+		t.Fatalf("collapsed view leaks the body; got:\n%s", content)
 	}
-	if !strings.Contains(content, "head-unique-line") {
-		t.Errorf("collapsed view missing first thinking line")
-	}
-	if strings.Contains(content, "tail-unique-line") {
-		t.Errorf("collapsed view leaks the tail line")
+	if !strings.Contains(content, "Thought") {
+		t.Fatalf("collapsed view missing the summary line")
 	}
 
 	// First Ctrl+T on a long body lands on the tail window: the newest
@@ -196,7 +221,7 @@ func TestTranscriptThinkingTailWindow(t *testing.T) {
 	// Third Ctrl+T returns to collapsed.
 	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	content = stripANSI(m.transcript.renderAll())
-	if !strings.Contains(content, "lines hidden (ctrl+t to expand)") {
+	if strings.Contains(content, "head-unique-line") {
 		t.Errorf("third Ctrl+T did not return to the collapsed view; got:\n%s", content)
 	}
 }

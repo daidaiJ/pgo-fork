@@ -96,10 +96,24 @@ type Model struct {
 	// terminal.
 	quitting bool
 
-	// statusBar renders the persistent bottom line (#386, US-003). It is fed the
-	// terminal width, telemetry-derived context usage, and the async git probe
-	// result; View renders it just above the input line.
+	// statusBar renders the usage row below the input (S12; historically the
+	// bottom status bar — the type name survives the migration). It is fed the
+	// terminal width, per-turn usage payloads, and the stream's first-token
+	// timing; renderContent draws it below the input editor.
 	statusBar statusBar
+
+	// header renders the page header line (S1): git branch + cwd left, context
+	// tokens / window right. It consumes the git probe and telemetry events the
+	// status bar used to own.
+	header header
+
+	// ctxPanel is the context-usage overlay panel (grok context panel
+	// reference): toggled by /context, modal while open.
+	ctxPanel contextPanel
+
+	// turnStart anchors the running line's current-turn elapsed readout; reset
+	// at run start and at each turn boundary.
+	turnStart time.Time
 
 	// cwd is the launch directory, captured once at construction and reused for
 	// the git probe and the status bar's path display.
@@ -126,9 +140,6 @@ type Model struct {
 	// ordered block (by pointer), so mutating one here re-renders it inline on the
 	// next reflow.
 	toolCards map[string]*toolCard
-	// lastToolCard points at the most recently started card; Ctrl+O toggles its
-	// expanded state and re-flows the transcript.
-	lastToolCard *toolCard
 
 	// draggingScrollbar is set while the left mouse button is held after pressing
 	// on the transcript scrollbar column, so subsequent motion events drag the
@@ -206,6 +217,7 @@ func NewModel(opts Options) Model {
 		input:      newInput(),
 		cwd:        cwd,
 		statusBar:  newStatusBar(theme, opts, cwd),
+		header:     header{cwd: abbreviateHome(cwd)},
 		toolCards:  make(map[string]*toolCard),
 		slash:      newSlashRegistry(opts, live),
 		live:       live,
@@ -258,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case gitInfoMsg:
-		m.statusBar.SetGit(msg)
+		m.header.setGit(msg)
 		return m, nil
 
 	case tea.BackgroundColorMsg:
@@ -373,6 +385,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case textDeltaMsg:
 		m.spinner.addTokens(msg.delta)
+		m.spinner.setActivity("Responding")
+		m.statusBar.usage.markFirstDelta(time.Now())
 		m.transcript.appendDelta(msg.delta)
 		m.remoteEcho(msg.delta)
 		return m, m.pumpNext()
@@ -382,11 +396,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// block. Spinner token stats intentionally stay reply-only, and the
 		// remote echo intentionally skips thinking — the paired view shows the
 		// reply, not the reasoning.
+		m.spinner.setActivity("Thinking")
 		m.transcript.appendThinking(msg.delta)
 		return m, m.pumpNext()
 
 	case turnEndMsg:
 		m.transcript.finalizeTurn(msg.msg)
+		// Fold the turn's usage payload into the run accounting (S12 usage row)
+		// and anchor the next turn's elapsed readout. A turn without a usage
+		// payload still counts toward the ✓ call tally.
+		u := msg.msg.Usage
+		if u == nil {
+			m.statusBar.usage.foldTurn(0, 0, 0)
+		} else {
+			m.statusBar.usage.foldTurn(u.InputTokens, u.OutputTokens, u.CacheReadTokens)
+		}
+		m.turnStart = time.Now()
 		// Surface a failed or empty turn so a provider/API error is never silent.
 		// The loop delivers request failures (e.g. a 4xx from the endpoint) as a
 		// terminal assistant message with stopReason error/aborted via TurnEndEvent
@@ -419,8 +444,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// append it as an ordered transcript block so it renders inline (#389).
 		card := &toolCard{id: msg.id, name: msg.name, input: msg.input, state: cardRunning}
 		m.toolCards[msg.id] = card
-		m.lastToolCard = card
 		m.transcript.addToolCard(card)
+		m.spinner.setActivity("Running " + toolVerb(msg.name).verb)
 		m.remoteEcho("\n· " + msg.name + "\n")
 		// A `task` tool call dispatches a sub-agent: open a status-panel row keyed by
 		// the tool-call id (matching the later progress/end events) and record its
@@ -487,14 +512,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pumpNext()
 
 	case telemetryMsg:
-		// Feed the status bar's context-usage readout, and retain the event on the
-		// session's telemetry holder so /status can render the cumulative + last-run
-		// telemetry report (US-002, #292). Then keep the pump running.
-		m.statusBar.SetTelemetry(telemetryEventView{
-			util:   msg.ev.ContextUtilization,
-			window: msg.ev.ContextWindow,
-			tokens: msg.ev.ContextTokens,
-		})
+		// Feed the page header's context readout (S1/S2) and retain the event on
+		// the session's telemetry holder so /status can render the cumulative +
+		// last-run telemetry report (US-002, #292). Then keep the pump running.
+		m.header.setTelemetry(msg.ev.ContextTokens, msg.ev.ContextWindow)
 		if m.session != nil && m.session.telemetry != nil {
 			m.session.telemetry.Fold(msg.ev)
 		}
@@ -593,6 +614,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // newline) to the input editor while idle. Keys are matched via KeyPressMsg
 // .String() so the mapping is terminal-independent.
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// The context panel (TUI context-usage overlay) is modal while open: it
+	// consumes every key. Tab/up/down/esc it handles itself; c copies the
+	// session id (the model owns the clipboard Cmd).
+	if m.ctxPanel.open {
+		key := msg.String()
+		if key == "c" && m.session != nil {
+			return m, tea.SetClipboard(m.session.header.ID)
+		}
+		m.ctxPanel.handleKey(key)
+		return m, nil
+	}
+
 	// While idle with the autocomplete popup open, the arrow / Tab / Esc keys
 	// drive the menu instead of the transcript or textarea (FR-15). Enter is left
 	// to the main switch below, which routes through submit → runSlash so the
@@ -708,14 +741,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m.interruptOrQuit()
 	case "ctrl+o":
-		// Toggle the most-recent tool card between its capped preview and the full
-		// response tree, then re-flow so the change shows inline (#389). Routed
-		// through the expandable capability interface (T2.4) instead of a direct
-		// field write.
-		if m.lastToolCard != nil {
-			m.lastToolCard.toggleExpanded()
-			m.transcript.reflow()
-		}
+		// Cycle the most-recent tool call through its fold states (S5/C1):
+		// collapsed diamond row → card with capped response → card with the
+		// full response tree → back to the row. Routed through the transcript
+		// so the block's display state and the card's cache stay in sync.
+		m.transcript.toggleTool()
 		return m, nil
 	case "ctrl+t":
 		// Toggle the most-recent thinking block between its collapsed view (first
@@ -954,11 +984,23 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 			m.relayout()
 			return m, nil
 		}
-		m.spinner.begin(time.Now(), m.thinkingLabel())
+		m.spinner.begin(time.Now())
 		m.spinner.pin("Preparing conversation context")
 		m.running = true
 		m.relayout()
 		return m, tea.Batch(m.session.rebuildCmd(), m.tickSpinner())
+	}
+	// /context is intercepted before registry resolution (like /memory): it
+	// toggles the context-usage overlay panel (grok context panel alignment),
+	// reading the live session's telemetry/tool/skill state that a slash Action
+	// closure cannot reach.
+	if line == "/context" || strings.HasPrefix(line, "/context ") {
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.menu.close()
+		m.ctxPanel.toggle()
+		m.relayout()
+		return m, nil
 	}
 	// /remote-control is intercepted before registry resolution (like /rebuild):
 	// it starts/stops the LAN mirror server, which owns state (server, bridge,
@@ -1047,10 +1089,9 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.transcript.addSystem(outcome.Message)
 	}
 	// A live-state command (/model, /think) may have mutated m.live; sync the
-	// status bar so the model/thinking segments reflect the switch immediately.
+	// usage row's model segment so the switch shows immediately.
 	if m.live != nil {
 		m.statusBar.SetModel(m.live.Model)
-		m.statusBar.SetThinking(string(m.live.ThinkingLevel))
 	}
 	// An action command is complete once its status is shown; a hybrid with no
 	// prompt (notifications only) likewise starts no run.
@@ -1133,20 +1174,12 @@ func (m Model) startPrompt(prompt string) (tea.Model, tea.Cmd) {
 	ch, cmd := m.startRunFn(prompt)
 	m.runCh = ch
 	m.running = true
-	m.spinner.begin(time.Now(), m.thinkingLabel())
+	now := time.Now()
+	m.spinner.begin(now)
+	m.statusBar.usage.beginRun(now)
+	m.turnStart = now
 	m.relayout()
 	return m, tea.Batch(cmd, m.tickSpinner())
-}
-
-// thinkingLabel returns the current thinking-effort label for the spinner stats
-// (e.g. "medium"), or "" when no thinking level is configured so the stat is
-// omitted. It reads the live config the /model command mutates, falling back to
-// the launch Options.
-func (m Model) thinkingLabel() string {
-	if m.live != nil && m.live.ThinkingLevel != "" {
-		return string(m.live.ThinkingLevel)
-	}
-	return string(m.opts.ThinkingLevel)
 }
 
 // taskDescription pulls the human-readable "description" out of a `task` tool
@@ -1332,10 +1365,12 @@ func (m Model) View() tea.View {
 	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 }
 
-// renderContent builds the full-screen shell string (transcript, autocomplete
-// popup, input editor, status bar) without any selection overlay. View wraps it
-// with applySelection for display, and selectedText reuses it to extract the
-// copied text from the exact rows the user sees.
+// renderContent builds the full-screen shell string without any selection
+// overlay (tui-render-semantics.md C4 page-region order): header line,
+// transcript, running zone (sub-agent / ask panels, spinner line), autocomplete
+// overlay, input editor, usage row, keys row. View wraps it with
+// applySelection for display, and selectedText reuses it to extract the copied
+// text from the exact rows the user sees.
 func (m Model) renderContent() string {
 	width := m.width
 	if width <= 0 {
@@ -1346,43 +1381,42 @@ func (m Model) renderContent() string {
 		height = 24
 	}
 
-	status := m.statusBar.Render(width)
-
-	// The input editor renders its own prompt column and cursor across as many
-	// rows as the buffer currently spans (up to maxInputRows).
-	input := m.input.View()
-
-	// Fallback transcript rows before the first size message; once sized the
-	// viewport is pre-sized by relayout and pads its own content.
-	rows := transcriptHeight(height)
-	sized := m.width > 0 && m.height > 0
-
 	var b strings.Builder
-	if sized {
+	// Page header (S1): branch + cwd left, context tokens/window right.
+	b.WriteString(m.header.render(m.theme, width))
+	b.WriteByte('\n')
+
+	// When the context panel is open it replaces the transcript region (it is
+	// modal, so nothing underneath needs to stay visible).
+	if m.ctxPanel.open {
+		b.WriteString(m.ctxPanel.render(m.theme, m.contextData(), width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if sized := m.width > 0 && m.height > 0; sized {
 		// The viewport pads its content to exactly the rows relayout reserved.
 		b.WriteString(m.transcript.view())
 		b.WriteByte('\n')
 	} else {
-		for i := 0; i < rows; i++ {
+		for i := 0; i < transcriptHeight(height); i++ {
 			b.WriteByte('\n')
 		}
 	}
-	// The working spinner sits on its own row just above the input while a run is
-	// in flight (relayout reserves the row so the transcript shrinks to fit). The
-	// sub-agent status panel, when any `task` sub-agents are live, renders on the
-	// rows just ABOVE the spinner: one line each, elapsed refreshed every tick.
+
+	// The running status line sits just above the input while a run is in
+	// flight (relayout reserves the row so the transcript shrinks to fit). The
+	// sub-agent status panel, when any `task` sub-agents are live, renders on
+	// the rows just ABOVE the running line: one line each, refreshed per tick.
+	// The ask_user question panel (T4.2) renders in the same slot while the
+	// user is answering a questionnaire.
 	if m.running {
 		if panel := m.subagents.view(m.theme, width, time.Now()); panel != "" {
 			b.WriteString(panel)
 			b.WriteByte('\n')
 		}
-		// The ask_user question panel (T4.2) renders in the same slot, above the
-		// spinner, while the user is answering a questionnaire.
 		if panel := m.ask.view(m.theme, width); panel != "" {
 			b.WriteString(panel)
 			b.WriteByte('\n')
 		}
-		if line := m.spinner.view(width); line != "" {
+		if line := m.spinner.view(width, m.turnElapsed()); line != "" {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
@@ -1394,12 +1428,165 @@ func (m Model) renderContent() string {
 		b.WriteString(menu)
 		b.WriteByte('\n')
 	}
-	b.WriteString(input)
+	// Input editor with the bottom-border "model · approval" tag (S14)…
+	b.WriteString(m.input.View(m.inputLabel(), m.theme))
 	b.WriteByte('\n')
-	// The status bar is the final line, pinned to the very bottom of the shell
-	// below the input editor.
-	b.WriteString(status)
+	// …then the usage row (S12) and the keys line (S13) pin the bottom.
+	b.WriteString(m.statusBar.Render(width, time.Now()))
+	b.WriteByte('\n')
+	b.WriteString(renderKeysLine(m.theme, width, m.keyBinds()))
 	return b.String()
+}
+
+// contextData snapshots the live state the context panel renders (tab data is
+// gathered on the tea goroutine at render time — no I/O, no locking needed).
+func (m Model) contextData() contextData {
+	d := contextData{
+		modelName: m.modelLabel(),
+		sessionReport: func() string {
+			if m.session == nil {
+				return ""
+			}
+			var buf bytes.Buffer
+			m.session.renderSession(&buf)
+			return strings.TrimRight(buf.String(), "\n")
+		}(),
+	}
+	if m.session != nil {
+		d.sessionID = m.session.header.ID
+	}
+	// Context budget: telemetry when it has arrived, else a naive estimate from
+	// the live messages so the panel is never empty before the first event.
+	d.tokens, d.window = m.header.tokens, m.header.window
+	if d.tokens == 0 && m.session != nil {
+		d.tokens = estimateTokens(m.session.agentCtx.SystemPrompt) +
+			messageTokens(m.session.agentCtx.Messages)
+	}
+	d.sysPromptTokens = estimateTokens(m.sessionSystemPrompt())
+	if m.opts.ToolPlan != nil {
+		d.toolCount = len(m.opts.ToolPlan.Deferred) + len(m.opts.ToolPlan.Hidden)
+	}
+	// Declaration-face cost estimate: name + description + schema ≈ tokens/4.
+	for _, t := range m.opts.Tools {
+		d.toolTokens += estimateTokens(t.Name() + t.Description() + string(t.Schema()))
+	}
+	if d.toolCount == 0 {
+		d.toolCount = len(m.opts.Tools)
+	}
+	d.skillCount = len(m.opts.Skills)
+	for _, s := range m.opts.Skills {
+		d.skillTokens += estimateTokens(s.Frontmatter.Name + s.Frontmatter.Description)
+	}
+	return d
+}
+
+// sessionSystemPrompt returns the active system prompt text (live context
+// first, launch options as fallback), or "".
+func (m Model) sessionSystemPrompt() string {
+	if m.session != nil && m.session.agentCtx != nil {
+		return m.session.agentCtx.SystemPrompt
+	}
+	return m.opts.SysPrompt
+}
+
+// estimateTokens applies the same ≈4 chars/token heuristic the spinner's
+// output readout uses — an estimate, never billing.
+func estimateTokens(s string) int { return len([]rune(s)) / 4 }
+
+// messageTokens sums a message list's text content through the same estimate;
+// assistant messages with a usage payload use the reported token counts.
+func messageTokens(msgs agentcore.MessageList) int {
+	n := 0
+	for _, msg := range msgs {
+		if am, ok := msg.(agentcore.AssistantMessage); ok && am.Usage != nil {
+			n += am.Usage.InputTokens + am.Usage.OutputTokens
+			continue
+		}
+		n += estimateTokens(agentcore.ContentToText(contentOf(msg)))
+	}
+	return n
+}
+
+// contentOf extracts a message's content list through the concrete types the
+// Message interface discriminates (ContentToText needs the list, not the role).
+func contentOf(msg agentcore.Message) agentcore.ContentList {
+	switch m := msg.(type) {
+	case agentcore.UserMessage:
+		return m.Content
+	case agentcore.AssistantMessage:
+		return m.Content
+	case agentcore.ToolResultMessage:
+		return m.Content
+	}
+	return nil
+}
+
+// modelLabel renders "model (provider)" the way the usage row and the input
+// tag show it.
+func (m Model) modelLabel() string {
+	name := ""
+	if m.live != nil {
+		name = m.live.Model
+	}
+	if name == "" {
+		name = m.opts.Model
+	}
+	if prov := m.providerName(); prov != "" {
+		name += " (" + prov + ")"
+	}
+	return name
+}
+
+// providerName resolves the display provider name from the live config,
+// falling back to the launch options.
+func (m Model) providerName() string {
+	if m.live != nil && m.live.ProviderName != "" {
+		return m.live.ProviderName
+	}
+	return m.opts.ProviderName
+}
+
+// inputLabel is the tag embedded in the input editor's bottom border (S14):
+// "model · approval mode". pigo's approval face is the launch trust grant
+// (--approve/-a): granted = always-approve, otherwise the TUI runs restricted
+// (flagged commands fail closed; per-call prompts are a REPL face).
+func (m Model) inputLabel() string {
+	approve := "restricted"
+	if m.opts.Approve {
+		approve = "always-approve"
+	}
+	return m.modelLabel() + " · " + approve
+}
+
+// keyBinds selects the keys-line content for the current shell mode (S13).
+func (m Model) keyBinds() []keyBind {
+	switch {
+	case m.running && m.subagents.active() > 0 && m.input.Value() == "":
+		return []keyBind{
+			{"↑/↓", "选择"},
+			{"Enter", "展开"},
+			{"Esc", "返回"},
+			{"Ctrl+C", "停止"},
+		}
+	case m.running:
+		return []keyBind{{"Ctrl+C", "停止"}}
+	default:
+		return []keyBind{
+			{"Enter", "发送"},
+			{"Ctrl+O", "工具"},
+			{"Ctrl+T", "思考"},
+			{"Ctrl+C", "退出"},
+		}
+	}
+}
+
+// turnElapsed is the current turn's wall time for the running line (zero when
+// idle or before the first anchor).
+func (m Model) turnElapsed() time.Duration {
+	if !m.running || m.turnStart.IsZero() {
+		return 0
+	}
+	return time.Since(m.turnStart)
 }
 
 // applySelection overlays the mouse selection highlight onto the rendered
@@ -1457,21 +1644,26 @@ func (m Model) selectedText() string {
 	return b.String()
 }
 
-// relayout re-sizes the transcript to the rows left after reserving the status
-// bar (1 row), the current input editor height, and any open autocomplete popup.
-// It hands the transcript the full width; the transcript itself spends one column
-// on the scrollbar only while its content overflows (see transcript.reflow), so a
-// short conversation uses the whole width and shows no bar, while a scrolling one
-// reserves the gutter — and that decision re-runs on every streamed line, not just
-// on resize. It is called on every resize and after any edit that changes the
-// input height or menu row count.
+// relayout re-sizes the transcript to the rows left after reserving the chrome
+// rows (C4 page regions: header 1 + usage 1 + keys 1), the current input editor
+// height, and any open autocomplete popup. It hands the transcript the full
+// width; the transcript itself spends one column on the scrollbar only while
+// its content overflows (see transcript.reflow), so a short conversation uses
+// the whole width and shows no bar, while a scrolling one reserves the gutter —
+// and that decision re-runs on every streamed line, not just on resize. It is
+// called on every resize and after any edit that changes the input height or
+// menu row count.
 func (m *Model) relayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	rows := m.height - 1 - m.input.Height() - m.menu.rows()
+	// Width first: the editor's DynamicHeight re-wrap depends on the width, and
+	// the row accounting below must see the settled height. The textarea gets
+	// the border's inner width (the rounded box costs one column per side).
+	m.input.SetWidth(m.width - 2)
+	rows := m.height - 3 - m.input.Height() - m.menu.rows()
 	if m.running {
-		rows-- // the working spinner occupies the row just above the input
+		rows-- // the running status line occupies the row just above the input
 		// The sub-agent panel reserves one status row per live sub-agent, plus the
 		// wrapped output lines of the expanded row (if any); an empty panel reserves
 		// nothing so the single-run layout is unchanged.
@@ -1483,7 +1675,6 @@ func (m *Model) relayout() {
 		rows = 0
 	}
 	m.transcript.setSize(m.width, rows)
-	m.input.SetWidth(m.width)
 }
 
 // onScrollbar reports whether the terminal cell (x, y) is the transcript's

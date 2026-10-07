@@ -65,6 +65,27 @@ type Theme struct {
 	// codes fall through to the terminal's own palette, which is often
 	// illegible on the dark transcript background.
 	ANSI [16]color.Color
+
+	// UserBand styles the user turn as a full-width background band (one shade
+	// above the terminal background) with the turn's timestamp (grok user band).
+	UserBand lipgloss.Style
+	// Chrome styles dim interface chrome: the page header, block timestamps,
+	// usage-row labels and key-hint labels (bright content is styled elsewhere).
+	Chrome lipgloss.Style
+	// ToolVerbRead styles read/observe tool verbs and their diamond (cyan family).
+	ToolVerbRead lipgloss.Style
+	// ToolVerbRun styles executing/side-effect tool verbs (green family).
+	ToolVerbRun lipgloss.Style
+	// ToolVerbEdit styles write/edit tool verbs (amber family).
+	ToolVerbEdit lipgloss.Style
+	// ToolVerbThink styles the thinking summary verb (purple family).
+	ToolVerbThink lipgloss.Style
+	// ToolVerbTask styles sub-agent dispatch verbs (blue family).
+	ToolVerbTask lipgloss.Style
+	// ToolVerbGeneric styles verbs with no dedicated family (accent blue).
+	ToolVerbGeneric lipgloss.Style
+	// KeyHint styles the key name in the keys line (bright); labels use Chrome.
+	KeyHint lipgloss.Style
 }
 
 // Palette color numbers use the ANSI 256-color cube so the theme renders
@@ -93,6 +114,15 @@ const (
 	colorBrightBlue    = "75"  // ANSI 12 (sky blue)
 	colorBrightMagenta = "213" // ANSI 13 (orchid)
 	colorBrightCyan    = "80"  // ANSI 14 (turquoise)
+
+	// Grok-style chrome palette (sampled from the grok reference screenshot,
+	// wiki/port/assets/grok-tui-style-ref-20261005.png).
+	colorBand    = "236" // user band background (one shade above black)
+	colorChrome  = "245" // header/meta/usage dim (== gray; kept named for intent)
+	colorVerbRun = "42"  // executing-tool verb green (== success)
+	colorVerbEdt = "214" // write/edit verb amber (== warn)
+	colorVerbThk = "140" // thinking verb purple
+	colorVerbTsk = "75"  // task verb blue (== bright blue)
 )
 
 // DefaultTheme returns the built-in palette described in the SPEC: success
@@ -168,9 +198,35 @@ func DefaultTheme() Theme {
 			lipgloss.Color(colorBrightYellow),  // 11 bright yellow
 			lipgloss.Color(colorBrightBlue),    // 12 bright blue
 			lipgloss.Color(colorBrightMagenta), // 13 bright magenta
-			lipgloss.Color(colorBrightCyan),    // 14 bright cyan
-			lipgloss.Color(colorUser),          // 15 bright white
+			lipgloss.Color(colorBrightCyan),     // 14 bright cyan
+			lipgloss.Color(colorUser),           // 15 bright white
 		},
+		UserBand: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorUser)).
+			Background(lipgloss.Color(colorBand)),
+		Chrome: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorChrome)),
+		ToolVerbRead: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorBrightCyan)).
+			Bold(true),
+		ToolVerbRun: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorVerbRun)).
+			Bold(true),
+		ToolVerbEdit: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorVerbEdt)).
+			Bold(true),
+		ToolVerbThink: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorVerbThk)).
+			Bold(true),
+		ToolVerbTask: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorVerbTsk)).
+			Bold(true),
+		ToolVerbGeneric: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorAccent)).
+			Bold(true),
+		KeyHint: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorUser)).
+			Bold(true),
 	}
 }
 

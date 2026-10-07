@@ -211,11 +211,12 @@ func TestModelToolResultFiltered(t *testing.T) {
 	}
 }
 
-// TestToolCardNarrowDegradation: below narrowCardWidth the card renders flat
-// (no border, no Input arguments) but keeps header and response; at the
-// threshold and above the full bordered layout is used. The card uses an
-// unregistered tool name so the generic layout (which keeps Input arguments
-// at full width) is exercised (T2.4 folds that section for bash/edit).
+// TestToolCardNarrowDegradation: below narrowCardWidth the flat card omits
+// the Input arguments section but keeps header and response; at the threshold
+// and above the argument section returns. The border is retired outright
+// (S5: expanded cards render borderless at any width). The card uses an
+// unregistered tool name so the generic layout is exercised (T2.4 folds that
+// section for bash/edit).
 func TestToolCardNarrowDegradation(t *testing.T) {
 	theme := DefaultTheme()
 	card := toolCard{
@@ -225,7 +226,7 @@ func TestToolCardNarrowDegradation(t *testing.T) {
 		state:    cardSuccess,
 	}
 
-	narrow := card.render(theme, narrowCardWidth-1)
+	narrow := card.render(theme, narrowCardWidth-1, true, false)
 	if strings.ContainsRune(narrow, '╭') || strings.ContainsRune(narrow, '│') {
 		t.Errorf("narrow render should drop the border:\n%s", narrow)
 	}
@@ -236,9 +237,9 @@ func TestToolCardNarrowDegradation(t *testing.T) {
 		t.Errorf("narrow render lost header/response:\n%s", narrow)
 	}
 
-	full := card.render(theme, narrowCardWidth)
-	if !strings.ContainsRune(full, '╭') {
-		t.Errorf("full render should keep the border:\n%s", full)
+	full := card.render(theme, narrowCardWidth, true, false)
+	if strings.ContainsRune(full, '╭') {
+		t.Errorf("expanded cards render borderless at any width (S5):\n%s", full)
 	}
 	if !strings.Contains(full, "Input arguments") {
 		t.Errorf("full render should keep the Input arguments section:\n%s", full)

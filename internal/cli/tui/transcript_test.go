@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
@@ -10,12 +9,6 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli/ui"
 )
-
-// ansiRE strips SGR escape sequences so tests can inspect the raw text the
-// transcript stored, independent of the theme's coloring.
-var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 // apply runs one Update tick and returns the concrete Model, failing on an
 // unexpected model type. It keeps the streaming tests terse.
@@ -286,7 +279,7 @@ func TestTranscriptScrollToRow(t *testing.T) {
 // TestModelScrollbarDrag drives the model with mouse press/motion/release on the
 // scrollbar column and asserts the drag state toggles and the viewport scrolls.
 func TestModelScrollbarDrag(t *testing.T) {
-	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 30, Height: 8})
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 30, Height: 16})
 	for i := 0; i < 40; i++ {
 		m.transcript.addUser("line")
 	}
