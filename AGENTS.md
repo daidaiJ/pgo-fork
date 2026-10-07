@@ -20,7 +20,14 @@
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
   tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
   仍未拍板**（清单 =
-  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）。
+  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）；
+  ③**下期任务已登记 = T7.1 子智能体中断续接**（2026-10-07 用户点名：中断
+  重派 = token 全量重跑不经济，仅换子代理模型例外；调研定案 + 机制候选 +
+  T5.2 重放约束 =
+  [subagent-resume.md](wiki/port/subagent-resume.md)）；④**T7.2 供应商
+  自定义请求头 + opencode go 兼容头**（pigo 不支持自定义头，OpenCode Go
+  端点强制 `x-opencode-session`；取证 + 设计候选 =
+  [provider-headers.md](wiki/port/provider-headers.md)）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
