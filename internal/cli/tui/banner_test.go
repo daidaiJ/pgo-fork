@@ -27,8 +27,11 @@ func writeUpdateCache(t *testing.T, latest string) {
 func TestRenderBannerShowsVersion(t *testing.T) {
 	t.Setenv("PIGO_HOME", t.TempDir()) // empty cache: no upgrade hint
 	out := renderBanner(DefaultTheme(), Options{Version: "v0.3.1"}, "/tmp/proj")
-	if !strings.Contains(out, "Version") || !strings.Contains(out, "v0.3.1") {
-		t.Errorf("banner missing Version row: %q", out)
+	if !strings.Contains(out, "pigo") || !strings.Contains(out, "v0.3.1") {
+		t.Errorf("banner missing version badge: %q", out)
+	}
+	if !strings.Contains(out, "Model") || !strings.Contains(out, "Directory") {
+		t.Errorf("banner missing info rows: %q", out)
 	}
 	if strings.Contains(out, "Run pigo update to upgrade") {
 		t.Error("banner should not show upgrade hint with empty cache")

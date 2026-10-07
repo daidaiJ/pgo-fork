@@ -11,7 +11,9 @@
   S1–S14（页眉、用户背景带、单行菱形工具行+卡牌退役展开态、thinking
   ◇/◆、运行状态行、圆角输入框+model·审批标签、usage 行、键位行）+
   **/context 上下文面板**（用户补图驱动：面板语义 + 菱形网格 + 分解行 +
-  Tab 会话信息；Dashboard 其余 tab 留待）。42 包 0 FAIL。规格 =
+  Tab 会话信息；Dashboard 其余 tab 留待）+ **欢迎页重刷**（banner 对表
+  grok views/welcome：灰调 logo + 版本徽章/副标题 + 点引导菜单行 + tip）。
+  42 包 0 FAIL。规格 =
   [tui-render-semantics.md](wiki/port/tui-render-semantics.md)（§10 偏差
   D-1~D-10）；真彩终端截图回归待用户实测核验。
   上一批 T6.8 MCP + T6.9 slash 已提交（`d9cc9fe`，2026-10-07 复核 0 FAIL）。
