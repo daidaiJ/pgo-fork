@@ -336,6 +336,12 @@ func (t *transcript) toggleTool() {
 func (t *transcript) appendDelta(delta string) {
 	t.closeThinking()
 	if t.activeAssistant < 0 {
+		// Providers commonly emit whitespace-only text around tool calls; a
+		// block seeded with only that whitespace would render as a run of blank
+		// lines, so the block waits for the first real content instead.
+		if strings.TrimSpace(delta) == "" {
+			return
+		}
 		t.blocks = append(t.blocks, transcriptBlock{role: roleAssistant, turn: t.turn, started: time.Now()})
 		t.activeAssistant = len(t.blocks) - 1
 		t.streamMd = nil
@@ -397,14 +403,20 @@ func (t *transcript) finalizeTurn(msg agentcore.AssistantMessage) {
 	t.lastThinking = -1
 	text := agentcore.ContentToText(msg.Content)
 	if t.activeAssistant >= 0 {
-		blk := &t.blocks[t.activeAssistant]
 		if text != "" {
-			blk.text = text
+			t.blocks[t.activeAssistant].text = text
 		}
-		blk.done = true
-		blk.ended = time.Now()
-		blk.cacheKey = blockCacheKey{} // the authoritative body may differ in content
-	} else if text != "" {
+		if strings.TrimSpace(t.blocks[t.activeAssistant].text) == "" {
+			// A reply that never carried real text (whitespace around tool
+			// calls) is dropped rather than rendered as blank lines.
+			t.blocks = append(t.blocks[:t.activeAssistant], t.blocks[t.activeAssistant+1:]...)
+		} else {
+			blk := &t.blocks[t.activeAssistant]
+			blk.done = true
+			blk.ended = time.Now()
+			blk.cacheKey = blockCacheKey{} // the authoritative body may differ in content
+		}
+	} else if strings.TrimSpace(text) != "" {
 		t.blocks = append(t.blocks, transcriptBlock{
 			role: roleAssistant, text: text, turn: t.turn,
 			done: true, started: time.Now(), ended: time.Now(),
@@ -609,13 +621,17 @@ func (t *transcript) reflow() {
 func (t *transcript) renderAll() string {
 	var b strings.Builder
 	for i := range t.blocks {
-		if i > 0 {
+		out := t.renderBlock(&t.blocks[i], i == t.activeAssistant)
+		if out == "" {
+			continue // dropped block contributes no lines and no separator
+		}
+		if b.Len() > 0 {
 			b.WriteByte('\n')
 			if t.blocks[i].role == roleUser {
 				b.WriteByte('\n')
 			}
 		}
-		b.WriteString(t.renderBlock(&t.blocks[i], i == t.activeAssistant))
+		b.WriteString(out)
 	}
 	return b.String()
 }
@@ -640,6 +656,13 @@ func (t *transcript) renderBlock(blk *transcriptBlock, streaming bool) string {
 
 	if streaming {
 		return t.streamRender(blk.text, t.width)
+	}
+
+	// Seeded history can carry whitespace-only assistant messages (providers
+	// emit newlines around tool calls); they render as nothing rather than a
+	// run of blank lines.
+	if blk.role == roleAssistant && strings.TrimSpace(blk.text) == "" {
+		return ""
 	}
 
 	key := blockCacheKey{

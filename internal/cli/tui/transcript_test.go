@@ -315,3 +315,49 @@ func TestModelScrollbarDrag(t *testing.T) {
 		t.Error("press off the scrollbar column should not start dragging")
 	}
 }
+
+// TestTranscriptDropsWhitespaceOnlyReply covers the 2026-10-07 user report:
+// providers emit whitespace-only text around tool calls, and those replies used
+// to materialize as runs of blank lines between the tool rows and the "◆
+// Thought" footers. Neither a whitespace delta stream, a whitespace-only final
+// message, nor a whitespace block already seated in the transcript may render
+// any lines.
+func TestTranscriptDropsWhitespaceOnlyReply(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	// Step 1: whitespace deltas only, finalized with whitespace-only content.
+	m = apply(t, m, textDeltaMsg{delta: "\n\n"})
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent("\n\n")},
+	}})
+	// Step 2: whitespace arrives only in the final message (no deltas).
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent(" \n  \n")},
+	}})
+	// Step 3: a real reply still renders.
+	m = apply(t, m, textDeltaMsg{delta: "real reply"})
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent("real reply")},
+	}})
+
+	if n := len(m.transcript.blocks); n != 1 {
+		t.Fatalf("block count = %d, want 1 (the real reply); blocks %+v", n, m.transcript.blocks)
+	}
+	body := stripANSI(m.transcript.renderAll())
+	if !strings.Contains(body, "real reply") {
+		t.Errorf("real reply missing from render: %q", body)
+	}
+	if strings.Contains(body, "\n\n") {
+		t.Errorf("whitespace replies must not leave blank lines: %q", body)
+	}
+
+	// Seeded history (session resume) can carry the same whitespace messages;
+	// the render path drops them too.
+	tr := newTranscript(DefaultTheme())
+	tr.totalWidth = 40
+	tr.blocks = append(tr.blocks, transcriptBlock{role: roleAssistant, text: "\n\n", done: true})
+	tr.reflow()
+	if out := tr.renderAll(); out != "" {
+		t.Errorf("seeded whitespace-only assistant block should render nothing: %q", out)
+	}
+}

@@ -254,11 +254,19 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 	trust.RegisterCommand(s.slash, mgr, cwd)
 
 	// Permission engine (T5.2): rules + side-effect contract + self-edit
-	// guard over the trust manager's directory fast path. The ask channel
-	// dereferences s.remote at call time so /remote-control toggling after
-	// assembly keeps working. A config or store error aborts the launch: a
-	// boundary the user believes is in force must not silently vanish.
-	trustedFn := func(dir string) bool { return mgr != nil && mgr.IsTrusted(dir) }
+	// guard over the trust manager's directory fast path. --approve joins the
+	// fast path directly (Options.Approve documents "side-effect tools run
+	// without per-call confirmation"): without it a TUI launch whose trust
+	// store has no entry for the directory is "restricted" — and since the
+	// ask channel denies when no remote browser is paired, every bash call
+	// (even read-only git log/status) used to be silently blocked. The ask
+	// channel dereferences s.remote at call time so /remote-control toggling
+	// after assembly keeps working. A config or store error aborts the
+	// launch: a boundary the user believes is in force must not silently
+	// vanish.
+	trustedFn := func(dir string) bool {
+		return opts.Approve || (mgr != nil && mgr.IsTrusted(dir))
+	}
 	permEngine, engineErr := run.BuildPermissionEngine(cwd, opts.Tools, opts.Permissions,
 		engineAskViaRemote(func() *remoteSession { return s.remote }, mgr, cwd), trustedFn)
 	if engineErr != nil {

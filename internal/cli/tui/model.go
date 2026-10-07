@@ -243,6 +243,11 @@ func (m Model) withSession(s *runSession, history []agentcore.Message) Model {
 	// newRunSessionWithStore), and /status can list skill/plugin/user commands.
 	m.live = s.live
 	m.slash = s.slash
+	// Seed the header's context readout (S1/S2) so it is visible from the first
+	// frame: the window is known from the live config and the used tokens come
+	// from the same live estimate the /context panel falls back to, instead of
+	// waiting for the end-of-run TelemetryEvent.
+	m.header.setTelemetry(estimateTokens(s.agentCtx.SystemPrompt)+messageTokens(s.agentCtx.Messages), s.live.ContextWindow)
 	m.transcript.addBanner(renderBanner(m.theme, m.opts, m.cwd))
 	seedTranscript(&m.transcript, history)
 	return m
@@ -413,6 +418,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusBar.usage.foldTurn(0, 0, 0)
 		} else {
 			m.statusBar.usage.foldTurn(u.InputTokens, u.OutputTokens, u.CacheReadTokens)
+			// Refresh the header readout per turn (S1/S2): input + cache buckets
+			// + output approximates the context the next request will see, so the
+			// figure tracks a long agentic run instead of jumping only at run end.
+			// anthropic splits cache from input (sum all three); openai folds the
+			// cached share into input with the cache buckets at zero — both add up.
+			m.header.setTelemetry(u.InputTokens+u.CacheReadTokens+u.CacheWriteTokens+u.OutputTokens, m.live.ContextWindow)
 		}
 		m.turnStart = time.Now()
 		// Surface a failed or empty turn so a provider/API error is never silent.

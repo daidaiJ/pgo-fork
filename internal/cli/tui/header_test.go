@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli/ui"
 )
 
@@ -84,5 +87,53 @@ func TestHeaderRightInsetYieldsScrollbarColumn(t *testing.T) {
 	// assertions above carry the yield semantics.
 	if !strings.Contains(inset, "26K / 1.0M") {
 		t.Errorf("inset header should still show the budget: %q", inset)
+	}
+}
+
+// TestHeaderSeededOnSessionBind covers the 2026-10-07 user report: the
+// context-budget readout used to stay hidden until the end-of-run TelemetryEvent
+// arrived. Binding a session must seed it immediately — window from the live
+// config, tokens from the same live estimate the /context panel falls back to.
+func TestHeaderSeededOnSessionBind(t *testing.T) {
+	store := newTestStore(t)
+	s, _, err := newRunSessionWithStore(store, Options{
+		Model:        "seed-model",
+		ProviderName: "seed-provider",
+	})
+	if err != nil {
+		t.Fatalf("newRunSessionWithStore: %v", err)
+	}
+	s.agentCtx.SystemPrompt = "you are a helpful assistant doing token-worthy work"
+	s.agentCtx.Messages = append(s.agentCtx.Messages,
+		agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("hello, world")}})
+
+	m := NewModel(Options{}).withSession(s, nil)
+	if m.header.window <= 0 {
+		t.Fatalf("header window not seeded: %d", m.header.window)
+	}
+	if m.header.tokens <= 0 {
+		t.Fatalf("header tokens not seeded from live estimate: %d", m.header.tokens)
+	}
+	out := stripANSI(m.header.render(DefaultTheme(), 120, 0))
+	if !strings.Contains(out, "/") {
+		t.Errorf("header should show the budget readout right after bind: %q", out)
+	}
+}
+
+// TestHeaderRefreshesPerTurn verifies the per-turn usage fold keeps the header
+// readout current during a long agentic run, not only at run end.
+func TestHeaderRefreshesPerTurn(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{agentcore.NewTextContent("ok")},
+		Usage: &agentcore.Usage{
+			InputTokens:      1000,
+			OutputTokens:     200,
+			CacheReadTokens:  300,
+			CacheWriteTokens: 50,
+		},
+	}})
+	if want := 1000 + 300 + 50 + 200; m.header.tokens != want {
+		t.Errorf("header tokens = %d, want %d (input+cache read+cache write+output)", m.header.tokens, want)
 	}
 }

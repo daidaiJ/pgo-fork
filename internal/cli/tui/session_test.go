@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -228,6 +229,43 @@ func TestPersistAfterCompaction(t *testing.T) {
 		if got[i].Role() == agentcore.RoleCompaction {
 			t.Errorf("original entry %d was replaced by a compaction entry", i)
 		}
+	}
+}
+
+// TestTUIApproveGrantsEngineTrust reproduces the 2026-10-07 incident: the TUI
+// never ran the REPL's EstablishTrust step, so --approve never reached the
+// permission engine — a launch whose trust store had no entry for the cwd was
+// "restricted" in the engine's eyes, and with no remote browser paired the ask
+// channel denied, silently blocking even read-only bash (git log/status) while
+// the model saw "permission denied by the user".
+func TestTUIApproveGrantsEngineTrust(t *testing.T) {
+	t.Setenv("PIGO_HOME", t.TempDir()) // isolated trust store: no persisted grants
+	store := newTestStore(t)
+	call := agentcore.AgentToolCall{
+		ID:        "t1",
+		Name:      "bash",
+		Arguments: json.RawMessage(`{"command":"git log --oneline -5"}`),
+	}
+
+	// With --approve the engine's trust fast path must allow the call.
+	s, _, err := newRunSessionWithStore(store, Options{Model: "m", ProviderName: "p", Approve: true})
+	if err != nil {
+		t.Fatalf("newRunSessionWithStore(approve): %v", err)
+	}
+	if d := s.permEngine.BeforeToolCall(t.Context(), call); d != nil {
+		t.Errorf("--approve should allow bash in a store-untracked directory, got block: %+v", d.Content)
+	}
+
+	// Without --approve and without /trust the unpaired-remote ask channel
+	// still fails closed: the call is blocked (the TUI-local approval channel
+	// and the misleading "denied by the user" wording are registered for
+	// design review, not changed here).
+	s2, _, err := newRunSessionWithStore(store, Options{Model: "m", ProviderName: "p"})
+	if err != nil {
+		t.Fatalf("newRunSessionWithStore: %v", err)
+	}
+	if d := s2.permEngine.BeforeToolCall(t.Context(), call); d == nil || !d.Block {
+		t.Error("restricted TUI (no --approve, no /trust) must block bash when no approval channel exists")
 	}
 }
 
