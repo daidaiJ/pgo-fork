@@ -15,19 +15,21 @@
   grok views/welcome：灰调 logo + 版本徽章/副标题 + 点引导菜单行 + tip）。
   42 包 0 FAIL。规格 =
   [tui-render-semantics.md](wiki/port/tui-render-semantics.md)（§10 偏差
-  D-1~D-10）；真彩终端截图回归待用户实测核验。
-  上一批 T6.8 MCP + T6.9 slash 已提交（`d9cc9fe`，2026-10-07 复核 0 FAIL）。
+  D-1~D-10，§10.12 = 打磨批）；真彩终端截图回归待用户实测核验。
+  T6.10 主批 `1378131` + banner 重刷 `2c21725` + 打磨批 `cac34bb`（cache
+  0%/think %/todo 渲染器/去 ATX/grok 提示语法/banner 居中）+ 指针 `c3f9bbb`。
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
   tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
   仍未拍板**（清单 =
   [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）；
-  ③**下期任务已登记 = T7.1 子智能体中断续接**（2026-10-07 用户点名：中断
-  重派 = token 全量重跑不经济，仅换子代理模型例外；调研定案 + 机制候选 +
-  T5.2 重放约束 =
-  [subagent-resume.md](wiki/port/subagent-resume.md)）；④**T7.2 供应商
-  自定义请求头 + opencode go 兼容头**（pigo 不支持自定义头，OpenCode Go
-  端点强制 `x-opencode-session`；取证 + 设计候选 =
-  [provider-headers.md](wiki/port/provider-headers.md)）。
+  ③**T7.1 子智能体中断续接：R11 参照调研已完成（2026-10-07 深夜），
+  定案 = 融合分层**——A 做底座（task 工具 resume 参数 + 历史落盘前缀
+  重放，grok resume_from + opencode task_id 参照）、B 降级为超窗策略
+  （crush 摘要重入队参照）、C 进度清单作重派增强；取证与登记 =
+  [subagent-resume.md](wiki/port/subagent-resume.md) §2.5，**实作排期
+  待拍板**；④**T7.2 供应商自定义请求头 + opencode go 兼容头**（取证 +
+  设计候选 A/B/C/D 已齐 =
+  [provider-headers.md](wiki/port/provider-headers.md)，落地排期待拍板）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
