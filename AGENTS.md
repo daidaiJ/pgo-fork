@@ -27,6 +27,13 @@
   trustedFn 纳入 opts.Approve）。C 的设计级待拍板（本地审批面板 / 拒绝
   文案诚实化 / bash per-command 只读快路径）= D-C1~D-C3，登记在
   [tui-blank-header-fixes.md](wiki/port/tui-blank-header-fixes.md) §5.4。
+  **2026-10-07 晚交互批 `e404a3e`**：①鼠标点击折叠/展开——renderAll 行→块
+  命中表（hits），点块首行（折叠菱形行/◆ footer/展开卡标题）即切换该块，
+  Ctrl+O/Ctrl+T 状态机抽为 toggleBlock 共用；正文行仍是文本选择区，
+  /context 面板打开时跳过。②todo 展开卡对齐 grok 任务列表：`Tasks · n/m
+  done` + ▸进行中/✓完成(绿+灰退)/◇待办，替换 generic 卡（旧路径 JSON
+  dump+checkbox 重复）。规格 = [tui-mouse-fold-todo.md](wiki/port/tui-mouse-fold-todo.md)
+  （偏差 B-1 todo 第二态无视觉差、B-2 点击仅块首行）。42 包 0 FAIL。
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
   tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
   仍未拍板**（清单 =
