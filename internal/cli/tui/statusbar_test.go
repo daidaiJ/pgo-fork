@@ -53,13 +53,38 @@ func TestUsageRowHidesUnobservedSegments(t *testing.T) {
 	}
 }
 
-func TestUsageRowHidesCacheWhenUnreported(t *testing.T) {
+// TestUsageRowShowsColdCache verifies the 2026-10-07 contract flip (user
+// report: the cache segment was missing from the row): a turn with observed
+// prompt usage always shows the cache share, and a gateway that reports no
+// cached tokens reads as an explicit "cache 0%" — a cold cache is visible,
+// not silently hidden.
+func TestUsageRowShowsColdCache(t *testing.T) {
 	s := newTestStatusBar()
 	now := time.Now()
 	s.usage.beginRun(now)
 	s.usage.foldTurn(500, 100, 0)
-	if out := stripANSI(s.Render(120, now)); strings.Contains(out, "cache") {
-		t.Errorf("cache segment should hide when the provider reports no cache tokens: %q", out)
+	if out := stripANSI(s.Render(120, now)); !strings.Contains(out, "cache 0%") {
+		t.Errorf("cache segment should read 0%% when no cache tokens are reported: %q", out)
+	}
+	s.usage.foldTurn(500, 100, 400)
+	if out := stripANSI(s.Render(120, now)); !strings.Contains(out, "cache 29%") {
+		t.Errorf("cache segment should report the hit share (400/1400): %q", out)
+	}
+}
+
+// TestUsageRowThinkingShare verifies the think segment: streamed reasoning
+// characters over all streamed characters, hidden until a stream exists.
+func TestUsageRowThinkingShare(t *testing.T) {
+	s := newTestStatusBar()
+	now := time.Now()
+	s.usage.beginRun(now)
+	if out := stripANSI(s.Render(160, now)); strings.Contains(out, "think") {
+		t.Errorf("think segment should stay hidden before any stream: %q", out)
+	}
+	s.usage.addChars(strings.Repeat("a", 600), true)
+	s.usage.addChars(strings.Repeat("b", 400), false)
+	if out := stripANSI(s.Render(160, now)); !strings.Contains(out, "think 60%") {
+		t.Errorf("think segment should report 60%% reasoning share: %q", out)
 	}
 }
 

@@ -29,8 +29,14 @@ type usageStats struct {
 	in        int // summed prompt tokens
 	out       int // summed completion tokens
 	cacheRead int // summed cache-read tokens (0 when provider does not report)
-	firstDelta time.Time // first streamed reply byte (TTFT anchor)
-	runStart   time.Time
+	// streamChars / thinkChars count streamed reply / reasoning characters —
+	// the ≈4 chars/token basis for the thinking-share segment (the common wire
+	// does not report reasoning tokens, so the share is an estimate, like the
+	// ↓tok readout on the running line).
+	streamChars int
+	thinkChars  int
+	firstDelta  time.Time // first streamed reply byte (TTFT anchor)
+	runStart    time.Time
 }
 
 // statusBar renders the usage row. The historical type name stays (call sites
@@ -69,8 +75,18 @@ func (s *statusBar) SetModel(model string) {
 // beginRun resets the accounting for a fresh run.
 func (s *usageStats) beginRun(now time.Time) {
 	s.calls, s.in, s.out, s.cacheRead = 0, 0, 0, 0
+	s.streamChars, s.thinkChars = 0, 0
 	s.runStart = now
 	s.firstDelta = time.Time{}
+}
+
+// addChars folds one streamed delta into the thinking-share basis.
+func (s *usageStats) addChars(delta string, thinking bool) {
+	if thinking {
+		s.thinkChars += len(delta)
+		return
+	}
+	s.streamChars += len(delta)
 }
 
 // markFirstDelta records the TTFT anchor on the first streamed byte.
@@ -104,9 +120,19 @@ func (s statusBar) Render(width int, now time.Time) string {
 	if u.in > 0 || u.out > 0 {
 		plain = append(plain, fmt.Sprintf("in %s out %s", humanTokens(u.in), humanTokens(u.out)))
 	}
-	if u.cacheRead > 0 && u.in+u.cacheRead > 0 {
+	// Cache hit share: prompt tokens served from the provider cache. The
+	// segment stays live for every turn with observed prompt usage — cache 0%
+	// is the honest readout when the gateway reports no cached tokens, so a
+	// cold cache is visible rather than silently hidden.
+	if u.in+u.cacheRead > 0 {
 		pct := 100 * float64(u.cacheRead) / float64(u.in+u.cacheRead)
-		plain = append(plain, fmt.Sprintf("cache %.1f%%", pct))
+		plain = append(plain, fmt.Sprintf("cache %.0f%%", pct))
+	}
+	// Thinking share: streamed reasoning characters over all streamed
+	// characters (≈4 chars/token on both sides, so the ratio is token-honest).
+	if u.streamChars+u.thinkChars > 0 {
+		pct := 100 * float64(u.thinkChars) / float64(u.streamChars+u.thinkChars)
+		plain = append(plain, fmt.Sprintf("think %.0f%%", pct))
 	}
 	if ttft, rate, ok := u.timing(now); ok {
 		plain = append(plain, fmt.Sprintf("%dms ttft · %s tok/s", ttft.Milliseconds(), humanTokens(int(rate))))

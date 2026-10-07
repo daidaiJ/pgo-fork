@@ -387,6 +387,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner.addTokens(msg.delta)
 		m.spinner.setActivity("Responding")
 		m.statusBar.usage.markFirstDelta(time.Now())
+		m.statusBar.usage.addChars(msg.delta, false)
 		m.transcript.appendDelta(msg.delta)
 		m.remoteEcho(msg.delta)
 		return m, m.pumpNext()
@@ -395,8 +396,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reasoning-model thinking stream (T1.3): append to the dimmed thinking
 		// block. Spinner token stats intentionally stay reply-only, and the
 		// remote echo intentionally skips thinking — the paired view shows the
-		// reply, not the reasoning.
+		// reply, not the reasoning. The usage row counts thinking characters
+		// toward its think-share segment.
 		m.spinner.setActivity("Thinking")
+		m.statusBar.usage.addChars(msg.delta, true)
 		m.transcript.appendThinking(msg.delta)
 		return m, m.pumpNext()
 
@@ -1547,15 +1550,24 @@ func (m Model) providerName() string {
 }
 
 // inputLabel is the tag embedded in the input editor's bottom border (S14):
-// "model · approval mode". pigo's approval face is the launch trust grant
-// (--approve/-a): granted = always-approve, otherwise the TUI runs restricted
-// (flagged commands fail closed; per-call prompts are a REPL face).
+// the current shell mode as "model · [think X ·] approval face". pigo's
+// approval face is the launch trust grant (--approve/-a): granted =
+// always-approve, otherwise the TUI runs restricted (flagged commands fail
+// closed; per-call prompts are a REPL face). The thinking level joins the mode
+// readout when it is on, so the reasoning posture is visible where the model
+// types. Later modes (code mode, prompt-constraint styles) append their own
+// segment here rather than growing a second tag slot.
 func (m Model) inputLabel() string {
+	parts := []string{m.modelLabel()}
+	if t := m.opts.ThinkingLevel; t != "" && t != agentcore.ThinkingOff {
+		parts = append(parts, "think "+string(t))
+	}
 	approve := "restricted"
 	if m.opts.Approve {
 		approve = "always-approve"
 	}
-	return m.modelLabel() + " · " + approve
+	parts = append(parts, approve)
+	return strings.Join(parts, " · ")
 }
 
 // keyBinds selects the keys-line content for the current shell mode (S13).

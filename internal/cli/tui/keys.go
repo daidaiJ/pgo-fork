@@ -14,24 +14,26 @@ import (
 // keyBind is one advertised key: the key name and its label.
 type keyBind struct{ key, label string }
 
-// renderKeysLine draws binds right out of the mode list the model selects.
+// renderKeysLine draws binds right out of the mode list the model selects, in
+// the grok hint grammar (views/welcome mod.rs): key bright bold, two spaces,
+// dim label, then four spaces before the next pair — no pipe separators.
 func renderKeysLine(theme Theme, width int, binds []keyBind) string {
 	if width <= 0 || len(binds) == 0 {
 		return ""
 	}
-	sep := theme.Chrome.Render(" | ")
+	gap := "    "
 	var b strings.Builder
 	w := 0
 	for i, kb := range binds {
 		if i > 0 {
-			if w+ui.Width(" | ") > width {
+			if w+ui.Width(gap) > width {
 				break
 			}
-			b.WriteString(sep)
-			w += ui.Width(" | ")
+			b.WriteString(gap)
+			w += ui.Width(gap)
 		}
-		item := theme.KeyHint.Render(kb.key) + theme.Chrome.Render(":" + kb.label)
-		iw := ui.Width(kb.key + ":" + kb.label)
+		item := theme.KeyHint.Render(kb.key) + theme.Chrome.Render("  "+kb.label)
+		iw := ui.Width(kb.key+"  "+kb.label)
 		if w+iw > width {
 			break
 		}

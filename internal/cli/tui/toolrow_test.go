@@ -233,14 +233,18 @@ func TestKeysLineModes(t *testing.T) {
 	idle := stripANSI(renderKeysLine(theme, 100, []keyBind{
 		{"Enter", "发送"}, {"Ctrl+O", "工具"}, {"Ctrl+T", "思考"}, {"Ctrl+C", "退出"},
 	}))
-	for _, want := range []string{"Enter:发送", "Ctrl+O:工具", "Ctrl+T:思考", "Ctrl+C:退出"} {
+	// grok hint grammar: key + two spaces + label, pairs joined by four spaces.
+	for _, want := range []string{"Enter  发送", "Ctrl+O  工具", "Ctrl+T  思考", "Ctrl+C  退出"} {
 		if !strings.Contains(idle, want) {
 			t.Errorf("idle keys line missing %q: %q", want, idle)
 		}
 	}
+	if !strings.Contains(idle, "发送    Ctrl+O") {
+		t.Errorf("idle keys line missing the wide pair gap: %q", idle)
+	}
 
 	running := stripANSI(renderKeysLine(theme, 100, []keyBind{{"Ctrl+C", "停止"}}))
-	if !strings.Contains(running, "Ctrl+C:停止") || strings.Contains(running, "发送") {
+	if !strings.Contains(running, "Ctrl+C  停止") || strings.Contains(running, "发送") {
 		t.Errorf("running keys line = %q, want only the stop bind", running)
 	}
 
@@ -354,5 +358,41 @@ func TestShellNeverOverflowsWidth(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestToolRowTodoDigest verifies the todo row shows a progress digest instead
+// of the raw todos array (user report: Go map syntax leaked onto the row).
+func TestToolRowTodoDigest(t *testing.T) {
+	c := &toolCard{name: "todo", input: map[string]any{
+		"todos": []any{
+			map[string]any{"content": "Check files", "status": "completed"},
+			map[string]any{"content": "Identify artifacts", "status": "pending"},
+		},
+	}}
+	row := stripANSI(renderToolRow(c, DefaultTheme(), 100, false))
+	if !strings.Contains(row, "1/2 done · Check files") {
+		t.Errorf("todo row should show the digest, got %q", row)
+	}
+	if strings.Contains(row, "map[") {
+		t.Errorf("todo row leaked Go map syntax: %q", row)
+	}
+}
+
+// TestDefaultPrimaryArgJSON verifies the generic fallback serializes composite
+// values as compact JSON — never Go's %v map syntax.
+func TestDefaultPrimaryArgJSON(t *testing.T) {
+	c := &toolCard{name: "mystery", input: map[string]any{
+		"opts": map[string]any{"depth": 3, "mode": "fast"},
+	}}
+	arg := c.defaultPrimaryArg()
+	if strings.Contains(arg, "map[") {
+		t.Errorf("primary arg leaked Go map syntax: %q", arg)
+	}
+	if arg != `{"depth":3,"mode":"fast"}` {
+		t.Errorf("primary arg = %q, want compact JSON", arg)
+	}
+	if got := formatArgValue("plain text"); got != "plain text" {
+		t.Errorf("string value = %q, want verbatim", got)
 	}
 }

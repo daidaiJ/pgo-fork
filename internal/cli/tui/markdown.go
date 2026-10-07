@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/glamour"
+	glansi "github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/smallnest/pigo/internal/cli/ui"
@@ -70,12 +72,24 @@ func rendererFor(width int) *glamour.TermRenderer {
 	if wrap < 0 {
 		wrap = 0
 	}
-	style := "dark"
+	// Stock dark/light styles keep the raw "## " ATX prefixes on H2–H6 (the
+	// only per-level trait they add over the shared Heading base). In a
+	// scrolling transcript that reads as un-rendered Markdown leaking through,
+	// so the transcript style strips the prefixes — the heading base (color +
+	// bold) alone carries the hierarchy. StyleConfig is a value struct, so the
+	// package-level configs are copied and left untouched.
+	style := styles.DarkStyleConfig
 	if !mdDark {
-		style = "light"
+		style = styles.LightStyleConfig
+	}
+	// prefix (the stock ATX trait, json "prefix") and BlockPrefix both cleared
+	// so any prefix-shaped trait the style carries dies here.
+	for _, h := range []*glansi.StyleBlock{&style.H2, &style.H3, &style.H4, &style.H5, &style.H6} {
+		h.Prefix = ""
+		h.BlockPrefix = ""
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(style),
+		glamour.WithStyles(style),
 		glamour.WithWordWrap(wrap),
 	)
 	if err != nil {

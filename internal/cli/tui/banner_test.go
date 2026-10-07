@@ -91,3 +91,19 @@ func TestRenderBannerProtocolLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestCenterLines verifies the banner centering: a block narrower than the
+// width gets a symmetric left margin, and a block wider than the width stays
+// left-aligned (never clipped on narrow terminals).
+func TestCenterLines(t *testing.T) {
+	in := "aaa\nbb"
+	if got := stripANSI(centerLines(in, 10)); !strings.HasPrefix(got, "   aaa\n   bb") {
+		t.Errorf("centered block = %q, want a 3-column left margin on every line", got)
+	}
+	if got := centerLines(in, 3); got != in {
+		t.Errorf("narrow width must not pad, got %q", got)
+	}
+	if got := centerLines(in, 0); got != in {
+		t.Errorf("zero width must be a no-op, got %q", got)
+	}
+}

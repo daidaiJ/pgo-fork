@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -167,6 +168,7 @@ var toolCardRenderers = map[string]toolCardRenderer{
 	"grep":          fileToolRenderer{},
 	"memory_search": fileToolRenderer{},
 	"edit":          editToolRenderer{},
+	"todo":          todoToolRenderer{},
 }
 
 // toolCardRendererFor resolves the renderer for a tool call name,
@@ -332,13 +334,29 @@ func (c toolCard) diffSection(theme Theme, inner int) []string {
 }
 
 // defaultPrimaryArg is the generic fallback: the first argument in sorted-key
-// order. Returns "" when the call carried no arguments.
+// order. Returns "" when the call carried no arguments. Composite values
+// (objects, arrays) serialize as compact JSON — %v would leak Go map syntax
+// onto the row (map[content:… status:…]).
 func (c toolCard) defaultPrimaryArg() string {
 	if len(c.input) == 0 {
 		return ""
 	}
 	keys := sortedKeys(c.input)
-	return fmt.Sprintf("%v", c.input[keys[0]])
+	return formatArgValue(c.input[keys[0]])
+}
+
+// formatArgValue renders one argument value for a single-line summary: strings
+// verbatim, everything else as compact JSON (Go-map-free), falling back to %v
+// when the value is not JSON-serializable.
+func formatArgValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
 
 // pathArg is the file-family primary argument: the "path" key, falling back to

@@ -188,3 +188,23 @@ func TestOpenAIDecoderThroughTransport(t *testing.T) {
 		t.Errorf("stream must end with done, got %v", kinds)
 	}
 }
+
+// TestOpenAIDecoderCacheTokens verifies the 2026-10-07 usage-row contract: the
+// OpenAI/OpenRouter prompt_tokens_details.cached_tokens report lands in
+// Usage.CacheReadTokens so the TUI can show the cache hit share.
+func TestOpenAIDecoderCacheTokens(t *testing.T) {
+	body := `data: {"id":"c","model":"m","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":500,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":320}}}
+
+`
+	dec := NewOpenAIDecoder()
+	_, final := feedSSE(t, dec, body)
+	if final.Usage == nil {
+		t.Fatal("final message must carry a usage payload")
+	}
+	if final.Usage.CacheReadTokens != 320 {
+		t.Errorf("CacheReadTokens = %d, want 320", final.Usage.CacheReadTokens)
+	}
+	if final.Usage.InputTokens != 500 || final.Usage.OutputTokens != 20 {
+		t.Errorf("in/out = %d/%d, want 500/20", final.Usage.InputTokens, final.Usage.OutputTokens)
+	}
+}

@@ -635,7 +635,7 @@ func (t *transcript) renderBlock(blk *transcriptBlock, streaming bool) string {
 		}
 		return blk.card.render(t.theme, t.width, blk.display == displayFull, dim)
 	case roleBanner:
-		return t.cached(blk, blk.text, dim)
+		return t.cached(blk, centerLines(blk.text, t.width), dim)
 	}
 
 	if streaming {

@@ -21,26 +21,60 @@ import (
 
 // logoLines is the pigo braille-art logo, one string per row.
 var logoLines = []string{
-	"⣿⣿⣿⣿⡿⠟⠛⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠙⣿",
-	"⣿⣿⡿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼",
-	"⣿⠋⠀⠀⠀⠀⠀⣀⡀⠀⠀⠀⠀⢠⣤⣤⣤⠀⠀⠀⠀⠀⣤⣤⣤⣤⣤⣤⣾⣿",
-	"⣧⠀⠀⠀⠀⣠⣾⣿⡇⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿",
-	"⣿⣶⣤⣤⣾⣿⣿⣿⡇⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿",
-	"⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⢀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿",
-	"⣿⣿⣿⣿⣿⣿⣿⡟⠀⠀⠀⠀⢸⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿",
-	"⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⣾⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿",
-	"⣿⣿⣿⣿⣿⣿⣿⡟⠀⠀⠀⠀⢠⣿⣿⣿⣿⣿⠀⠀⠀⠀⣿⣿⣿⡿⠛⠛⢿⣿",
-	"⣿⣿⣿⣿⣿⡿⠁⠀⠀⠀⠀⣾⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⡟⠀⠀⠀⠀⢻",
-	"⣿⣿⣿⣿⡟⠁⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀⠀⠛⠛⠁⠀⠀⠀⠀⣾",
-	"⣿⣿⣿⡏⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿",
-	"⣿⣿⣿⣿⣄⣀⣀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣄⣀⣀⣀⣀⣠⣴⣿⣿⣿",
+	"⠀⠀⠀⠀⠀⢄⢤⣤⣼⣼⣼⣼⣼⣼⣼⣼⣼⣼⣼⣼⣼⣼⣤⣄⢄⠀⠀⠀⠀⠀",
+	"⠀⠀⢀⣴⣾⣿⣿⡻⡻⡛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠻⡻⡻⣿⣿⣽⣬⠄⠀⠀",
+	"⠀⢠⣾⡿⠛⠃⠀⣀⡀⠀⠀⠀⠀⢠⣤⣤⣤⠀⠀⠀⠀⠀⣤⣤⣧⣿⣻⣽⡄⠀",
+	"⠀⣾⡟⠁⠀⣠⣾⣿⡇⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⠂⢻⣽⠀",
+	"⢰⣿⠀⠀⣾⣿⣿⣿⡇⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⣿⡌",
+	"⢲⣿⠀⠀⣿⣿⣿⣿⠀⠀⠀⠀⢀⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⣿⡍",
+	"⢲⣿⠀⠀⣿⣿⣿⡟⠀⠀⠀⠀⢸⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⣿⡍",
+	"⢲⣿⠀⠀⣿⣿⣿⠇⠀⠀⠀⠀⣾⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⣿⣿⠀⠀⣿⡍",
+	"⠲⣿⠀⠀⣿⣿⣿⡟⠀⠀⠀⠀⢠⣿⣿⣿⣿⣿⠀⠀⠀⠀⣿⣿⣿⡿⠀⠀⣿⡉",
+	"⠀⣻⣭⠄⣿⡿⠁⠀⠀⠀⠀⣾⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿⣿⡟⠀⢀⣶⡿⠀",
+	"⠀⠒⣻⣽⣿⢅⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀⠀⠛⠛⢅⣤⣾⡿⠉⠀",
+	"⠀⠀⠂⠻⣻⣿⣿⣼⣼⣬⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣴⣼⣼⣿⣿⡿⡛⠁⠀⠀",
+	"⠀⠀⠀⠀⠀⠃⠓⠛⡻⡻⡻⡻⡻⡻⡻⡻⡻⡻⡻⡻⡻⡻⠛⠋⠃⠀⠀⠀⠀⠀",
 }
 
-// bannerTip is the dim first-run hint line under the info rows (grok's tip
-// slot); the keys row at the bottom of the shell owns the live key hints, so
+// renderBannerTip paints the first-run hint line under the info rows in the
+// grok welcome hint grammar: the key bright bold, two spaces, the dim action
+// label, then four spaces before the next pair (views/welcome mod.rs hint
+// slot). The keys row at the bottom of the shell owns the live key hints, so
 // the banner keeps only the two essentials and stays within an 80-column
 // terminal (the banner block renders verbatim, no reflow).
-const bannerTip = "Enter 发送 · /help 全部命令"
+func renderBannerTip(theme Theme) string {
+	return theme.KeyHint.Render("Enter") + theme.Chrome.Render("  发送") +
+		"    " +
+		theme.KeyHint.Render("/help") + theme.Chrome.Render("  全部命令")
+}
+
+// centerLines centers a pre-rendered block in the given width by prepending a
+// uniform left margin — the banner never reflows, so whole-block centering is
+// the honest equivalent of grok's Alignment::Center welcome column. The pad is
+// measured on display width (ANSI escapes stripped) and dropped when the
+// terminal is narrower than the block's widest line, keeping narrow windows
+// left-aligned instead of clipped.
+func centerLines(block string, width int) string {
+	if width <= 0 {
+		return block
+	}
+	lines := strings.Split(block, "\n")
+	widest := 0
+	for _, l := range lines {
+		if w := ui.Width(l); w > widest {
+			widest = w
+		}
+	}
+	pad := (width - widest) / 2
+	if pad <= 0 {
+		return block
+	}
+	margin := strings.Repeat(" ", pad)
+	for i, l := range lines {
+		lines[i] = margin + l
+	}
+	return strings.Join(lines, "\n")
+}
 
 // renderBanner paints the logo in resting gray and joins it with the grok-menu
 // information column. Its only I/O is a single cheap read of the local
@@ -95,7 +129,7 @@ func renderBanner(theme Theme, opts Options, cwd string) string {
 				Render("Run pigo update to upgrade"))
 		}
 	}
-	info.WriteString("\n" + theme.Chrome.Render(bannerTip))
+	info.WriteString("\n" + renderBannerTip(theme))
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, logo.String(), "   ", info.String())
 }
