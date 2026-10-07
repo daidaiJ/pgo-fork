@@ -153,6 +153,12 @@ type transcript struct {
 	// before reflow runs, which would make an AtBottom() sample read false).
 	follow bool
 
+	// hits is the block hit map rebuilt by every renderAll: which block owns
+	// which span of transcript content lines (see blockHit). It backs the
+	// mouse click → block → toggle path (clickAt); line spans are cheap to
+	// recompute (no rendering), so no cache invalidation is needed.
+	hits []blockHit
+
 	// streamMd caches the stable-prefix streaming renders (T2.2) keyed by
 	// content width. reflow can lay the transcript out at two widths (full and
 	// full-1 once the scrollbar column is reserved), and interleaved renders at
@@ -280,23 +286,10 @@ func (t *transcript) closeThinking() {
 // over failing to offer the affordance on a genuinely long block.
 func (t *transcript) toggleThinking() {
 	for i := len(t.blocks) - 1; i >= 0; i-- {
-		if t.blocks[i].role != roleThinking {
-			continue
+		if t.blocks[i].role == roleThinking {
+			t.toggleBlock(i)
+			return
 		}
-		switch t.blocks[i].display {
-		case displayCollapsed:
-			if 1+strings.Count(t.blocks[i].text, "\n") > thinkingTailWindowLines {
-				t.blocks[i].display = displayTail
-			} else {
-				t.blocks[i].display = displayFull
-			}
-		case displayTail:
-			t.blocks[i].display = displayFull
-		default:
-			t.blocks[i].display = displayCollapsed
-		}
-		t.reflow()
-		return
 	}
 }
 
@@ -305,10 +298,26 @@ func (t *transcript) toggleThinking() {
 // response tree → back to the collapsed row.
 func (t *transcript) toggleTool() {
 	for i := len(t.blocks) - 1; i >= 0; i-- {
-		if t.blocks[i].role != roleTool || t.blocks[i].card == nil {
-			continue
+		if t.blocks[i].role == roleTool && t.blocks[i].card != nil {
+			t.toggleBlock(i)
+			return
 		}
-		blk := &t.blocks[i]
+	}
+}
+
+// toggleBlock cycles block i's fold state — the shared core of Ctrl+O/Ctrl+T
+// and of mouse clicks on a block's header row (2026-10-07 interaction batch).
+// Tool blocks walk collapsed → full → expanded response tree → collapsed;
+// thinking blocks walk collapsed → tail (long bodies) → full → collapsed.
+// Other roles report false (nothing to fold) so the caller can fall back to
+// its alternate semantics (text selection for the mouse).
+func (t *transcript) toggleBlock(i int) bool {
+	blk := &t.blocks[i]
+	switch blk.role {
+	case roleTool:
+		if blk.card == nil {
+			return false
+		}
 		switch {
 		case blk.display == displayCollapsed:
 			blk.display = displayFull
@@ -322,7 +331,24 @@ func (t *transcript) toggleTool() {
 		blk.card.clearCache()
 		blk.cacheKey = blockCacheKey{}
 		t.reflow()
-		return
+		return true
+	case roleThinking:
+		switch blk.display {
+		case displayCollapsed:
+			if 1+strings.Count(blk.text, "\n") > thinkingTailWindowLines {
+				blk.display = displayTail
+			} else {
+				blk.display = displayFull
+			}
+		case displayTail:
+			blk.display = displayFull
+		default:
+			blk.display = displayCollapsed
+		}
+		t.reflow()
+		return true
+	default:
+		return false
 	}
 }
 
@@ -617,9 +643,13 @@ func (t *transcript) reflow() {
 
 // renderAll joins every block, rendered to the current content width, into the
 // transcript body string. Consecutive turns are separated by a blank line before
-// a new user turn so requests read as visually distinct.
+// a new user turn so requests read as visually distinct. While joining it also
+// rebuilds the hit map (hits): each rendered block's content-line span, so a
+// mouse click on a visible row can be resolved back to its block.
 func (t *transcript) renderAll() string {
 	var b strings.Builder
+	line := 0
+	t.hits = t.hits[:0]
 	for i := range t.blocks {
 		out := t.renderBlock(&t.blocks[i], i == t.activeAssistant)
 		if out == "" {
@@ -627,13 +657,65 @@ func (t *transcript) renderAll() string {
 		}
 		if b.Len() > 0 {
 			b.WriteByte('\n')
+			line++
 			if t.blocks[i].role == roleUser {
 				b.WriteByte('\n')
+				line++
 			}
 		}
+		n := strings.Count(out, "\n") + 1
+		t.hits = append(t.hits, blockHit{block: i, start: line, end: line + n})
+		line += n
 		b.WriteString(out)
 	}
 	return b.String()
+}
+
+// blockHit maps one block onto its span of transcript content lines
+// ([start, end), 0-based) at the width of the last renderAll. reflow renders
+// up to twice (full width, then minus the scrollbar column) and only the last
+// pass matches what the viewport shows, so hits always describe the visible
+// layout.
+type blockHit struct {
+	block      int
+	start, end int
+}
+
+// transcriptOriginRow is the screen row (0-based) of the transcript's first
+// viewport row: renderContent paints exactly one header line above it. A mouse
+// click maps screenY → content line as (screenY - origin) + viewport offset.
+const transcriptOriginRow = 1
+
+// clickAt resolves a mouse click on screen row screenY to the foldable block
+// under it and toggles that block (the mouse counterpart of Ctrl+O/Ctrl+T).
+// Only a click on a block's first row — a collapsed diamond/footer row, or an
+// expanded card's title line — folds; body rows are text-selection territory.
+// Clicks outside the viewport (header above, input/status below) report false.
+func (t *transcript) clickAt(screenY int) bool {
+	row := screenY - transcriptOriginRow
+	if row < 0 || row >= t.vp.Height() {
+		return false
+	}
+	return t.toggleAtLine(row + t.vp.YOffset())
+}
+
+// toggleAtLine toggles the block occupying content line line. It reports
+// false when the line falls between blocks, inside a block body (not the
+// header row), or inside a non-foldable block.
+func (t *transcript) toggleAtLine(line int) bool {
+	for _, h := range t.hits {
+		if line < h.start {
+			break
+		}
+		if line >= h.end {
+			continue
+		}
+		if line != h.start {
+			return false
+		}
+		return t.toggleBlock(h.block)
+	}
+	return false
 }
 
 // renderBlock renders one block to the current content width. Finalized

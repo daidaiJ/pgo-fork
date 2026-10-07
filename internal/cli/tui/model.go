@@ -309,6 +309,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.transcript.scrollToRow(msg.Y)
 				return m, nil
 			}
+			// A press on a foldable block's header row — a collapsed diamond
+			// row, a thinking footer, or an expanded card's title line —
+			// toggles that block (the mouse counterpart of Ctrl+O/Ctrl+T).
+			// Skipped while the context panel replaces the transcript region.
+			// Anything else begins a text selection at that cell, replacing
+			// any prior one; a bare click (no drag) leaves it empty so it
+			// clears the old highlight without starting a copyable range.
+			if !m.ctxPanel.open && m.width > 0 && m.height > 0 && m.transcript.clickAt(msg.Y) {
+				m.sel = selection{}
+				return m, nil
+			}
 			m.sel = selection{active: true, anchor: point{msg.X, msg.Y}, cursor: point{msg.X, msg.Y}}
 			return m, nil
 		}
