@@ -104,6 +104,15 @@ type Options struct {
 	// model-derived default); see cli.ResolveContextWindow.
 	MaxContext config.MaxContext
 
+	// Models is the config's [models."<id>"] profile face (T7.3 实测反馈):
+	// the /model switcher lists these ids and a switch rebuilds the provider
+	// from the profile. Nil/empty keeps the preset-catalog fallback.
+	Models map[string]config.ModelProfile
+	// ContextWindow / MaxOutputTokens are the startup profile's explicit
+	// overrides (0 = derive from the provider catalog, as before).
+	ContextWindow   int
+	MaxOutputTokens int
+
 	// Permissions is the user's [permissions] rules table (T5.2), loaded
 	// into the permission engine alongside the persisted permissions file.
 	Permissions config.PermissionsConfig
@@ -194,12 +203,14 @@ func Run(opts Options) error {
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
 		MaxContext:    opts.MaxContext,
+		ModelProfiles: opts.Models,
 		// The effective window follows the selected model's catalog window
 		// (fallback DefaultContextWindow), lowered by an explicit
 		// [compaction] max_context — re-derived on /model switches. The
 		// output cap feeds the trigger line and the dynamic max_tokens stamp.
-		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
-		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
+		// A startup config profile's explicit declarations win over both.
+		ContextWindow:   cli.SeedContextWindow(opts.Provider, opts.Model, opts.MaxContext, opts.ContextWindow),
+		MaxOutputTokens: cli.SeedMaxOutputTokens(opts.Provider, opts.Model, opts.MaxOutputTokens),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the

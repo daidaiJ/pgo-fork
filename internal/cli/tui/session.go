@@ -6,10 +6,10 @@
 // persists the growing conversation to ~/.pigo/sessions after each turn.
 //
 // It deliberately imports the SHARED lower-level packages the REPL also uses
-// (session, runtime, provider, cli, cli/run, cli/headless, cli/ui) rather than
-// the repl package itself, so the two entry paths share one store and one
-// run-config shape without an import cycle (repl and tui are siblings; prompts
-// imports tui, so tui must not reach back into repl/prompts).
+// (session, runtime, provider, cli, cli/run, cli/headless, cli/ui, prompts)
+// rather than the repl package itself, so the two entry paths share one store
+// and one run-config shape without an import cycle (repl and tui are
+// siblings; neither imports the other, and prompts imports neither of them).
 package tui
 
 import (
@@ -24,6 +24,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/headless"
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/compaction"
@@ -79,6 +80,11 @@ type runSession struct {
 	// REPL does. It is assembled per-session against the live config (withSession
 	// rebinds the model's registry to this one) so /model switches reach it.
 	slash *runtime.SlashRegistry
+	// surface holds the config-surface deps (MCP manager, skills view, config
+	// path) behind /skills and /mcp — the interactive panels read rows and
+	// run toggles through it (T7.3 interactive redesign). Tests swap it for a
+	// surface wired to a temp config.
+	surface prompts.SurfaceDeps
 	// telemetry holds the retained per-run telemetry events (US-001, #291) and
 	// the cumulative accumulator that sums metrics across all runs in the
 	// session. The run loop folds each run's TelemetryEvent into it; /status
@@ -211,8 +217,11 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
 		MaxContext:    opts.MaxContext,
-		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
-		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
+		ModelProfiles: opts.Models,
+		// A startup config profile's explicit window/output-cap declarations
+		// win over the catalog-derived values (0 = derive, as before).
+		ContextWindow:   cli.SeedContextWindow(opts.Provider, opts.Model, opts.MaxContext, opts.ContextWindow),
+		MaxOutputTokens: cli.SeedMaxOutputTokens(opts.Provider, opts.Model, opts.MaxOutputTokens),
 	}
 
 	// Project trust (US-018, #134): load the persisted trust store for the
@@ -242,13 +251,13 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		cwd:        cwd,
 		trust:      mgr,
 		shellguard: opts.Shellguard,
-		slash:      newSlashRegistry(opts, live),
 		telemetry:  cli.NewTelemetryHolder(),
 		curLeaf:    curLeaf,
 		persisted:  len(history),
 		memoryRoot: run.MemoryRootFromTools(opts.Tools),
 		memstore:   run.MemoryStoreFromTools(opts.Tools),
 	}
+	s.slash, s.surface = newSlashRegistry(opts, live, creds)
 	// /trust is a per-session command (its closure captures mgr + cwd), so it is
 	// registered here rather than in newSlashRegistry. A nil mgr is a no-op.
 	trust.RegisterCommand(s.slash, mgr, cwd)

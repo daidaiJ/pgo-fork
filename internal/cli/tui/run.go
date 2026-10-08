@@ -41,6 +41,10 @@ func Run(opts Options) error {
 	// on a graceful quit — p.Run returns after the alt-screen is restored, so
 	// the line lands in the user's scrollback via stderr.
 	if err == nil {
+		// Terminal tab title restore (T7.3 S2): tea's renderer clears the
+		// title on close, so re-assert the bare app name once the renderer
+		// is torn down (grok resets the title on exit; raw OSC on stdout).
+		restoreTerminalTitle(os.Stdout)
 		printFarewell(os.Stderr)
 	}
 	return err

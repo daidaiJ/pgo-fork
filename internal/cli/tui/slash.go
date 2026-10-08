@@ -40,11 +40,18 @@ const maxMenuRows = 8
 // the run loop reads), user/plugin/skill/template commands from disk. A load
 // error is non-fatal — BuildSlashRegistry still returns a registry with the
 // built-ins, so the TUI stays usable and the failure is surfaced on stderr.
-func newSlashRegistry(opts Options, live *cli.LiveConfig) *runtime.SlashRegistry {
+// sessionCreds, when non-nil (the withSession path), is the run session's
+// credential store: /models fetch and a config-profile /model switch both
+// authenticate through it, so a profile's api_key override reaches the
+// per-turn GetAPIKey the same way the REPL's shared store does.
+func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider.CredentialStore) (*runtime.SlashRegistry, prompts.SurfaceDeps) {
 	// A credentials store resolved from the same flags the run uses, so
 	// "/models fetch" (issue #566) can authenticate against the live endpoint.
-	creds := provider.NewCredentialStore(nil)
-	creds.SetOverride(opts.ProviderName, opts.APIKey)
+	creds := sessionCreds
+	if creds == nil {
+		creds = provider.NewCredentialStore(nil)
+		creds.SetOverride(opts.ProviderName, opts.APIKey)
+	}
 	reg, err := prompts.BuildSlashRegistry(live, creds, opts.Skills, opts.Plugins, prompts.PromptTemplateSources{
 		Settings: opts.ConfigPrompts,
 		CLI:      opts.CliPrompts,
@@ -71,7 +78,7 @@ func newSlashRegistry(opts Options, live *cli.LiveConfig) *runtime.SlashRegistry
 	prompts.RegisterStatusCommand(reg, func() string {
 		return tuiStatusReport(live, deps)
 	})
-	return reg
+	return reg, deps
 }
 
 // tuiStatusReport renders the promoted /status for the TUI: the runtime config
@@ -224,6 +231,12 @@ func (mn slashMenu) view(width int) string {
 	for i := start; i < end; i++ {
 		c := mn.filtered[i]
 		line := "/" + c.Name
+		// Non-builtin rows carry a source tag so a skill command is visually
+		// distinct from a builtin (T7.3 user feedback: 来源可辨); builtins —
+		// the untagged majority — stay clean.
+		if tag := sourceTag(c.Source); tag != "" {
+			line += "  [" + tag + "]"
+		}
 		if c.Description != "" {
 			line += "  " + c.Description
 		}
@@ -256,4 +269,19 @@ func (mn slashMenu) window() (int, int) {
 		start = n - maxMenuRows
 	}
 	return start, start + maxMenuRows
+}
+
+// sourceTag renders the autocomplete type marker for a non-builtin command
+// source ("" for builtins, which are the untagged majority).
+func sourceTag(s runtime.SlashCommandSource) string {
+	switch s {
+	case runtime.SourceSkill:
+		return "skill"
+	case runtime.SourcePlugin:
+		return "plugin"
+	case runtime.SourceUser:
+		return "template"
+	default:
+		return ""
+	}
 }

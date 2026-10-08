@@ -63,9 +63,16 @@ type Model struct {
 	histIdx   int
 	histDraft string
 
-	// running is true while an agent run is draining through runCh. Input submit
-	// is gated on it so a new run cannot start mid-run.
+	// running is true while an agent run is draining through runCh. Submit is
+	// gated on it so a new run cannot start mid-run (Enter enqueues instead);
+	// typing stays live so the next prompt can be drafted while output streams
+	// — and because the composer is never blurred mid-run, Windows IME
+	// composition state survives (a blur/focus cycle resets it to English).
 	running bool
+	// queued holds prompts entered while a run was in flight (Enter during a
+	// run enqueues instead of submitting). runEndMsg pops the first entry and
+	// starts it, so the queue drains one prompt per ended run.
+	queued []string
 	// runCh is the bridge channel for the in-flight run, or nil when idle. Update
 	// re-issues waitForEvent(runCh) after every bridged msg except runEndMsg.
 	runCh chan tea.Msg
@@ -133,6 +140,20 @@ type Model struct {
 	// It filters slash by the typed prefix; the model intercepts arrow/Tab/Enter
 	// keys to drive it before delegating to the textarea.
 	menu slashMenu
+	// modelMenu is the /model argument-completion popup (T7.3 S1, grok
+	// switcher alignment): active while the buffer is a "/model …" invocation
+	// in its argument stage, listing preset + fetched models with the current
+	// one marked. It owns the arrow/Tab/Enter/Esc keys while open.
+	modelMenu modelMenu
+	// sessionsP is the /sessions picker overlay (T7.3 S8): a modal panel
+	// listing persisted sessions (title/time/model/cwd) with filter, resume on
+	// Enter and an armed delete on d+y.
+	sessionsP sessionsPanel
+	// skillsP / mcpP are the interactive panels behind bare /skills and /mcp
+	// (T7.3 interactive redesign): grok ExtensionsModal alignment — list,
+	// filter, Enter toggles the row's enabled state. Inactive when closed.
+	skillsP listPanel
+	mcpP    listPanel
 
 	// toolCards indexes the rich tool-call cards (#389, US-006) by tool-call id so
 	// a toolEndMsg can locate the card started earlier and flip its state / attach
@@ -150,6 +171,17 @@ type Model struct {
 	// cells). A left-press off the scrollbar starts it, drag extends it, and it
 	// persists after release so Ctrl+C can copy the highlighted text.
 	sel selection
+
+	// pendingClick holds the cell of a left press awaiting its release: a click
+	// is only confirmed when the button comes back up on the same cell (grok
+	// two-phase click), so a text-selection drag that starts on a block header
+	// never folds the block.
+	pendingClick pendingMouseClick
+
+	// lastClick is the most recent confirmed bare click; a second confirmed
+	// click on the same cell within mouseMultiClickWindow is a double click,
+	// which toggles the fold of the block under the cursor (grok parity).
+	lastClick lastMouseClick
 
 	// spinner is the animated "working" indicator (verb + elapsed/token/effort
 	// stats) shown on the row above the input while a run is in flight.
@@ -207,9 +239,16 @@ func NewModel(opts Options) Model {
 		Protocol:      opts.Protocol,
 		ThinkingLevel: opts.ThinkingLevel,
 		MaxContext:    opts.MaxContext,
-		ContextWindow:   cli.ResolveContextWindow(opts.Provider, opts.Model, opts.MaxContext),
-		MaxOutputTokens: cli.ResolveMaxOutputTokens(opts.Provider, opts.Model),
+		ModelProfiles: opts.Models,
+		// A startup config profile's explicit window/output-cap declarations
+		// win over the catalog-derived values (0 = derive, as before).
+		ContextWindow:   cli.SeedContextWindow(opts.Provider, opts.Model, opts.MaxContext, opts.ContextWindow),
+		MaxOutputTokens: cli.SeedMaxOutputTokens(opts.Provider, opts.Model, opts.MaxOutputTokens),
 	}
+	// The session-less model still gets a registry (menu completion works
+	// before withSession binds the session); its surface deps are discarded —
+	// the /skills and /mcp panels need a live session.
+	slashReg, _ := newSlashRegistry(opts, live, nil)
 	return Model{
 		opts:       opts,
 		theme:      theme,
@@ -219,9 +258,10 @@ func NewModel(opts Options) Model {
 		statusBar:  newStatusBar(theme, opts, cwd),
 		header:     header{cwd: abbreviateHome(cwd)},
 		toolCards:  make(map[string]*toolCard),
-		slash:      newSlashRegistry(opts, live),
+		slash:      slashReg,
 		live:       live,
 		menu:       newSlashMenu(theme),
+		modelMenu:  modelMenu{theme: theme},
 		spinner:    newSpinner(theme),
 		pastes:     make(map[int]string),
 		images:     make(map[int]string),
@@ -299,26 +339,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.MouseClickMsg:
-		// A left press on the scrollbar column grabs the thumb (jump + drag). A left
-		// press anywhere else begins a text selection at that cell, replacing any
-		// prior one; a bare click (no drag) leaves it empty so it clears the old
-		// highlight without starting a copyable range.
+		// A left press on the scrollbar column grabs the thumb (jump + drag). A
+		// left press anywhere else records a pending click and starts a text
+		// selection at that cell; the press itself never folds — grok parity
+		// (two-phase click + double-click fold, 2026-10-07 对齐原型): the fold
+		// decision happens on release at the same cell, so dragging off a
+		// header row never toggles a block, and a double click on any row of a
+		// foldable block toggles it while single clicks stay selection-only.
 		if msg.Button == tea.MouseLeft {
 			if m.onScrollbar(msg.X, msg.Y) {
 				m.draggingScrollbar = true
+				m.pendingClick.ok = false
 				m.transcript.scrollToRow(msg.Y)
 				return m, nil
 			}
-			// A press on a foldable block's header row — a collapsed diamond
-			// row, a thinking footer, or an expanded card's title line —
-			// toggles that block (the mouse counterpart of Ctrl+O/Ctrl+T).
-			// Skipped while the context panel replaces the transcript region.
-			// Anything else begins a text selection at that cell, replacing
-			// any prior one; a bare click (no drag) leaves it empty so it
-			// clears the old highlight without starting a copyable range.
-			if !m.ctxPanel.open && m.width > 0 && m.height > 0 && m.transcript.clickAt(msg.Y) {
-				m.sel = selection{}
-				return m, nil
+			if !m.ctxPanel.open && !m.sessionsP.open && m.width > 0 && m.height > 0 {
+				m.pendingClick = pendingMouseClick{ok: true, pt: point{msg.X, msg.Y}}
 			}
 			m.sel = selection{active: true, anchor: point{msg.X, msg.Y}, cursor: point{msg.X, msg.Y}}
 			return m, nil
@@ -343,37 +379,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sel.active {
 			m.sel.cursor = point{msg.X, msg.Y}
 		}
+		// Confirm the pending click only when the button came back up on the
+		// same cell with no drag in between; anything else was a selection
+		// drag (or a scrollbar/other-surface release) and never folds.
+		if m.pendingClick.ok {
+			pt := m.pendingClick.pt
+			m.pendingClick.ok = false
+			if m.sel.empty() && msg.X == pt.x && msg.Y == pt.y {
+				m.confirmClick(pt)
+			}
+		}
 		return m, nil
 
 	case tea.PasteMsg:
 		// Bracketed paste (e.g. Cmd+V / right-click paste): the terminal delivers
 		// the whole clipboard payload as one message. A multi-line paste is
 		// collapsed to a compact placeholder (expanded at submit); a single-line
-		// paste is inserted verbatim. See handlePaste.
-		if !m.running {
-			return m.handlePaste(msg.Content)
-		}
-		return m, nil
+		// paste is inserted verbatim. See handlePaste. Allowed mid-run too: the
+		// composer stays live while a run streams (only submit is gated).
+		return m.handlePaste(msg.Content)
 
 	case tea.ClipboardMsg:
 		// OSC52 clipboard read reply (from tea.ReadClipboard on Ctrl+V / Cmd+V).
 		// Route through the same collapse-or-insert path as bracketed paste.
-		if !m.running {
-			return m.handlePaste(msg.Content)
-		}
-		return m, nil
+		return m.handlePaste(msg.Content)
 
 	case clipboardImageMsg:
 		// Reply to a Ctrl+V / Cmd+V image-read attempt. With an image, drop an
 		// "[Image #N]" placeholder (expanded to an @image reference at submit); with
 		// none, fall back to a normal OSC52 text read so plain-text paste still works.
-		if !m.running {
-			if msg.ok {
-				return m.handleImagePaste(msg.path)
-			}
-			return m, tea.ReadClipboard
+		if msg.ok {
+			return m.handleImagePaste(msg.path)
 		}
-		return m, nil
+		return m, tea.ReadClipboard
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -598,10 +636,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.transcript.addSystem("Session save failed: " + err.Error())
 			}
 		}
-		// The editor was blurred at submit; re-enable it so the next prompt can be
-		// typed, and re-probe git since a run may have changed the working tree.
-		focus := m.input.Focus()
-		return m, tea.Batch(focus, fetchGitCmd(m.cwd))
+		// The composer stays focused across the whole run (a blur/focus cycle
+		// resets the Windows IME to English mid-session), so no re-focus here.
+		// Re-probe git since a run may have changed the working tree. Then drain
+		// the queue: the first prompt entered while the run streamed starts now.
+		if len(m.queued) > 0 {
+			next := m.queued[0]
+			m.queued = m.queued[1:]
+			if strings.HasPrefix(next, "/") {
+				mod, cmd := m.runSlash(next)
+				return mod, cmd
+			}
+			m.transcript.addUser(next)
+			m.remoteEcho("\n> " + next + "\n")
+			mod, cmd := m.startPrompt(next)
+			return mod, tea.Batch(cmd, fetchGitCmd(m.cwd))
+		}
+		return m, fetchGitCmd(m.cwd)
 
 	case remoteInputMsg:
 		// A prompt arrived from the paired browser (remote-control). Always re-issue
@@ -636,8 +687,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleKey processes a key press. It resolves the keys the shell owns —
 // two-stage interrupt/quit, prompt submit, transcript scrolling — and delegates
 // everything else (character entry, in-buffer cursor movement, Shift+Enter
-// newline) to the input editor while idle. Keys are matched via KeyPressMsg
-// .String() so the mapping is terminal-independent.
+// newline) to the input editor, which stays live while idle and while a run
+// streams (the buffer is only read at submit). Keys are matched via
+// KeyPressMsg.String() so the mapping is terminal-independent.
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// The context panel (TUI context-usage overlay) is modal while open: it
 	// consumes every key. Tab/up/down/esc it handles itself; c copies the
@@ -649,6 +701,68 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.ctxPanel.handleKey(key)
 		return m, nil
+	}
+
+	// The /sessions picker (T7.3 S8) is modal while open, exactly like the
+	// context panel: it owns every key — navigation, filter typing, Enter
+	// resume, the armed d/y delete — and never leaks them to the composer.
+	if m.sessionsP.open {
+		return m.handleSessionsKey(msg)
+	}
+
+	// The /skills and /mcp panels (T7.3 interactive redesign) are modal the
+	// same way: navigation, filter typing, Enter toggle.
+	if m.skillsP.open {
+		return m.handleListPanelKey("skills", msg)
+	}
+	if m.mcpP.open {
+		return m.handleListPanelKey("mcp", msg)
+	}
+
+	// While idle with the /model (or /think) argument popup open, it owns the
+	// arrow / Tab / Esc / Enter keys before the command menu gets them (T7.3
+	// S1 + chained redesign): Enter on the model list chains into the effort
+	// sub-list (grok), Enter on the effort list dispatches the composed line.
+	if !m.running && m.modelMenu.active {
+		switch msg.String() {
+		case "up":
+			m.modelMenu.moveUp()
+			return m, nil
+		case "down":
+			m.modelMenu.moveDown()
+			return m, nil
+		case "tab":
+			if it, ok := m.modelMenu.current(); ok {
+				if m.modelMenu.phase == modelPhaseEffort {
+					m.input.SetValue(m.modelMenu.chainCmd + it.id)
+				} else {
+					m.input.SetValue("/model " + it.id)
+				}
+				m.syncMenus()
+			}
+			m.relayout()
+			return m, nil
+		case "esc":
+			m.modelMenu.close()
+			m.relayout()
+			return m, nil
+		case "enter":
+			if it, ok := m.modelMenu.current(); ok {
+				if m.modelMenu.phase == modelPhaseList {
+					// grok chain: the selection moves the buffer to
+					// "/model <id> " and the same popup re-lists effort
+					// levels; nothing is applied until the second Enter.
+					m.modelMenu.enterEffort(it.id, m.live)
+					m.input.SetValue("/model " + it.id + " ")
+					m.relayout()
+					return m, nil
+				}
+				line := m.modelMenu.chainCmd + it.id
+				m.modelMenu.close()
+				m.recordHistory(line)
+				return m.runSlash(line)
+			}
+		}
 	}
 
 	// While idle with the autocomplete popup open, the arrow / Tab / Esc keys
@@ -669,7 +783,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.relayout()
 			return m, nil
 		case "esc":
-			m.menu.close()
+			m.closeMenus()
 			m.relayout()
 			return m, nil
 		case "enter":
@@ -795,6 +909,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !m.running {
 			return m.submit()
 		}
+		// While a run streams, Enter enqueues the composed buffer (grok-style
+		// queue) instead of dropping it; runEndMsg drains the queue.
+		if v := strings.TrimSpace(m.input.Value()); v != "" {
+			m.recordHistory(v)
+			m.queued = append(m.queued, v)
+			m.input.Clear()
+			m.closeMenus()
+			m.transcript.addSystem(fmt.Sprintf("(queued — %d waiting, starts when the run ends)", len(m.queued)))
+			m.relayout()
+		}
 		return m, nil
 	case "pgup", "pgdown":
 		// Page scrolling reaches the transcript viewport whether idle or running,
@@ -812,56 +936,50 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// This is intercepted before textarea so its own Ctrl+V binding — which reads
 		// via an external process and returns an unexported message the model can't
 		// route — is bypassed. The common Cmd+V path does not reach here; it arrives
-		// as a bracketed tea.PasteMsg handled in Update.
-		if !m.running {
-			return m, readClipboardImage
-		}
-		return m, nil
+		// as a bracketed tea.PasteMsg handled in Update. Allowed mid-run: the
+		// composer stays live while a run streams.
+		return m, readClipboardImage
 	case "super+v":
 		// Cmd+V on macOS is the platform-standard paste. Most terminals turn it
 		// into a bracketed paste (tea.PasteMsg, handled in Update); this branch
 		// covers terminals that instead forward the Super modifier as a key. Try an
 		// image read first, falling back to an OSC52 text read when none is present.
-		if !m.running {
-			return m, readClipboardImage
-		}
-		return m, nil
+		return m, readClipboardImage
 	case "ctrl+y":
 		// Copy: the editor has no text selection, so this copies the whole buffer
 		// to the system clipboard over OSC52. A no-op on an empty buffer.
-		if !m.running {
-			if v := m.input.Value(); v != "" {
-				return m, tea.SetClipboard(v)
-			}
+		if v := m.input.Value(); v != "" {
+			return m, tea.SetClipboard(v)
 		}
 		return m, nil
 	}
 
-	// Everything else is editing input; gated on idle so keystrokes never corrupt
-	// an in-flight prompt. textarea handles CJK / emoji by rune and Shift+Enter as
-	// a newline. After the buffer changes, refresh the autocomplete popup so it
-	// opens/filters/closes as the user types a "/name" prefix.
+	// Everything else is editing input, allowed while a run streams too: the
+	// buffer is only read at submit, so keystrokes cannot corrupt an in-flight
+	// prompt, and a live composer keeps the Windows IME composition intact.
+	// textarea handles CJK / emoji by rune and Shift+Enter as a newline. After
+	// the buffer changes, refresh the autocomplete popup so it opens/filters/
+	// closes as the user types a "/name" prefix.
+	// ↑/↓ walk the submitted-prompt history only while idle; mid-run they move
+	// the caret within the multi-line draft (handled by the textarea below).
 	if !m.running {
-		// ↑/↓ walk the submitted-prompt history when the caret is at the top / bottom
-		// edge of the composer; otherwise they move the caret within a multi-line
-		// draft (handled by the textarea below).
 		switch msg.String() {
 		case "up":
 			return m.historyPrev(msg)
 		case "down":
 			return m.historyNext(msg)
 		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		m.menu.refresh(m.input.Value(), m.slash)
-		m.relayout()
-		return m, cmd
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.syncMenus()
+	m.relayout()
+	return m, cmd
 }
 
 // submit starts a run for the current buffer: it appends the user block, clears
-// and blurs the editor, flips to running, and — when a run starter is wired —
+// the editor (which stays focused — blur/focus cycles reset the Windows IME),
+// flips to running, and — when a run starter is wired —
 // returns the first pump Cmd. With no starter (pre-#392) it records the prompt
 // and a system note without launching anything, and leaves the editor ready for
 // the next line.
@@ -886,9 +1004,56 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	m.transcript.addUser(prompt)
 	m.remoteEcho("\n> " + prompt + "\n")
 	m.input.Clear()
-	m.menu.close()
+	m.closeMenus()
 	m.relayout()
 	return m.startPrompt(prompt)
+}
+
+// syncMenus refreshes all autocomplete popups from the current buffer. The
+// stages are mutually exclusive: slashMenu owns the "/name" typing stage,
+// modelMenu the argument stages — "/model <arg>" (list, then the chained
+// effort sub-list) and "/think <arg>" (effort only). Once a space ends the
+// name the command popup closes and the argument dropdown takes over (T7.3).
+func (m *Model) syncMenus() {
+	buffer := m.input.Value()
+	m.menu.refresh(buffer, m.slash)
+	if m.menu.active {
+		m.modelMenu.close()
+		return
+	}
+	// The effort stage keeps its own popup alive: the text after the chain
+	// prefix filters the level list; deleting back past the prefix pops the
+	// model list back open (grok chain re-entry) or closes (/think stage).
+	if m.modelMenu.active && m.modelMenu.phase == modelPhaseEffort {
+		trimmed := strings.TrimLeft(buffer, " \t")
+		if rest, ok := strings.CutPrefix(trimmed, m.modelMenu.chainCmd); ok {
+			m.modelMenu.refreshEffort(rest, m.modelMenu.chainCmd, m.live)
+		} else if partial, ok := modelArgToken(buffer); ok {
+			m.modelMenu.refresh(partial, m.live)
+		} else if partial, prefix, ok := thinkArgToken(buffer); ok {
+			m.modelMenu.refreshEffort(partial, prefix, m.live)
+		} else {
+			m.modelMenu.close()
+		}
+		return
+	}
+	if partial, ok := modelArgToken(buffer); ok {
+		m.modelMenu.refresh(partial, m.live)
+		return
+	}
+	if partial, prefix, ok := thinkArgToken(buffer); ok {
+		m.modelMenu.refreshEffort(partial, prefix, m.live)
+		return
+	}
+	m.modelMenu.close()
+}
+
+// closeMenus shuts both autocomplete popups (command stage and /model
+// argument stage) — every input-clearing path goes through it so neither
+// overlay can outlive the buffer it was driven by.
+func (m *Model) closeMenus() {
+	m.menu.close()
+	m.modelMenu.close()
 }
 
 // completeSlash fills the buffer with the highlighted candidate's "/name " so the
@@ -897,7 +1062,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 func (m Model) completeSlash() Model {
 	if c, ok := m.menu.current(); ok {
 		m.input.SetValue("/" + c.Name + " ")
-		m.menu.refresh(m.input.Value(), m.slash)
+		m.syncMenus()
 	}
 	return m
 }
@@ -930,6 +1095,19 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	}
+	// Bare "/model" / "/think" / "/effect" drop into their interactive
+	// dropdowns instead of the registry's text echo (T7.3 user redesign: a
+	// submitted command opens its panel; the argument forms keep the registry
+	// path). Typing the trailing space opens the same popup while composing.
+	if trimmed := strings.TrimSpace(line); trimmed == "/model" || trimmed == "/think" || trimmed == "/effect" {
+		if trimmed != "/model" {
+			trimmed = "/think" // /effect is an alias; one popup grammar
+		}
+		m.input.SetValue(trimmed + " ")
+		m.syncMenus()
+		m.relayout()
+		return m, nil
+	}
 	// /memory is intercepted before registry resolution (like /rebuild): it
 	// prints the persistent-memory + infinite-context report, reading the live
 	// memory store, memory root, session id, and messages that a slash Action
@@ -937,7 +1115,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/memory" || strings.HasPrefix(line, "/memory ") {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		var buf bytes.Buffer
 		var store *memory.Store
 		var memoryRoot, sessionID string
@@ -963,7 +1141,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/status" || strings.HasPrefix(line, "/status ") {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		if m.session == nil {
 			m.transcript.addSystem("(status unavailable: no active session)")
 			m.relayout()
@@ -982,7 +1160,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/session" {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		if m.session == nil {
 			m.transcript.addSystem("(session unavailable: no active session)")
 			m.relayout()
@@ -1003,7 +1181,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/rebuild" {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		if m.session == nil {
 			m.transcript.addSystem("(rebuild unavailable: no active session)")
 			m.relayout()
@@ -1015,6 +1193,75 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.relayout()
 		return m, tea.Batch(m.session.rebuildCmd(), m.tickSpinner())
 	}
+	// /sessions (grok /resume alias included) is intercepted before registry
+	// resolution (like /context): it opens the session-picker overlay (T7.3
+	// S8, grok picker alignment), which owns panel state and the resume/delete
+	// actions a slash Action closure cannot reach.
+	if line == "/sessions" || strings.HasPrefix(line, "/sessions ") ||
+		line == "/resume" || strings.HasPrefix(line, "/resume ") {
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.closeMenus()
+		switch {
+		case m.session == nil:
+			m.transcript.addSystem("(sessions unavailable: no active session)")
+		case m.running:
+			m.transcript.addSystem("(sessions: a run is in progress — open the picker once it finishes)")
+		default:
+			entries, note := gatherSessions(m.session.store, m.session.header.ID)
+			m.sessionsP = sessionsPanel{
+				open:    true,
+				entries: entries,
+				note:    note,
+			}
+		}
+		m.relayout()
+		return m, nil
+	}
+	// /rename is intercepted before registry resolution (like /sessions): it
+	// renames the live session's display title (T7.3 S2) and persists the
+	// header through Store.SetTitle — header mutation a slash Action closure
+	// cannot reach. The terminal title follows on the next frame: View composes
+	// tea.View.WindowTitle from the session header (see termtitle.go).
+	if line == "/rename" || strings.HasPrefix(line, "/rename ") {
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.closeMenus()
+		if m.session == nil {
+			m.transcript.addSystem("(rename unavailable: no active session)")
+			m.relayout()
+			return m, nil
+		}
+		m.transcript.addSystem(renameMessage(m.session, strings.TrimPrefix(line, "/rename")))
+		m.relayout()
+		return m, nil
+	}
+	// /skills and /mcp (bare) open the interactive panels (T7.3 user
+	// redesign): grok opens its ExtensionsModal on these commands, so the TUI
+	// opens a panel instead of echoing the arg-action text. The parameter
+	// forms stay on the registry action as the power-user path.
+	if line == "/skills" || line == "/skills " || line == "/mcp" || line == "/mcp " {
+		cmdName := strings.TrimPrefix(strings.TrimSpace(line), "/")
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.closeMenus()
+		switch {
+		case m.session == nil:
+			m.transcript.addSystem("(" + cmdName + " unavailable: no active session)")
+		case m.running:
+			m.transcript.addSystem("(" + cmdName + ": a run is in progress — open the panel once it finishes)")
+		default:
+			if cmdName == "skills" {
+				rows, note := gatherSkillRows(m.session)
+				m.skillsP = listPanel{open: true, title: "技能", hint: "↑↓ 选择 · Enter 启用/禁用 · Esc 关闭", rows: rows, note: note}
+			} else {
+				rows, note := gatherMCPRows(m.session)
+				m.mcpP = listPanel{open: true, title: "MCP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
+			}
+		}
+		m.relayout()
+		return m, nil
+	}
 	// /context is intercepted before registry resolution (like /memory): it
 	// toggles the context-usage overlay panel (grok context panel alignment),
 	// reading the live session's telemetry/tool/skill state that a slash Action
@@ -1022,7 +1269,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/context" || strings.HasPrefix(line, "/context ") {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		m.ctxPanel.toggle()
 		m.relayout()
 		return m, nil
@@ -1041,7 +1288,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if line == "/rewind" || strings.HasPrefix(line, "/rewind ") {
 		m.transcript.addUser(line)
 		m.input.Clear()
-		m.menu.close()
+		m.closeMenus()
 		if m.session == nil {
 			m.transcript.addSystem("(rewind unavailable: no active session)")
 			m.relayout()
@@ -1099,7 +1346,7 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	}
 	m.transcript.addUser(line)
 	m.input.Clear()
-	m.menu.close()
+	m.closeMenus()
 	m.relayout()
 	if m.slash == nil {
 		m.transcript.addSystem("Slash commands unavailable")
@@ -1147,7 +1394,7 @@ func (m Model) historyPrev(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if len(m.history) == 0 || m.input.Line() != 0 {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		m.menu.refresh(m.input.Value(), m.slash)
+		m.syncMenus()
 		m.relayout()
 		return m, cmd
 	}
@@ -1158,7 +1405,7 @@ func (m Model) historyPrev(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.histIdx--
 	}
 	m.input.SetValue(m.history[m.histIdx])
-	m.menu.refresh(m.input.Value(), m.slash)
+	m.syncMenus()
 	m.relayout()
 	return m, nil
 }
@@ -1171,7 +1418,7 @@ func (m Model) historyNext(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.histIdx >= len(m.history) || m.input.Line() != m.input.LineCount()-1 {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		m.menu.refresh(m.input.Value(), m.slash)
+		m.syncMenus()
 		m.relayout()
 		return m, cmd
 	}
@@ -1181,21 +1428,23 @@ func (m Model) historyNext(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.input.SetValue(m.history[m.histIdx])
 	}
-	m.menu.refresh(m.input.Value(), m.slash)
+	m.syncMenus()
 	m.relayout()
 	return m, nil
 }
 
-// startPrompt launches an agent run for prompt, blurring the editor and flipping
-// to running when a run starter is wired. With no starter (pre-session model /
-// tests) it records the pre-#392 system note and stays idle. It is shared by a
-// plain submit and by a slash prompt/skill command.
+// startPrompt launches an agent run for prompt and flips to running when a run
+// starter is wired. The composer is NOT blurred: it stays focused and editable
+// for the whole run so the next prompt can be drafted while output streams, and
+// so the blur/focus cycle does not reset the Windows IME to English mid-session.
+// With no starter (pre-session model / tests) it records the pre-#392 system
+// note and stays idle. It is shared by a plain submit and by a slash prompt/
+// skill command.
 func (m Model) startPrompt(prompt string) (tea.Model, tea.Cmd) {
 	if m.startRunFn == nil {
 		m.transcript.addSystem("(run not wired up: see session assembly in #392)")
 		return m, nil
 	}
-	m.input.Blur()
 	ch, cmd := m.startRunFn(prompt)
 	m.runCh = ch
 	m.running = true
@@ -1258,7 +1507,7 @@ func (m Model) shutdownRemote() {
 func (m Model) feedInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	m.menu.refresh(m.input.Value(), m.slash)
+	m.syncMenus()
 	m.relayout()
 	return m, cmd
 }
@@ -1381,22 +1630,243 @@ func (m Model) View() tea.View {
 		return tea.View{AltScreen: true}
 	}
 
-	content := m.applySelection(m.renderContent())
+	raw, cur := m.renderContent()
+	content := m.applySelection(raw)
 
 	// MouseModeCellMotion enables click/release/wheel events. Without it the
 	// alt-screen swallows the wheel (no native scrollback), so history could only
 	// be reached via PgUp/PgDn; enabling it lets the wheel scroll the transcript
-	// and drives both scrollbar drag and mouse text selection.
-	return tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
+	// and drives both scrollbar drag and mouse text selection. WindowTitle feeds
+	// the terminal tab title (T7.3 S2): the renderer writes it on change and
+	// clears it on close.
+	v := tea.View{Content: content, AltScreen: true, MouseMode: tea.MouseModeCellMotion, WindowTitle: m.terminalWindowTitle()}
+	if cur != nil {
+		v.Cursor = cur
+	}
+	return v
 }
 
 // renderContent builds the full-screen shell string without any selection
 // overlay (tui-render-semantics.md C4 page-region order): header line,
 // transcript, running zone (sub-agent / ask panels, spinner line), autocomplete
-// overlay, input editor, usage row, keys row. View wraps it with
-// applySelection for display, and selectedText reuses it to extract the copied
-// text from the exact rows the user sees.
-func (m Model) renderContent() string {
+// overlay, input editor, usage row, keys row. It also returns the composer's
+// caret as an absolute-frame cursor for tea.View.Cursor (nil when the editor is
+// blurred): driving the terminal's real cursor keeps the Windows IME
+// composition anchored to the input — a hidden/virtual cursor knocks the IME
+// back to English mid-session. View wraps the content with applySelection for
+// display, and selectedText reuses it to extract the copied text from the
+// exact rows the user sees.
+// handleSessionsKey owns the keyboard while the /sessions picker is open
+// (T7.3 S8): up/down move, printable keys type the filter, Enter resumes the
+// highlighted session, d arms a delete that y confirms and anything else
+// disarms, Esc closes. It reports the updated model and (rarely) a Cmd.
+func (m Model) handleSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	p := &m.sessionsP
+	switch key {
+	case "up":
+		p.moveUp()
+	case "down":
+		p.moveDown()
+	case "esc", "q":
+		if p.armed != "" {
+			p.armed = "" // disarm first: Esc never discards the picker mid-confirm
+		} else {
+			p.close()
+		}
+	case "enter":
+		if e, ok := p.selectedEntry(); ok && p.armed == "" {
+			p.close()
+			return m.resumeSession(e.id), nil
+		}
+	case "d":
+		if e, ok := p.selectedEntry(); ok && p.armed == "" {
+			if e.current {
+				p.note = "(当前会话不能在运行中删除)"
+			} else {
+				p.armed = e.id
+			}
+		}
+	case "y":
+		if p.armed != "" {
+			if err := m.session.store.Delete(p.armed); err != nil {
+				p.note = fmt.Sprintf("(删除失败: %v)", err)
+			} else {
+				p.note = "会话已删除"
+			}
+			p.armed = ""
+			entries, note := gatherSessions(m.session.store, m.session.header.ID)
+			p.entries = entries
+			if note != "" {
+				p.note = note
+			}
+			if p.selected >= len(p.visible()) {
+				p.selected = max(len(p.visible())-1, 0)
+			}
+		}
+	default:
+		switch {
+		case key == "backspace" || key == "delete":
+			if p.filter != "" {
+				r := []rune(p.filter)
+				p.filter = string(r[:len(r)-1])
+				p.selected = 0
+			}
+		case len([]rune(key)) == 1 && key != " " || key == " ":
+			p.filter += key
+			p.selected = 0
+		}
+	}
+	return m, nil
+}
+
+// handleListPanelKey owns the keyboard while a /skills or /mcp panel is open
+// (T7.3 interactive redesign): up/down navigate, printable keys filter, the
+// highlighted row toggles through the session's surface deps, Esc closes.
+// The skills panel toggles on Enter. The MCP panel is two-level (T7.3 实测
+// 反馈: server 和 tool 级别都可看可切，grok /mcps 对齐): Enter expands/
+// collapses a server row into its tools (a tool row's Enter toggles the
+// tool), and Space toggles whichever row is highlighted — server or tool.
+func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// bubbletea names the space bar "space" whatever its Text; normalize so
+	// the MCP toggle case matches and the skills filter can actually contain
+	// a space (the old `key == " "` comparison never fired).
+	key := msg.String()
+	if key == "space" {
+		key = " "
+	}
+	var p *listPanel
+	var apply func(listRow) string
+	var regather func() ([]listRow, string)
+	var expand func(listRow) // nil on the skills panel (one-level)
+	if kind == "skills" {
+		p = &m.skillsP
+		apply = func(r listRow) string { return m.session.surface.ToggleSkill(r.title, !r.off) }
+		regather = func() ([]listRow, string) { return gatherSkillRows(m.session) }
+	} else {
+		p = &m.mcpP
+		apply = func(r listRow) string {
+			if r.tool != "" {
+				return m.session.surface.ToggleMCPTool(r.server, r.tool, !r.off)
+			}
+			return m.session.surface.ToggleMCPServer(r.title, !r.off)
+		}
+		regather = func() ([]listRow, string) { return gatherMCPRows(m.session) }
+		expand = func(r listRow) { p.toggleExpand(r) }
+	}
+	toggleSelected := func() {
+		if row, ok := p.selectedRow(); ok {
+			p.note = firstLine(apply(row))
+			rows, note := regather()
+			p.setRows(rows)
+			if note != "" {
+				p.note = note
+			}
+			if p.selected >= len(p.visible()) {
+				p.selected = max(len(p.visible())-1, 0)
+			}
+		}
+	}
+	switch key {
+	case "up":
+		p.moveUp()
+	case "down":
+		p.moveDown()
+	case "esc", "q":
+		p.close()
+	case "enter":
+		if row, ok := p.selectedRow(); ok && expand != nil && row.server != "" && row.tool == "" {
+			expand(row)
+		} else {
+			toggleSelected()
+		}
+	case " ":
+		if expand != nil {
+			toggleSelected() // Space on MCP toggles server or tool rows
+		} else {
+			p.filter += key
+			p.selected = 0
+		}
+	default:
+		switch {
+		case key == "backspace" || key == "delete":
+			if p.filter != "" {
+				r := []rune(p.filter)
+				p.filter = string(r[:len(r)-1])
+				p.selected = 0
+			}
+		case len([]rune(key)) == 1:
+			p.filter += key
+			p.selected = 0
+		}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// firstLine takes the first line of a multi-line status message (the panel
+// note row is one line tall).
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// resumeSession swaps the live session for a persisted one (T7.3 S8): the
+// selected session's entries become the shared context, the run session's
+// header/leaf rebind to that file (so the next turn's append continues the
+// resumed session's tree), and the transcript is rebuilt around the replayed
+// history — the in-TUI equivalent of launching with --resume. The launch-time
+// live config (model/provider) is kept: the resumed session's model is shown
+// in the transcript seed, not forced onto the wire.
+func (m Model) resumeSession(id string) Model {
+	if m.session == nil || m.session.store == nil {
+		m.transcript.addSystem("(sessions unavailable: no active session)")
+		return m
+	}
+	header, entries, err := m.session.store.LoadEntries(id)
+	if err != nil {
+		m.transcript.addSystem(fmt.Sprintf("pigo: cannot load session %s: %v", shortID(id), err))
+		m.relayout()
+		return m
+	}
+	msgs := make(agentcore.MessageList, len(entries))
+	for i, e := range entries {
+		msgs[i] = e.Message
+	}
+	curLeaf := ""
+	if len(entries) > 0 {
+		curLeaf = entries[len(entries)-1].ID
+	}
+	s := m.session
+	s.header = header
+	s.agentCtx.Messages = msgs
+	if header.SystemPrompt != "" {
+		s.agentCtx.SystemPrompt = header.SystemPrompt
+	}
+	s.curLeaf = curLeaf
+	s.persisted = len(entries)
+
+	// Rebuild the transcript around the resumed history: a fresh transcript
+	// drops the old tool cards, fold state and streaming caches wholesale.
+	m.transcript = newTranscript(m.theme)
+	m.toolCards = make(map[string]*toolCard)
+	if m.width > 0 && m.height > 0 {
+		m.relayout()
+	}
+	m.transcript.addBanner(renderBanner(m.theme, m.opts, m.cwd))
+	seedTranscript(&m.transcript, msgs)
+	if header.Model != "" && header.Model != m.live.Model {
+		m.transcript.addSystem(fmt.Sprintf("note: this session last ran on %s; the current model %s stays active", header.Model, m.live.Model))
+	}
+	m.transcript.addSystem(fmt.Sprintf("resumed session %s (%d messages) — new turns continue this session", shortID(header.ID), len(entries)))
+	m.header.setTelemetry(estimateTokens(s.agentCtx.SystemPrompt)+messageTokens(s.agentCtx.Messages), m.live.ContextWindow)
+	m.relayout()
+	return m
+}
+
+func (m Model) renderContent() (string, *tea.Cursor) {
 	width := m.width
 	if width <= 0 {
 		width = 80
@@ -1417,9 +1887,18 @@ func (m Model) renderContent() string {
 	b.WriteString(m.header.render(m.theme, width, rightInset))
 	b.WriteByte('\n')
 
-	// When the context panel is open it replaces the transcript region (it is
+	// When an overlay panel is open it replaces the transcript region (it is
 	// modal, so nothing underneath needs to stay visible).
-	if m.ctxPanel.open {
+	if m.sessionsP.open {
+		b.WriteString(m.sessionsP.view(m.theme, width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if m.skillsP.open {
+		b.WriteString(m.skillsP.view(m.theme, width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if m.mcpP.open {
+		b.WriteString(m.mcpP.view(m.theme, width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if m.ctxPanel.open {
 		b.WriteString(m.ctxPanel.render(m.theme, m.contextData(), width, max(height-7, 1)))
 		b.WriteByte('\n')
 	} else if sized := m.width > 0 && m.height > 0; sized {
@@ -1459,14 +1938,29 @@ func (m Model) renderContent() string {
 		b.WriteString(menu)
 		b.WriteByte('\n')
 	}
+	if menu := m.modelMenu.view(width); menu != "" {
+		b.WriteString(menu)
+		b.WriteByte('\n')
+	}
 	// Input editor with the bottom-border "model · approval" tag (S14)…
+	// Mark the byte offset where the box starts: the caret's absolute row is
+	// the newline count above it (+1 for the box's top border row).
+	mark := b.Len()
 	b.WriteString(m.input.View(m.inputLabel(), m.theme))
 	b.WriteByte('\n')
 	// …then the usage row (S12) and the keys line (S13) pin the bottom.
 	b.WriteString(m.statusBar.Render(width, time.Now()))
 	b.WriteByte('\n')
 	b.WriteString(renderKeysLine(m.theme, width, m.keyBinds()))
-	return b.String()
+
+	out := b.String()
+	var cur *tea.Cursor
+	if tc := m.input.Cursor(); tc != nil {
+		// X+1 / Y+1: the rounded border draws one column left of and one row
+		// above the textarea's own view.
+		cur = tea.NewCursor(tc.X+1, tc.Y+strings.Count(out[:mark], "\n")+1)
+	}
+	return out, cur
 }
 
 // contextData snapshots the live state the context panel renders (tab data is
@@ -1609,7 +2103,10 @@ func (m Model) keyBinds() []keyBind {
 			{"Ctrl+C", "停止"},
 		}
 	case m.running:
-		return []keyBind{{"Ctrl+C", "停止"}}
+		return []keyBind{
+			{"Enter", "排队"},
+			{"Ctrl+C", "停止"},
+		}
 	default:
 		return []keyBind{
 			{"Enter", "发送"},
@@ -1663,7 +2160,8 @@ func (m Model) selectedText() string {
 		return ""
 	}
 	start, end := m.sel.ordered()
-	rows := strings.Split(m.renderContent(), "\n")
+	content, _ := m.renderContent()
+	rows := strings.Split(content, "\n")
 	var b strings.Builder
 	wrote := false
 	for y := start.y; y <= end.y && y < len(rows); y++ {
@@ -1701,7 +2199,7 @@ func (m *Model) relayout() {
 	// the row accounting below must see the settled height. The textarea gets
 	// the border's inner width (the rounded box costs one column per side).
 	m.input.SetWidth(m.width - 2)
-	rows := m.height - 3 - m.input.Height() - m.menu.rows()
+	rows := m.height - 3 - m.input.Height() - m.menu.rows() - m.modelMenu.rows()
 	if m.running {
 		rows-- // the running status line occupies the row just above the input
 		// The sub-agent panel reserves one status row per live sub-agent, plus the
@@ -1729,6 +2227,26 @@ func (m Model) onScrollbar(x, y int) bool {
 	}
 	h := m.transcript.viewportHeight()
 	return x == m.width-1 && y >= 0 && y < h
+}
+
+// confirmClick resolves a release-confirmed click (grok two-phase parity): a
+// second confirmed click on the same cell within mouseMultiClickWindow is a
+// double click and toggles the fold of the block under the cursor — any row
+// inside the block's span counts, X never participates — while the first is a
+// bare click that merely leaves the (empty) selection so the highlight clears.
+func (m *Model) confirmClick(pt point) {
+	now := time.Now()
+	if m.lastClick.ok && m.lastClick.pt == pt && now.Sub(m.lastClick.at) < mouseMultiClickWindow {
+		m.lastClick.ok = false
+		m.sel = selection{}
+		if !m.ctxPanel.open && !m.sessionsP.open && m.width > 0 && m.height > 0 {
+			if line, ok := m.transcript.lineAt(pt.y); ok {
+				m.transcript.toggleInBlock(line)
+			}
+		}
+		return
+	}
+	m.lastClick = lastMouseClick{ok: true, pt: pt, at: now}
 }
 
 // transcriptHeight returns the fallback number of rows for the transcript before

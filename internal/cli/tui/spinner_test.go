@@ -119,7 +119,7 @@ func TestModelRunningShowsSpinnerRow(t *testing.T) {
 	m.spinner.begin(time.Now())
 	m.relayout()
 
-	view := m.renderContent()
+	view, _ := m.renderContent()
 	if got := strings.Count(view, "\n"); got != 9 {
 		t.Errorf("running newline count = %d, want 9 (10 rows)", got)
 	}

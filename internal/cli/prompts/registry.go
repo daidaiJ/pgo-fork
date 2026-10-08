@@ -21,6 +21,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
@@ -200,6 +201,98 @@ func RegisterPluginCommands(reg *runtime.SlashRegistry, mgr *plugin.Manager) {
 // formatNotifications renders a plugin command's notifications into a single
 // block to surface to the user, one per line, prefixed by their type (when set)
 // so severity is visible. Returns "" when there are none.
+
+// switchToProfile rebuilds the live provider from one [models."<id>"] config
+// profile: the profile's base_url/protocol/provider win over the session's
+// (unset fields fall through), its api_key/credential becomes the credential
+// override for the resolved provider, and the compaction window/output cap/
+// effort follow the profile's declarations. An explicit effort argument wins
+// over the profile's thinking_level. Returns the transcript feedback.
+func switchToProfile(live *cli.LiveConfig, creds *provider.CredentialStore, key string, prof config.ModelProfile, effort string) string {
+	wire := prof.WireModel(key)
+	baseURL := prof.BaseURL
+	if baseURL == "" {
+		baseURL = live.BaseURL
+	}
+	protocol := prof.Protocol
+	if protocol == "" {
+		protocol = live.Protocol
+	}
+	prov, name, err := provider.ResolveProvider(wire, baseURL, protocol, prof.Provider, os.Getenv)
+	if err != nil {
+		return fmt.Sprintf("model: cannot switch to profile %q: %v", key, err)
+	}
+	live.Model = wire
+	live.ProviderName = name
+	live.Provider = prov
+	live.BaseURL = baseURL
+	if apiKey := profileAPIKey(prof); apiKey != "" && creds != nil {
+		creds.SetOverride(name, apiKey)
+	}
+	// The window follows the profile's explicit declaration when it has one;
+	// otherwise the catalog/default resolution applies as on every switch.
+	live.ContextWindow = cli.SeedContextWindow(prov, wire, live.MaxContext, prof.ContextWindow)
+	live.MaxOutputTokens = cli.SeedMaxOutputTokens(prov, wire, prof.MaxOutputTokens)
+	if effort != "" {
+		live.ThinkingLevel = agentcore.ThinkingLevel(effort)
+		return fmt.Sprintf("model switched to %s (provider: %s, config profile %s); effort: %s (next turn)", wire, name, key, effort)
+	}
+	if v, ok := validThinkingLevel(prof.ThinkingLevel); ok {
+		live.ThinkingLevel = v
+		return fmt.Sprintf("model switched to %s (provider: %s, config profile %s); effort: %s (profile default, next turn)", wire, name, key, v)
+	}
+	return fmt.Sprintf("model switched to %s (provider: %s, config profile %s)", wire, name, key)
+}
+
+// profileAPIKey resolves the profile's credential: the literal api_key wins,
+// otherwise the named reference is read from $PIGO_HOME/.credentials.yaml
+// (issue #568). An unresolvable reference yields "" so the switch keeps the
+// session's existing credential rather than failing the switch.
+func profileAPIKey(prof config.ModelProfile) string {
+	if prof.APIKey != "" {
+		return prof.APIKey
+	}
+	if prof.Credential == "" {
+		return ""
+	}
+	key, err := provider.ResolveCredentialReference(provider.CredentialFilePath(), prof.Credential)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
+// profileListing renders the config-profile section of /models: one line per
+// [models."<id>"] entry (id — label — description), the active profile's wire
+// model tagged (current). Empty when the config declares no profiles — the
+// preset catalog is the fallback face then.
+func profileListing(live *cli.LiveConfig) string {
+	if live == nil || len(live.ModelProfiles) == 0 {
+		return ""
+	}
+	ids := config.FileConfig{Models: live.ModelProfiles}.ProfileIDs()
+	if len(ids) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("config profiles (switch with /model <id>):")
+	for _, id := range ids {
+		p := live.ModelProfiles[id]
+		wire := p.WireModel(id)
+		fmt.Fprintf(&b, "\n  %s", id)
+		if label := p.Label(id); label != id {
+			b.WriteString("  — " + label)
+		}
+		if p.Description != "" {
+			b.WriteString("  — " + p.Description)
+		}
+		if live.Model == wire {
+			b.WriteString(" (current)")
+		}
+	}
+	return b.String()
+}
+
 // fetchModelCatalog implements "/models fetch" (issue #566): query the live
 // provider's endpoint for its real model catalog, cache the ids on live for
 // /model switching, and summarize the result. Errors degrade gracefully — the
@@ -265,15 +358,45 @@ func formatNotifications(notes []plugin.CommandNotification) string {
 func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, creds *provider.CredentialStore) {
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "model",
-		Description: "view or switch the active model: /model [model-id] (see /models for presets)",
+		Description: "view or switch the active model: /model [model-id] [effort] (see /models for presets)",
+		ArgumentHint: "[model-id] [effort]",
 		Action: func(args string) string {
-			id := strings.TrimSpace(args)
-			if id == "" {
-				return fmt.Sprintf("model: %s (provider: %s)\nrun /models to see presets, or /model <id> to switch", live.Model, live.ProviderName)
+			fields := strings.Fields(args)
+			if len(fields) == 0 {
+				return fmt.Sprintf("model: %s (provider: %s)\nrun /models to see presets, or /model <id> [effort] to switch", live.Model, live.ProviderName)
+			}
+			if len(fields) > 2 {
+				return fmt.Sprintf("model: unexpected extra argument %q (usage: /model <id> [effort])", fields[2])
+			}
+			id := fields[0]
+			// Trailing effort (grok grammar): a model+effort pair switches the
+			// current session's model AND its reasoning level in one line —
+			// the wire path /model <id> + /think <level> would take two.
+			effort := ""
+			if len(fields) > 1 {
+				v, ok := validThinkingLevel(fields[1])
+				if !ok {
+					return fmt.Sprintf("model: unknown effort level %q (want off|minimal|low|medium|high|xhigh|max)", fields[1])
+				}
+				effort = string(v)
+			}
+			applyEffort := func(msg string) string {
+				if effort == "" {
+					return msg
+				}
+				live.ThinkingLevel = agentcore.ThinkingLevel(effort)
+				return fmt.Sprintf("%s; effort: %s (next turn)", msg, effort)
 			}
 			// A bare provider name ("zai") selects that provider's default
 			// model (issue #564): carry the canonical id into live.Model so
 			// the wire request and status bar show a real model id.
+			// A config profile ([models."<id>"], T7.3 实测反馈) is the switch
+			// face of record: the provider is rebuilt from the profile — its
+			// base_url/protocol/provider win, unset fields keep the session's
+			// — and its api_key/credential/window/effort travel with it.
+			if key, prof, ok := live.ProfileFor(id); ok {
+				return switchToProfile(live, creds, key, prof, effort)
+			}
 			// An id from the fetched online catalog (issue #566) stays on the
 			// gateway that served it: resolve with the live provider name
 			// explicit instead of the heuristic chain, which could route a
@@ -291,7 +414,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 				// max_context cap stays applied, config still wins).
 				live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
 				live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
-				return fmt.Sprintf("model switched to %s (provider: %s, from fetched catalog)", id, name)
+				return applyEffort(fmt.Sprintf("model switched to %s (provider: %s, from fetched catalog)", id, name))
 			}
 			model := provider.CanonicalizeModel(id)
 			prov, providerName, err := provider.ResolveProvider(model, live.BaseURL, live.Protocol, "", os.Getenv)
@@ -306,7 +429,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			// max_context cap stays applied, config still wins).
 			live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
 			live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
-			return fmt.Sprintf("model switched to %s (provider: %s)", model, providerName)
+			return applyEffort(fmt.Sprintf("model switched to %s (provider: %s)", model, providerName))
 		},
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
@@ -315,6 +438,12 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		Action: func(args string) string {
 			if strings.TrimSpace(args) == "fetch" {
 				return fetchModelCatalog(live, creds)
+			}
+			if listing := profileListing(live); listing != "" {
+				if strings.TrimSpace(args) != "" {
+					return presetListing(strings.TrimSpace(args))
+				}
+				return listing + "\n\n" + presetListing("")
 			}
 			return presetListing(strings.TrimSpace(args))
 		},

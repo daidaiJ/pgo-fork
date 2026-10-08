@@ -2,12 +2,35 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/smallnest/pigo/internal/cli/ui"
 )
+
+// mouseMultiClickWindow is the max gap between two confirmed clicks on the
+// same cell for them to count as a double click (grok parity: the prototype's
+// MULTI_CLICK_TIMEOUT_MS = 300, xai-grok-pager agent_view/mod.rs).
+const mouseMultiClickWindow = 300 * time.Millisecond
+
+// pendingMouseClick is a left press awaiting its release. The fold decision is
+// deferred to MouseReleaseMsg: only a release on the same cell confirms the
+// click, so dragging off a block header starts a text selection instead of
+// folding (grok two-phase click).
+type pendingMouseClick struct {
+	ok bool
+	pt point
+}
+
+// lastMouseClick is the most recent confirmed bare click, kept for the
+// double-click detector.
+type lastMouseClick struct {
+	ok bool
+	pt point
+	at time.Time
+}
 
 // This file implements mouse text selection over the rendered shell. Because the
 // model paints the whole screen as one string (transcript + menu + input +

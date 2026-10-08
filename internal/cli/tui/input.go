@@ -33,9 +33,11 @@ import (
 const maxInputRows = 6
 
 // input is the prompt editor. It embeds a textarea.Model and exposes just the
-// surface the root model needs: value/clear, focus/blur (input is blurred while
-// a run is in flight so keystrokes never corrupt an in-flight prompt), a width
-// setter driven by tea.WindowSizeMsg, and a render string for View.
+// surface the root model needs: value/clear, focus state (the composer stays
+// focused across runs — only submit is gated; the historical blur-during-run
+// behavior reset the Windows IME to English), a width setter driven by
+// tea.WindowSizeMsg, a render string for View, and the real-terminal-cursor
+// position for tea.View.Cursor (see Cursor).
 type input struct {
 	ta textarea.Model
 	// width is the full editor width (terminal columns) last set via SetWidth. It
@@ -90,9 +92,14 @@ func newInput() input {
 		key.WithKeys("shift+enter", "ctrl+j", "alt+enter"),
 		key.WithHelp("shift+enter", "insert newline"),
 	)
-	// Draw the cursor into the rendered string: the model composes View as a
-	// plain string rather than driving textarea's real cursor reporting.
-	ta.SetVirtualCursor(true)
+	// Keep textarea's REAL cursor reporting (the default): the model surfaces
+	// the position through tea.View.Cursor so the terminal drives a real
+	// blinking cursor at the caret. This matters for IME on Windows — with the
+	// cursor drawn as a fake string character (SetVirtualCursor(true)) the
+	// terminal never learns where the caret is, and the IME composition window
+	// loses its anchor, which knocks the input method back to English
+	// mid-session. With the real cursor anchored in the composer, composition
+	// sticks to the caret.
 	// Drop the default cursor-line background highlight so the composer is framed
 	// only by the top/bottom rules (see View), matching Claude Code — no fill.
 	styles := ta.Styles()
@@ -143,6 +150,11 @@ func (in *input) Blur() { in.ta.Blur() }
 // Focused reports whether the editor currently accepts input.
 func (in input) Focused() bool { return in.ta.Focused() }
 
+// Cursor returns the caret position for tea.View.Cursor, relative to the
+// textarea's own rendered view (the model adds the frame's border offset).
+// It is nil while the editor is blurred, which hides the terminal cursor.
+func (in input) Cursor() *tea.Cursor { return in.ta.Cursor() }
+
 // Line reports the zero-based index of the line the cursor is on, and LineCount
 // the total number of lines in the buffer. The model uses them to decide whether
 // ↑/↓ should walk the prompt history (caret on the first / last line) or move the
@@ -151,10 +163,16 @@ func (in input) Line() int      { return in.ta.Line() }
 func (in input) LineCount() int { return in.ta.LineCount() }
 
 // SetWidth resizes the editor to the terminal width so wrapping and the prompt
-// column line up with the rest of the shell.
+// column line up with the rest of the shell. Same-width calls are no-ops: the
+// model re-runs relayout on every streaming delta, and each SetWidth triggers a
+// full textarea re-wrap — churn that shows as flicker around the caret for no
+// benefit.
 func (in *input) SetWidth(w int) {
 	if w < 0 {
 		w = 0
+	}
+	if w == in.width {
+		return
 	}
 	in.width = w
 	in.ta.SetWidth(w)

@@ -242,6 +242,19 @@ func (m *Manager) HiddenNames() []string {
 	return out
 }
 
+// ToolStatus is one advertised tool of a connected server with its per-tool
+// switch state (T7.3 实测反馈: the /mcp panel lists tools, not just counts).
+type ToolStatus struct {
+	// Name is the server-local tool name (the third segment of the registry
+	// name mcp__<server>__<tool>).
+	Name string
+	// Description is the server's one-line description, when it sent one.
+	Description string
+	// Disabled reports whether the config hides the tool from the declared
+	// face (the connection is kept — stash semantics).
+	Disabled bool
+}
+
 // ServerStatus is the diagnostic view of one configured server. It backs the
 // /mcp slash entry and the startup span (T6.9).
 type ServerStatus struct {
@@ -257,6 +270,9 @@ type ServerStatus struct {
 	ToolCount int
 	// DisabledCount is how many advertised tools the config hides.
 	DisabledCount int
+	// Tools lists the advertised tools with their per-tool state; empty when
+	// the server is not connected (no tools/list has run).
+	Tools []ToolStatus
 	// ServerInfo is the server's self-reported name/version, when it sent one.
 	ServerInfo string
 	// Error is why the server is not connected, empty when it is.
@@ -272,10 +288,13 @@ func (m *Manager) Status() []ServerStatus {
 			st.Connected = true
 			tools := s.client.Tools()
 			st.ToolCount = len(tools)
+			st.Tools = make([]ToolStatus, 0, len(tools))
 			for _, t := range tools {
-				if s.cfg.Disabled(t.Name) {
+				disabled := s.cfg.Disabled(t.Name)
+				if disabled {
 					st.DisabledCount++
 				}
+				st.Tools = append(st.Tools, ToolStatus{Name: t.Name, Description: t.Description, Disabled: disabled})
 			}
 			st.ServerInfo = s.client.ServerInfo()
 		}

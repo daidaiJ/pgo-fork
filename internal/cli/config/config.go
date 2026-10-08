@@ -90,6 +90,11 @@ type FileConfig struct {
 	// internal/cli/run (LoadSkills), and /skills writes it through
 	// SetSkillsDisabled.
 	Skills SkillsConfig `toml:"skills"`
+	// Models is the [models."<id>"] profile table (T7.3 实测反馈): the model
+	// switcher's face of record — grok 的 [model."<id>"] 对齐。Pure config
+	// plumbing; startup resolution lives in cmd/pigo (applyModelProfile) and
+	// the session switch in internal/cli/prompts (/model action).
+	Models map[string]ModelProfile `toml:"models"`
 }
 
 // SkillsConfig is the [skills] TOML table (T6.9). Disabled names skills that

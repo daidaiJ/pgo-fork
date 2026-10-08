@@ -321,7 +321,7 @@ func TestModelContextPanelOpenDrive(t *testing.T) {
 	if !mm.ctxPanel.open {
 		t.Fatalf("/context should open the panel")
 	}
-	view := mm.renderContent()
+	view, _ := mm.renderContent()
 	if !strings.Contains(stripANSI(view), "上下文用量") {
 		t.Errorf("panel should replace the transcript region:\n%s", stripANSI(view))
 	}
@@ -351,7 +351,8 @@ func TestShellNeverOverflowsWidth(t *testing.T) {
 			m := c.m
 			upd, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 20})
 			m = upd.(Model)
-			for i, line := range strings.Split(stripANSI(m.renderContent()), "\n") {
+			content, _ := m.renderContent()
+			for i, line := range strings.Split(stripANSI(content), "\n") {
 				if w := ui.Width(line); w > width {
 					t.Errorf("%s width %d: row %d display width %d overflows: %q",
 						c.name, width, i, w, line)

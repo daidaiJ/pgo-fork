@@ -412,3 +412,150 @@ func humanBytes(n int) string {
 		return fmt.Sprintf("%d B", n)
 	}
 }
+
+// SkillRow is one row of the TUI skills panel (T7.3 interactive redesign,
+// grok ExtensionsModal Skills-tab alignment): an enabled skill from the live
+// view, or a config-disabled name whose file stays on disk.
+type SkillRow struct {
+	Name        string
+	Description string
+	// Mode is "model-invocable" or "slash-only" for enabled rows.
+	Mode string
+	// Disabled marks a config-disabled skill; toggling it re-registers the
+	// /name command through the reload path.
+	Disabled bool
+	Bytes    int
+}
+
+// SkillRows lists the skills panel population: the enabled view rows plus the
+// config-disabled names. A name present in both renders ONCE, as disabled —
+// the config switch is the face of record (the loaded view keeps serving the
+// session until the next one, but the panel manages the switch).
+func (d *SurfaceDeps) SkillRows() []SkillRow {
+	disabledNames := d.disabledSkillNames()
+	disabled := make(map[string]bool, len(disabledNames))
+	for _, n := range disabledNames {
+		disabled[strings.ToLower(n)] = true
+	}
+	emitted := make(map[string]bool, len(disabledNames))
+	var out []SkillRow
+	if d.Skills != nil {
+		for _, s := range d.Skills() {
+			name := s.Frontmatter.Name
+			if disabled[strings.ToLower(name)] {
+				// Disabled in place: the row keeps its position but flips to
+				// the disabled face (config is the switch of record).
+				out = append(out, SkillRow{Name: name, Disabled: true})
+				emitted[strings.ToLower(name)] = true
+				continue
+			}
+			mode := "model-invocable"
+			if s.Frontmatter.DisableModelInvocation {
+				mode = "slash-only"
+			}
+			out = append(out, SkillRow{
+				Name:        name,
+				Description: s.Frontmatter.Description,
+				Mode:        mode,
+				Bytes:       len(s.Body),
+			})
+		}
+	}
+	// Config-disabled names with no view entry (file deleted/moved) trail.
+	for _, n := range disabledNames {
+		if !emitted[strings.ToLower(n)] {
+			out = append(out, SkillRow{Name: n, Disabled: true})
+		}
+	}
+	return out
+}
+
+// ToggleSkill flips a skill's [skills] disabled switch (config write +
+// registry sync). It is the panel-facing wrapper of the /skills disable|
+// enable path and returns the status message for the transcript.
+func (d *SurfaceDeps) ToggleSkill(name string, disable bool) string {
+	return d.skillsToggle(name, disable)
+}
+
+// MCPServerRow is one row of the TUI MCP panel (grok ExtensionsModal MCP-tab
+// alignment): a configured server with its live connection state.
+type MCPServerRow struct {
+	Name    string
+	State   string // "connected" / "not connected" / "disabled (config)"
+	Info    string
+	Error   string
+	Tools   int
+	Hidden  int // per-tool disabled count
+	Enabled bool
+}
+
+// MCPServerRows lists the configured MCP servers with their live state.
+func (d *SurfaceDeps) MCPServerRows() []MCPServerRow {
+	if d.MCP == nil {
+		return nil
+	}
+	var out []MCPServerRow
+	for _, st := range d.MCP.Status() {
+		state := "connected"
+		switch {
+		case !st.Enabled:
+			state = "disabled (config)"
+		case !st.Connected:
+			state = "not connected"
+		}
+		out = append(out, MCPServerRow{
+			Name:    st.Name,
+			State:   state,
+			Info:    st.ServerInfo,
+			Error:   st.Error,
+			Tools:   st.ToolCount,
+			Hidden:  st.DisabledCount,
+			Enabled: st.Enabled,
+		})
+	}
+	return out
+}
+
+// MCPToolRow is one tool row of the TUI MCP panel (T7.3 实测反馈: the panel
+// drills into a server's tools — grok's /mcps modal shape — instead of only
+// counting them): the server-local tool name, its advertised description, and
+// the per-tool switch state.
+type MCPToolRow struct {
+	Name        string
+	Description string
+	Disabled    bool
+}
+
+// MCPToolRows lists one server's advertised tools with their switch state.
+// ok=false when no such server exists; a connected server that advertises no
+// tools yields an empty slice. Not-connected servers yield nil with ok=true —
+// there is nothing to list, which the panel renders as an empty expansion.
+func (d *SurfaceDeps) MCPToolRows(server string) ([]MCPToolRow, bool) {
+	if d.MCP == nil {
+		return nil, false
+	}
+	for _, st := range d.MCP.Status() {
+		if st.Name != server {
+			continue
+		}
+		out := make([]MCPToolRow, 0, len(st.Tools))
+		for _, t := range st.Tools {
+			out = append(out, MCPToolRow{Name: t.Name, Description: t.Description, Disabled: t.Disabled})
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// ToggleMCPServer flips a server-level switch (live reconnect/close + config
+// write). It is the panel-facing wrapper of the /mcp enable|disable path.
+func (d *SurfaceDeps) ToggleMCPServer(server string, enable bool) string {
+	return d.mcpServerToggle(server, enable)
+}
+
+// ToggleMCPTool flips a per-tool switch (config write + live manager stash
+// semantics: the connection is kept either way). It is the panel-facing
+// wrapper of the /mcp tool enable|disable path.
+func (d *SurfaceDeps) ToggleMCPTool(server, tool string, disable bool) string {
+	return d.mcpToolToggle(server, tool, disable)
+}

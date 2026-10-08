@@ -52,6 +52,40 @@ type LiveConfig struct {
 	// successful fetch; never persisted.
 	FetchedModels []string
 	FetchedAt     time.Time
+
+	// ModelProfiles is the config.toml [models."<id>"] face (T7.3 实测反馈):
+	// the /model switcher's face of record — the switcher lists these ids and
+	// a switch to one rebuilds the provider from the profile. Empty when the
+	// config declares no profiles (the preset catalog + fetched ids stay the
+	// fallback face). Seeded at startup; keys never rendered into logs.
+	ModelProfiles map[string]config.ModelProfile
+}
+
+// ProfileFor resolves a model profile by id (exact → case-insensitive → wire
+// model). It is the switch path's lookup over the seeded config face.
+func (l *LiveConfig) ProfileFor(id string) (string, config.ModelProfile, bool) {
+	if l == nil {
+		return "", config.ModelProfile{}, false
+	}
+	return config.FileConfig{Models: l.ModelProfiles}.ProfileFor(id)
+}
+
+// SeedContextWindow resolves the startup compaction window: an explicit
+// config-profile value wins, otherwise the model's catalog window (fallback
+// DefaultContextWindow) lowered by the [compaction] max_context cap.
+func SeedContextWindow(prov provider.Provider, model string, maxCtx config.MaxContext, explicit int) int {
+	if explicit > 0 {
+		return explicit
+	}
+	return ResolveContextWindow(prov, model, maxCtx)
+}
+
+// SeedMaxOutputTokens resolves the startup output cap the same way.
+func SeedMaxOutputTokens(prov provider.Provider, model string, explicit int) int {
+	if explicit > 0 {
+		return explicit
+	}
+	return ResolveMaxOutputTokens(prov, model)
 }
 
 // DefaultContextWindow is the fallback context-token budget used when a model's

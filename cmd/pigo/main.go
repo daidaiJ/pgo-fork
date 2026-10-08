@@ -192,6 +192,15 @@ type cliOptions struct {
 	// CLI flags; applyFileConfig overlays it unconditionally and SetupEnv
 	// connects the servers (per-server fault tolerance, never fatal).
 	mcpCfg config.MCPConfig
+	// modelProfiles is the [models."<id>"] profile table (T7.3 实测反馈),
+	// passed through to the front-ends so the /model switcher lists the
+	// config's model ids (grok 对齐). Empty when the config declares none.
+	modelProfiles map[string]config.ModelProfile
+	// profileWindow / profileMaxTokens are the startup profile's explicit
+	// context_window / max_output_tokens overrides; 0 = derive from the
+	// provider catalog as before.
+	profileWindow    int
+	profileMaxTokens int
 }
 
 func main() {
@@ -305,10 +314,16 @@ func main() {
 	// but any flag the user set on the command line still wins (CLI > file >
 	// default). A malformed file warns but does not abort — defaults apply.
 	cfgLoad := spans.Begin("startup.config_load")
-	if cfg, err := config.LoadFileConfig(config.FileConfigPath()); err != nil {
-		fmt.Fprintf(os.Stderr, "pigo: %v\n", err)
+	cfg, cfgErr := config.LoadFileConfig(config.FileConfigPath())
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "pigo: %v\n", cfgErr)
 	} else {
 		applyFileConfig(&opts, cfg, flag.CommandLine.Changed)
+		// [models."<id>"] profiles (T7.3 实测反馈): when the resolved model
+		// names a profile it becomes the startup model (its base_url/keys/
+		// window travel with it); the full profile set always flows to the
+		// front-ends so /model lists the config's model ids (grok 对齐).
+		applyModelProfile(&opts, cfg, flag.CommandLine.Changed)
 	}
 	cfgLoad.End()
 
@@ -454,6 +469,45 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	opts.permsCfg = cfg.Permissions
 }
 
+// applyModelProfile resolves the [models."<id>"] profile face (T7.3 实测反馈,
+// grok 的 [model."<id>"] 对齐). It always carries the profile set onto opts so
+// the /model switcher lists the config's model ids; when the resolved model
+// string names a profile, that profile becomes the startup model — its
+// base_url/protocol/provider/api-key/thinking_level fill the unset,
+// flag-unshadowed slots, and its explicit context_window / max_output_tokens
+// ride along as overrides. Runs right after applyFileConfig and BEFORE
+// CanonicalizeModel, so a profile id (user-chosen) is matched verbatim and
+// only the wire id it resolves to gets canonicalized.
+func applyModelProfile(opts *cliOptions, cfg config.FileConfig, changed func(string) bool) {
+	opts.modelProfiles = cfg.Models
+	key, profile, ok := cfg.ProfileFor(opts.model)
+	if !ok {
+		return
+	}
+	opts.model = profile.WireModel(key)
+	if profile.BaseURL != "" && !changed("base-url") {
+		opts.baseURL = profile.BaseURL
+	}
+	if profile.Protocol != "" && !changed("protocol") {
+		opts.protocol = profile.Protocol
+	}
+	if profile.Provider != "" && !changed("provider") {
+		opts.provider = profile.Provider
+	}
+	if profile.APIKey != "" && !changed("api-key") {
+		// A direct api_key in the profile wins over a reference (the same
+		// precedence the top-level config uses, issue #568).
+		opts.apiKey = profile.APIKey
+	} else if profile.Credential != "" && opts.apiKey == "" && !changed("api-key") {
+		opts.credentialRef = profile.Credential
+	}
+	if profile.ThinkingLevel != "" && !changed("thinking-level") {
+		opts.thinkingLevel = profile.ThinkingLevel
+	}
+	opts.profileWindow = profile.ContextWindow
+	opts.profileMaxTokens = profile.MaxOutputTokens
+}
+
 // dispatch runs the resolved command and returns a process exit code, writing
 // diagnostics to errOut. It is the run-assembly seam: every path (list, REPL,
 // headless, subagent-rpc) is reached from here, so the CLI's behavior can be
@@ -550,6 +604,20 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return 2
 		}
+		// Interactive modes (TUI + REPL) default to --approve: the operator is
+		// present, and the historical fail-closed default made even read-only
+		// shell calls unusable in the TUI (wiki/port/tui-blank-header-fixes §5).
+		// Pass -a=false to restore per-call fail-closed approval; headless runs
+		// keep the opt-in default so unattended side effects stay gated.
+		approvedSet := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "approve" {
+				approvedSet = true
+			}
+		})
+		if !approvedSet {
+			opts.approve = true
+		}
 		if shouldUseTUI(opts, isTTY) {
 			spans.SetLabel("tui")
 			// Refresh the cached latest-release check off the hot path so the banner
@@ -579,6 +647,9 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
 				MaxContext:        env.MaxContext,
+				Models:            opts.modelProfiles,
+				ContextWindow:     opts.profileWindow,
+				MaxOutputTokens:   opts.profileMaxTokens,
 				Permissions:       opts.permsCfg,
 				})
 			exitTotal.End()
@@ -608,6 +679,9 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			MCP:               env.MCP,
 			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
+			Models:            opts.modelProfiles,
+			ContextWindow:     opts.profileWindow,
+			MaxOutputTokens:   opts.profileMaxTokens,
 			ConfigPrompts:     opts.configPrompts,
 			CliPrompts:        opts.promptTemplates,
 			NoPromptTemplates: opts.noPromptTemplates,

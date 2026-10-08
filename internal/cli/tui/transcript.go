@@ -155,8 +155,8 @@ type transcript struct {
 
 	// hits is the block hit map rebuilt by every renderAll: which block owns
 	// which span of transcript content lines (see blockHit). It backs the
-	// mouse click → block → toggle path (clickAt); line spans are cheap to
-	// recompute (no rendering), so no cache invalidation is needed.
+	// mouse click → block → toggle path (toggleInBlock); line spans are cheap
+	// to recompute (no rendering), so no cache invalidation is needed.
 	hits []blockHit
 
 	// streamMd caches the stable-prefix streaming renders (T2.2) keyed by
@@ -330,9 +330,16 @@ func (t *transcript) toggleBlock(i int) bool {
 		}
 		blk.card.clearCache()
 		blk.cacheKey = blockCacheKey{}
-		t.reflow()
-		return true
 	case roleThinking:
+		if !blk.done || strings.TrimSpace(blk.text) == "" {
+			// A live thinking block renders the streaming body regardless of
+			// its fold state, and a closed one whose body is whitespace-only
+			// renders nothing at all (see renderThinking) — a toggle would be
+			// a swallowed click with no visual answer in both cases, so report
+			// not-foldable instead (the mouse path falls back to text
+			// selection, Ctrl+T is a no-op).
+			return false
+		}
 		switch blk.display {
 		case displayCollapsed:
 			if 1+strings.Count(blk.text, "\n") > thinkingTailWindowLines {
@@ -345,11 +352,44 @@ func (t *transcript) toggleBlock(i int) bool {
 		default:
 			blk.display = displayCollapsed
 		}
-		t.reflow()
-		return true
 	default:
 		return false
 	}
+	t.anchorReflow(i)
+	return true
+}
+
+// anchorReflow re-flows after a fold toggle while keeping the toggled block's
+// first line on its current screen row (grok-style scroll anchoring). A plain
+// reflow snaps back to the bottom whenever follow is armed — and reading at
+// the bottom is the common case — which shoves the row the user just clicked
+// off target by the height delta of the toggle; the next click then lands on
+// whatever scrolled into that row and the fold interaction reads as unreliable
+// (2026-10-07 user report: 点击折叠/展开不能稳定触发). Blocks above i are
+// untouched by the toggle, so its start line is identical in the fresh layout
+// and restoring the old offset is enough to pin the row.
+func (t *transcript) anchorReflow(i int) {
+	start, row := -1, -1
+	for _, h := range t.hits {
+		if h.block == i {
+			start = h.start
+			row = start - t.vp.YOffset()
+			break
+		}
+	}
+	wasFollow := t.follow
+	t.follow = false
+	t.reflow()
+	switch {
+	case row >= 0 && row < t.vp.Height():
+		// The row was on screen: pin it (SetYOffset clamps to the new range).
+		t.vp.SetYOffset(start - row)
+	case wasFollow:
+		// The block start sat above the viewport: keep the old bottom-stick
+		// behavior rather than silently scrolling the content under the cursor.
+		t.vp.GotoBottom()
+	}
+	t.follow = t.vp.AtBottom()
 }
 
 // appendDelta grows the current assistant block by delta, creating the block on
@@ -656,9 +696,16 @@ func (t *transcript) renderAll() string {
 			continue // dropped block contributes no lines and no separator
 		}
 		if b.Len() > 0 {
+			// Joining newline: terminates the previous block's last line, so
+			// it consumes no row of its own — counting it shifted every hit
+			// after the first block boundary by one line per boundary, and
+			// clicks (which resolve real viewport rows) landed inside the
+			// previous block's body instead of on the header row
+			// (2026-10-07 user report: 点击折叠不能稳定触发).
 			b.WriteByte('\n')
-			line++
 			if t.blocks[i].role == roleUser {
+				// Blank separator line before a user turn: this one is a real
+				// viewport row.
 				b.WriteByte('\n')
 				line++
 			}
@@ -686,32 +733,29 @@ type blockHit struct {
 // click maps screenY → content line as (screenY - origin) + viewport offset.
 const transcriptOriginRow = 1
 
-// clickAt resolves a mouse click on screen row screenY to the foldable block
-// under it and toggles that block (the mouse counterpart of Ctrl+O/Ctrl+T).
-// Only a click on a block's first row — a collapsed diamond/footer row, or an
-// expanded card's title line — folds; body rows are text-selection territory.
-// Clicks outside the viewport (header above, input/status below) report false.
-func (t *transcript) clickAt(screenY int) bool {
+// lineAt resolves a screen row (0-based) to a transcript content line, and
+// reports false when the row falls outside the viewport (header above,
+// input/status below) or before the first size message.
+func (t *transcript) lineAt(screenY int) (int, bool) {
 	row := screenY - transcriptOriginRow
 	if row < 0 || row >= t.vp.Height() {
-		return false
+		return 0, false
 	}
-	return t.toggleAtLine(row + t.vp.YOffset())
+	return row + t.vp.YOffset(), true
 }
 
-// toggleAtLine toggles the block occupying content line line. It reports
-// false when the line falls between blocks, inside a block body (not the
-// header row), or inside a non-foldable block.
-func (t *transcript) toggleAtLine(line int) bool {
+// toggleInBlock toggles the foldable block occupying content line line — any
+// row inside the block's span counts, matching the grok prototype's
+// double-click fold (selection.rs: member rows double-click fold like any
+// other entry; only the X axis never participates in block hits). It reports
+// false when the line falls between blocks or inside a non-foldable block.
+func (t *transcript) toggleInBlock(line int) bool {
 	for _, h := range t.hits {
 		if line < h.start {
 			break
 		}
 		if line >= h.end {
 			continue
-		}
-		if line != h.start {
-			return false
 		}
 		return t.toggleBlock(h.block)
 	}
@@ -833,10 +877,12 @@ func (t *transcript) renderUserBand(blk *transcriptBlock) string {
 // while streaming it shows the "◇ Thinking…" activity header above the dimmed
 // rail body; once closed, the collapsed state is a single purple
 // "◆ Thought for Xs" summary line (grok finished_display_mode=folded) and the
-// tail/full states show the dimmed rail body plus the summary footer. The raw
-// text renders plain (not markdown): while streaming the block is incomplete
-// and markdown can only be laid out on the whole block, and the collapsed view
-// truncates anyway — the quiet treatment, not formatting, is the point.
+// tail/full states show the summary header above the dimmed rail body — title
+// on top, content below (2026-10-07 user report: footer-below-body read
+// upside-down against grok). The raw text renders plain (not markdown): while
+// streaming the block is incomplete and markdown can only be laid out on the
+// whole block, and the collapsed view truncates anyway — the quiet treatment,
+// not formatting, is the point.
 func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 	headStyle, bodyStyle := t.theme.ToolVerbThink, t.theme.Thinking
 	rail := t.theme.ThinkingBorder.Render("▌")
@@ -849,13 +895,26 @@ func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 	if blk.done {
 		footer = thinkingFooter(blk, headStyle)
 	}
+	// Closed with no real reasoning body: render nothing — a "◆ Thought"
+	// footer over an empty rail would read as a thinking row that never
+	// expands when clicked (2026-10-07 user report). Providers that only
+	// deliver the full message at turn end routinely carry empty thinking.
+	if blk.done && strings.TrimSpace(blk.text) == "" {
+		return ""
+	}
 	// Closed and collapsed: the summary line is the whole render (grok card).
 	if blk.done && blk.display == displayCollapsed {
 		return footer
 	}
 
 	var b strings.Builder
-	if !blk.done {
+	if blk.done {
+		// Expanded closed state: the summary header sits above the body —
+		// same row grammar as the streaming header and the grok card
+		// (title top, content below).
+		b.WriteString(footer)
+		b.WriteByte('\n')
+	} else {
 		b.WriteString(t.theme.Chrome.Render("◇ Thinking…"))
 		b.WriteByte('\n')
 	}
@@ -887,10 +946,6 @@ func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 		if l != "" {
 			b.WriteString(bodyStyle.Render(l))
 		}
-	}
-	if footer != "" {
-		b.WriteByte('\n')
-		b.WriteString(footer)
 	}
 	return b.String()
 }

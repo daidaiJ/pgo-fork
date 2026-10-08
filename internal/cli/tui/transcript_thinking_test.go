@@ -130,6 +130,36 @@ func TestTranscriptThinkingCollapsedAndExpand(t *testing.T) {
 	}
 }
 
+// TestTranscriptThinkingExpandedHeaderAboveBody pins the expanded layout:
+// title on top, content below (grok card grammar). A 2026-10-07 user report
+// found the footer-below-body face reading upside-down against grok.
+func TestTranscriptThinkingExpandedHeaderAboveBody(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	m = apply(t, m, thinkingDeltaMsg{delta: "reasoning hard\n"})
+	m = apply(t, m, thinkingDeltaMsg{delta: " more\n"})
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{
+			agentcore.NewThinkingContent("reasoning hard\nmore"),
+			agentcore.NewTextContent("the answer"),
+		},
+	}})
+	m = apply(t, m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}) // expand
+
+	content := stripANSI(m.transcript.renderAll())
+	summary := strings.Index(content, "Thought")
+	body := strings.Index(content, "reasoning hard")
+	if summary < 0 || body < 0 {
+		t.Fatalf("expanded view missing summary or body; got:\n%s", content)
+	}
+	if summary > body {
+		t.Errorf("expanded view puts the summary below the body; got:\n%s", content)
+	}
+	if strings.HasSuffix(content, "Thought") || strings.Contains(content, "Thought\nreasoning hard\nmore\n\n") {
+		t.Errorf("unexpected trailing summary; got:\n%s", content)
+	}
+}
+
 // TestTranscriptThinkingFinalizeOnly covers providers that deliver thinking
 // solely in the final message (no streaming deltas): finalizeTurn must create a
 // completed collapsed thinking block so reasoning models stay visible.
@@ -256,5 +286,71 @@ func TestTranscriptStreamingMarkdownCacheLifecycle(t *testing.T) {
 	tr.appendDelta("fresh doc")
 	if tr.streamMd == nil {
 		t.Fatal("new turn did not seed fresh streaming caches")
+	}
+}
+
+// TestEmptyThinkingRendersNothingNotFoldable covers the 2026-10-07 click
+// stability report: providers that deliver only empty/whitespace thinking must
+// not produce a "◆ Thought" row whose expanded view is visually identical
+// (empty rail + footer) — that row read as a thinking block that never opens
+// when clicked. It renders nothing and reports not-foldable, so a click falls
+// back to text selection instead of being swallowed.
+func TestEmptyThinkingRendersNothingNotFoldable(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	m = apply(t, m, turnEndMsg{msg: agentcore.AssistantMessage{
+		Content: agentcore.ContentList{
+			agentcore.NewThinkingContent("  \n\t "),
+			agentcore.NewTextContent("answer"),
+		},
+	}})
+
+	content := stripANSI(m.transcript.renderAll())
+	if strings.Contains(content, "Thought") {
+		t.Errorf("whitespace-only thinking should not render a footer; got:\n%s", content)
+	}
+	if !strings.Contains(content, "answer") {
+		t.Errorf("assistant reply missing; got:\n%s", content)
+	}
+	foldable := false
+	for i := range m.transcript.blocks {
+		if m.transcript.blocks[i].role == roleThinking && m.transcript.toggleBlock(i) {
+			foldable = true
+		}
+	}
+	if foldable {
+		t.Error("whitespace-only thinking block should not be foldable")
+	}
+}
+
+// TestHitMapLinesMatchViewport pins the hit-map accounting: the joining
+// newline between blocks terminates the previous block's last line and must
+// not consume a row of its own — counting it shifted every hit after the
+// first block boundary, so clicks resolved real viewport rows against an
+// inflated map and landed inside the previous block's body.
+func TestHitMapLinesMatchViewport(t *testing.T) {
+	tr := newTranscript(DefaultTheme())
+	tr.setSize(60, 30)
+	tr.addUser("prompt")
+	tr.appendDelta("reply body")
+	tr.finalizeTurn(agentcore.AssistantMessage{Content: agentcore.ContentList{agentcore.NewTextContent("reply body")}})
+	card := &toolCard{name: "bash", state: cardSuccess, input: map[string]any{"command": "ls"}}
+	tr.addToolCard(card)
+
+	total := tr.vp.TotalLineCount()
+	var last *blockHit
+	for i := range tr.hits {
+		if tr.hits[i].block == len(tr.blocks)-1 {
+			last = &tr.hits[i]
+		}
+	}
+	if last == nil {
+		t.Fatal("tool block missing from hit map")
+	}
+	if last.end != total {
+		t.Fatalf("last hit end = %d, viewport total = %d — hit map desynced", last.end, total)
+	}
+	if got := tr.toggleInBlock(last.start); !got {
+		t.Fatal("click resolved at the hit start line should toggle the tool block")
 	}
 }

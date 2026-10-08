@@ -99,6 +99,14 @@ type SessionHeader struct {
 	// into an inherited checkpoint (#480). Messages before this index live in the
 	// checkpoint summary rather than the replayed transcript. Optional/additive.
 	ContextWatermark int `json:"contextWatermark,omitempty"`
+	// Title is the session's manual display title (T7.3 S2 /rename). Empty
+	// means the auto title chain applies (first user prompt, then
+	// "session <id8>"; see tui termtitle.go). Optional and additive: older
+	// schemas omit it and still load.
+	Title string `json:"title,omitempty"`
+	// TitleIsManual marks Title as user-set (vs a future auto-generated
+	// title); /rename --auto clears both. Optional and additive.
+	TitleIsManual bool `json:"titleIsManual,omitempty"`
 }
 
 // Entry wraps one persisted message with the tree metadata introduced in schema
@@ -632,6 +640,24 @@ func (s *Store) Repair(id string) (bool, error) {
 	return true, nil
 }
 
+// Delete removes a session permanently: the .jsonl file, its digest sidecar and
+// any stale lease file. It backs the /sessions picker's delete action (grok
+// picker parity) and is deliberately raw — no archive, no undo. A missing file
+// is not an error (already deleted); the lease file is removed best-effort since
+// it may be held open by a concurrent writer (the kernel lock dies with the
+// process anyway).
+func (s *Store) Delete(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("session: invalid id %q", id)
+	}
+	if err := os.Remove(s.path(id)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("session: delete %s: %w", id, err)
+	}
+	_ = os.Remove(s.digestPath(id))
+	_ = os.Remove(s.leasePath(id))
+	return nil
+}
+
 // readSession decodes a session stream: header line first, then entries. For
 // schema v3 each line is an Entry ({id,parentId,timestamp,message}). For older
 // v1/v2 files each line is a bare message; readSession migrates them by
@@ -876,6 +902,33 @@ func (s *Store) AppendBranch(header SessionHeader, parentLeafID string, messages
 		return "", err
 	}
 	return leaf, nil
+}
+
+// SetTitle rewrites the session header line with the title fields updated
+// (T7.3 S2 /rename), preserving every existing entry. header.ID is required;
+// the rest of header is written as-is (mirrors AppendBranch's header
+// handling), so the caller passes its live header. A missing session file is
+// created header-only: a rename before the first turn still persists, and the
+// first AppendBranch extends the same file. UpdatedAt is left untouched — a
+// rename must not reorder the /sessions recency list.
+func (s *Store) SetTitle(header SessionHeader, title string, manual bool) error {
+	if header.ID == "" {
+		return fmt.Errorf("session: header ID must not be empty")
+	}
+	return s.withLease(header.ID, func() error {
+		var entries []Entry
+		if _, existing, _, err := s.loadTolerant(header.ID); err == nil {
+			entries = existing
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		header.Version = SchemaVersion
+		header.Title = title
+		header.TitleIsManual = manual
+		return s.atomicWrite(header.ID, func(w io.Writer) error {
+			return writeSessionEntries(w, header, entries)
+		})
+	})
 }
 
 // Fork creates a new session whose contents are the linear path from the root

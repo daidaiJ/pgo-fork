@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 )
@@ -141,5 +143,134 @@ func TestModelsFetchDegrades(t *testing.T) {
 	}
 	if live.Model != "openrouter/free" {
 		t.Errorf("live.Model = %q, want unchanged", live.Model)
+	}
+}
+
+// TestModelCommandEffortArg verifies the grok grammar "/model <id> <effort>":
+// the pair switches the model AND the reasoning level in one dispatch (the
+// chained dropdown's final Enter), and an unknown level or extra argument is
+// refused without touching the live config.
+func TestModelCommandEffortArg(t *testing.T) {
+	live := &cli.LiveConfig{Model: "openrouter/free", ProviderName: "openrouter"}
+	reg := runtime.NewSlashRegistry()
+	RegisterLiveCommands(reg, live, provider.NewCredentialStore(nil))
+
+	out, err := reg.ResolveOutcome("/model glm-5.2 high")
+	if err != nil {
+		t.Fatalf("ResolveOutcome /model glm-5.2 high: %v", err)
+	}
+	if live.Model != "glm-5.2" {
+		t.Errorf("live.Model = %q, want glm-5.2", live.Model)
+	}
+	if live.ThinkingLevel != agentcore.ThinkingHigh {
+		t.Errorf("live.ThinkingLevel = %q, want high", live.ThinkingLevel)
+	}
+	if !strings.Contains(out.Message, "effort: high") {
+		t.Errorf("message = %q, want it to mention the effort", out.Message)
+	}
+
+	// An unknown level refuses the whole switch.
+	before := live.Model
+	out, err = reg.ResolveOutcome("/model glm-5.2 turbo")
+	if err != nil {
+		t.Fatalf("ResolveOutcome with unknown level: %v", err)
+	}
+	if !strings.Contains(out.Message, "unknown effort level") || live.Model != before {
+		t.Errorf("unknown level: message = %q model = %q, want a refusal and no switch", out.Message, live.Model)
+	}
+
+	// Extra arguments are refused too.
+	out, err = reg.ResolveOutcome("/model glm-5.2 high extra")
+	if err != nil {
+		t.Fatalf("ResolveOutcome with extra arg: %v", err)
+	}
+	if !strings.Contains(out.Message, "unexpected extra argument") {
+		t.Errorf("extra arg: message = %q, want a usage refusal", out.Message)
+	}
+}
+
+// TestModelCommandSwitchesViaConfigProfile verifies the config-profile switch
+// face (T7.3 实测反馈: /model 列表与切换以 [models."<id>"] 档案为准): the
+// provider is rebuilt from the profile (base_url/protocol), the api_key
+// becomes the credential override for the resolved provider, the explicit
+// window/output-cap win over the catalog, an explicit effort argument wins
+// over the profile's thinking_level, and a profile-only id never falls
+// through to the heuristic chain.
+func TestModelCommandSwitchesViaConfigProfile(t *testing.T) {
+	live := &cli.LiveConfig{
+		Model:        "openrouter/free",
+		ProviderName: "openrouter",
+		BaseURL:      "https://old.example/v1",
+		MaxContext:   config.MaxContext{},
+	}
+	live.ModelProfiles = map[string]config.ModelProfile{
+		"gpt-56": {
+			Model:           "gpt-5.6-luna",
+			Name:            "GPT-5.6 Luna",
+			Description:     "gateway profile",
+			BaseURL:         "https://gw.example/v1",
+			Protocol:        "openai",
+			APIKey:          "sk-profile",
+			ContextWindow:   1050000,
+			MaxOutputTokens: 128000,
+			ThinkingLevel:   "high",
+		},
+	}
+	creds := provider.NewCredentialStore(nil)
+	reg := runtime.NewSlashRegistry()
+	RegisterLiveCommands(reg, live, creds)
+
+	out, err := reg.ResolveOutcome("/model gpt-56")
+	if err != nil {
+		t.Fatalf("ResolveOutcome /model gpt-56: %v", err)
+	}
+	if live.Model != "gpt-5.6-luna" || live.ProviderName != "openai" {
+		t.Errorf("live = (%q, %q), want (gpt-5.6-luna, openai)", live.Model, live.ProviderName)
+	}
+	if live.BaseURL != "https://gw.example/v1" {
+		t.Errorf("live.BaseURL = %q, want the profile endpoint", live.BaseURL)
+	}
+	if live.ContextWindow != 1050000 || live.MaxOutputTokens != 128000 {
+		t.Errorf("window/tokens = %d/%d, want the profile overrides", live.ContextWindow, live.MaxOutputTokens)
+	}
+	if live.ThinkingLevel != agentcore.ThinkingHigh {
+		t.Errorf("effort = %q, want the profile default high", live.ThinkingLevel)
+	}
+	if !strings.Contains(out.Message, "config profile gpt-56") {
+		t.Errorf("message = %q, want it to name the profile", out.Message)
+	}
+	if got := creds.GetAPIKey(t.Context(), "openai"); got != "sk-profile" {
+		t.Errorf("credential override = %q, want sk-profile", got)
+	}
+
+	// An explicit effort argument wins over the profile's thinking_level.
+	out, err = reg.ResolveOutcome("/model gpt-56 low")
+	if err != nil {
+		t.Fatalf("ResolveOutcome /model gpt-56 low: %v", err)
+	}
+	if live.ThinkingLevel != agentcore.ThinkingLow {
+		t.Errorf("effort after explicit arg = %q, want low", live.ThinkingLevel)
+	}
+	if !strings.Contains(out.Message, "effort: low") {
+		t.Errorf("message = %q, want the effort note", out.Message)
+	}
+
+	// A profile id with an effort suffix still routes through the profile,
+	// and an unknown id keeps the heuristic path (no profile match).
+	out, err = reg.ResolveOutcome("/model totally-unknown")
+	if err != nil {
+		t.Fatalf("ResolveOutcome /model totally-unknown: %v", err)
+	}
+	if !strings.Contains(out.Message, "cannot switch") && !strings.Contains(out.Message, "model switched") {
+		t.Errorf("unknown-id message = %q, want the heuristic path outcome", out.Message)
+	}
+
+	// /models lists the profiles ahead of the preset catalog.
+	out, err = reg.ResolveOutcome("/models")
+	if err != nil {
+		t.Fatalf("ResolveOutcome /models: %v", err)
+	}
+	if !strings.Contains(out.Message, "config profiles") || !strings.Contains(out.Message, "gpt-56") {
+		t.Errorf("/models = %q, want the config-profile section", out.Message)
 	}
 }

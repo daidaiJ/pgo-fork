@@ -94,13 +94,7 @@ func (p contextPanel) render(theme Theme, d contextData, width, height int) stri
 	}
 	bodyW := inner - 2
 	body := p.body(theme, d, bodyW)
-	// lipgloss v2's Width(n) spans the border inclusive (crush 排版规则), so the
-	// box width is the body width plus the two side borders.
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(colorGray)).
-		Width(bodyW + 2).
-		Render(body)
+	box := panelBox(theme, body, bodyW)
 	lines := strings.Split(box, "\n")
 	if height > 0 && len(lines) > height {
 		lines = lines[:height]
@@ -291,6 +285,17 @@ func breakdownRow(theme Theme, dim bool, label string, tokens, window int, hideV
 		line += theme.Chrome.Render(tail)
 	}
 	return line + "\n"
+}
+
+// panelBox wraps a panel body in the shared rounded-border frame (lipgloss v2's
+// Width spans the border inclusive, crush 排版规则). It is the frame both
+// overlay panels render through so /context and /sessions read as one family.
+func panelBox(theme Theme, body string, bodyW int) string {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colorGray)).
+		Width(bodyW + 2).
+		Render(body)
 }
 
 // uiW measures display width via the ui helper (local alias keeps the call

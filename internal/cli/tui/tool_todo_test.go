@@ -82,21 +82,50 @@ func TestMouseClickTogglesFoldableBlocks(t *testing.T) {
 		return 0
 	}
 
-	// Click 1: collapsed diamond row → expanded card.
-	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: headerY(m.transcript), Button: tea.MouseLeft})
+	y := headerY(m.transcript)
+
+	// A single confirmed click on the foldable header must NOT toggle (grok
+	// parity: single clicks are selection-only; folding is a double click).
+	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: y, Button: tea.MouseLeft})
+	m = apply(t, m, tea.MouseReleaseMsg{X: 5, Y: y, Button: tea.MouseLeft})
+	if got := m.transcript.blocks[idx].display; got != displayCollapsed {
+		t.Fatalf("single click: display = %v, want still displayCollapsed", got)
+	}
+
+	// Double-click 1: any-row hit → expanded card, anchored row.
+	m = doubleClickAt(t, m, 5, y)
 	if got := m.transcript.blocks[idx].display; got != displayFull {
-		t.Fatalf("click 1: display = %v, want displayFull", got)
+		t.Fatalf("double click 1: display = %v, want displayFull", got)
 	}
-	// Click 2: title line → full response tree.
-	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: headerY(m.transcript), Button: tea.MouseLeft})
+	if got := headerY(m.transcript); got != y {
+		t.Fatalf("double click 1: header row moved %d → %d, want anchored at %d", y, got, y)
+	}
+
+	// Double-click 2: full response tree.
+	m = doubleClickAt(t, m, 5, y)
 	if !m.transcript.blocks[idx].card.expanded {
-		t.Fatal("click 2: response tree should be expanded")
+		t.Fatal("double click 2: response tree should be expanded")
 	}
-	// Click 3: folded back to the single diamond row.
-	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: headerY(m.transcript), Button: tea.MouseLeft})
+
+	// Double-click 3: folded back to the single diamond row.
+	m = doubleClickAt(t, m, 5, y)
 	blk := m.transcript.blocks[idx]
 	if blk.display != displayCollapsed || blk.card.expanded {
-		t.Fatalf("click 3: display = %v, expanded = %v, want collapsed", blk.display, blk.card.expanded)
+		t.Fatalf("double click 3: display = %v, expanded = %v, want collapsed", blk.display, blk.card.expanded)
+	}
+
+	// A drag that starts on the header (press + motion + release off-cell)
+	// must not fold either: the two-phase click never confirms.
+	m = doubleClickAt(t, m, 5, y) // expand again for the drag test
+	if m.transcript.blocks[idx].display != displayFull {
+		t.Fatal("precondition: expanded for drag test")
+	}
+	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: y, Button: tea.MouseLeft})
+	m = apply(t, m, tea.MouseMotionMsg{X: 20, Y: y + 1})
+	m = apply(t, m, tea.MouseReleaseMsg{X: 20, Y: y + 1, Button: tea.MouseLeft})
+	if m.transcript.blocks[idx].display != displayFull {
+		t.Fatalf("drag across the header should not fold: display=%v expanded=%v",
+			m.transcript.blocks[idx].display, m.transcript.blocks[idx].card.expanded)
 	}
 
 	// A click on a non-foldable block's row must not fold: it starts a text
@@ -114,17 +143,102 @@ func TestMouseClickTogglesFoldableBlocks(t *testing.T) {
 	if aidx < 0 {
 		t.Fatal("no assistant block")
 	}
-	y := -1
+	ay := -1
 	for _, h := range m.transcript.hits {
 		if h.block == aidx {
-			y = h.start - m.transcript.vp.YOffset() + transcriptOriginRow
+			ay = h.start - m.transcript.vp.YOffset() + transcriptOriginRow
 		}
 	}
-	if y < 0 {
+	if ay < 0 {
 		t.Fatal("assistant block missing from hit map")
 	}
-	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: y, Button: tea.MouseLeft})
+	m = apply(t, m, tea.MouseClickMsg{X: 5, Y: ay, Button: tea.MouseLeft})
 	if !m.sel.active {
 		t.Error("click on a non-foldable block should start a text selection")
+	}
+}
+
+// doubleClickAt sends two confirmed clicks (press + release, same cell) within
+// the multi-click window: the grok-parity fold toggle gesture.
+func doubleClickAt(t *testing.T, m Model, x, y int) Model {
+	m = apply(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	m = apply(t, m, tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+	m = apply(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	return apply(t, m, tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+}
+
+// TestMouseClickAnchorsFoldRow covers the 2026-10-07 stability report: with the
+// viewport parked at the bottom, expanding a block must not snap GotoBottom and
+// shove the clicked row off target — the block's first line stays on its screen
+// row, so a follow-up click at the same position keeps toggling the same block
+// through the full three-state cycle.
+func TestMouseClickAnchorsFoldRow(t *testing.T) {
+	m := apply(t, NewModel(Options{Model: "m", ProviderName: "p"}), tea.WindowSizeMsg{Width: 60, Height: 12})
+	tr := &m.transcript
+	tr.addUser("first prompt")
+	tr.appendDelta(strings.Repeat("filler line of body text\n", 25))
+	tr.finalizeTurn(agentcore.AssistantMessage{})
+	m = apply(t, m, toolStartMsg{id: "t1", name: "bash", input: map[string]any{"command": "go test ./..."}})
+	m = apply(t, m, toolEndMsg{id: "t1", ok: true, result: strings.Repeat("output line\n", 20)})
+
+	idx := -1
+	for i := range tr.blocks {
+		if tr.blocks[i].role == roleTool {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("no tool block after toolStart/toolEnd")
+	}
+	if !tr.follow || !tr.vp.AtBottom() {
+		t.Fatalf("precondition: transcript should sit at the bottom (follow=%v)", tr.follow)
+	}
+	if !tr.overflowing() {
+		t.Fatal("precondition: transcript should overflow the viewport")
+	}
+	headerY := func() int {
+		for _, h := range tr.hits {
+			if h.block == idx {
+				return h.start - tr.vp.YOffset() + transcriptOriginRow
+			}
+		}
+		t.Fatal("tool block missing from hit map")
+		return 0
+	}
+
+	y := headerY()
+	if row := y - transcriptOriginRow; row < 0 || row >= tr.vp.Height() {
+		t.Fatalf("tool row off-screen pre-click: y=%d height=%d", y, tr.vp.Height())
+	}
+
+	// Double-click 1: expand. The row must not move.
+	m = doubleClickAt(t, m, 5, y)
+	if got := tr.blocks[idx].display; got != displayFull {
+		t.Fatalf("double click 1: display = %v, want displayFull", got)
+	}
+	if tr.vp.TotalLineCount() <= tr.vp.Height() {
+		t.Fatal("double click 1: expected the expanded card to overflow the viewport")
+	}
+	if got := headerY(); got != y {
+		t.Fatalf("double click 1: header row moved %d → %d, want anchored at %d", y, got, y)
+	}
+
+	// Double-click 2 at the SAME screen row: full response tree.
+	m = doubleClickAt(t, m, 5, y)
+	if !tr.blocks[idx].card.expanded {
+		t.Fatal("double click 2: follow-up double click at the same row should expand the tree")
+	}
+	if got := headerY(); got != y {
+		t.Fatalf("double click 2: header row moved %d → %d, want anchored at %d", y, got, y)
+	}
+
+	// Double-click 3 at the SAME screen row: folded back to the diamond row.
+	m = doubleClickAt(t, m, 5, y)
+	blk := tr.blocks[idx]
+	if blk.display != displayCollapsed || blk.card.expanded {
+		t.Fatalf("double click 3: display = %v expanded = %v, want collapsed", blk.display, blk.card.expanded)
+	}
+	if got := headerY(); got != y {
+		t.Fatalf("double click 3: header row moved %d → %d, want anchored at %d", y, got, y)
 	}
 }

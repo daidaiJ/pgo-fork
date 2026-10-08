@@ -78,7 +78,8 @@ func TestModelSelectionCopy(t *testing.T) {
 
 	// Locate the rendered screen cell where the text begins so the test does not
 	// hard-code the transcript's bottom-stick row.
-	rows := strings.Split(m.renderContent(), "\n")
+	content, _ := m.renderContent()
+	rows := strings.Split(content, "\n")
 	y, x := -1, -1
 	for i, r := range rows {
 		plain := stripANSI(r)
@@ -389,8 +390,8 @@ func TestModelSubagentPanelNavigation(t *testing.T) {
 	if got := m.subagents.expandedID(); got != "b" {
 		t.Fatalf("expandedID after enter = %q, want b", got)
 	}
-	if !strings.Contains(m.renderContent(), "output of B") {
-		t.Errorf("expanded render missing sub-agent output:\n%s", m.renderContent())
+	if view, _ := m.renderContent(); !strings.Contains(view, "output of B") {
+		t.Errorf("expanded render missing sub-agent output:\n%s", view)
 	}
 
 	// Esc collapses/clears the selection and does NOT quit (no quit command).
@@ -407,15 +408,16 @@ func TestModelSubagentPanelNavigation(t *testing.T) {
 }
 
 // TestModelSubagentEscReturnsToInput verifies the one-key escape ("escape hatch: one key back to the input box"):
-// while a sub-agent runs the composer is blurred (no typing), and after arrowing
-// into the panel a single Esc both clears the selection and re-focuses the input
-// box — so returning to the composer never requires more than one press and never
-// interrupts the run.
+// while a sub-agent runs and the composer happens to be blurred (startPrompt no
+// longer blurs it, but any blurred state — e.g. from a future focus owner — must
+// be recoverable), after arrowing into the panel a single Esc both clears the
+// selection and re-focuses the input box — so returning to the composer never
+// requires more than one press and never interrupts the run.
 func TestModelSubagentEscReturnsToInput(t *testing.T) {
 	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.running = true
 	m.spinner.begin(time.Now())
-	m.input.Blur() // the composer is blurred for the duration of a run (startPrompt)
+	m.input.Blur() // simulate a blurred composer to exercise the re-focus hatch
 	m = apply(t, m, toolStartMsg{id: "a", name: "task", input: map[string]any{"description": "task A"}})
 
 	// Arrow into the panel: a selection is now active while the input stays blurred.
@@ -439,6 +441,67 @@ func TestModelSubagentEscReturnsToInput(t *testing.T) {
 	}
 	if !m.running {
 		t.Error("escaping the panel selection must not interrupt the run")
+	}
+}
+
+// TestComposerLiveDuringRunAndQueueDrains verifies the grok-style queue: the
+// composer accepts typing and pasting while a run streams (it is never blurred
+// mid-run, which also keeps Windows IME composition alive), Enter mid-run
+// enqueues the buffer instead of submitting, and runEndMsg drains the queue by
+// starting the first queued prompt.
+func TestComposerLiveDuringRunAndQueueDrains(t *testing.T) {
+	m := apply(t, NewModel(Options{}), tea.WindowSizeMsg{Width: 80, Height: 24})
+	var prompts []string
+	m.startRunFn = func(prompt string) (chan tea.Msg, tea.Cmd) {
+		prompts = append(prompts, prompt)
+		return make(chan tea.Msg, 1), nil
+	}
+
+	// Start a run via the normal submit path.
+	for _, r := range "first" {
+		m = apply(t, m, runeKey(r))
+	}
+	m = apply(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.running {
+		t.Fatal("run should be in flight after submit")
+	}
+	if m.input.Focused() != true {
+		t.Error("composer must stay focused across startPrompt (IME survives)")
+	}
+
+	// Typing stays live mid-run.
+	for _, r := range "second" {
+		m = apply(t, m, runeKey(r))
+	}
+	if got := m.input.Value(); got != "second" {
+		t.Fatalf("composer should accept typing mid-run, got %q", got)
+	}
+
+	// Enter mid-run enqueues instead of submitting.
+	m = apply(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.queued) != 1 || m.queued[0] != "second" {
+		t.Fatalf("queued = %v, want [second]", m.queued)
+	}
+	if m.input.Value() != "" {
+		t.Errorf("composer should be cleared after enqueue, got %q", m.input.Value())
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("queued prompt must not start mid-run, prompts=%v", prompts)
+	}
+	if !hasSystemBlockContaining(m.transcript, "queued") {
+		t.Errorf("expected a queued note in the transcript, blocks=%v", blockTexts(m.transcript))
+	}
+
+	// Run ends: the queue drains and the queued prompt starts.
+	m = apply(t, m, runEndMsg{})
+	if len(prompts) != 2 || prompts[1] != "second" {
+		t.Fatalf("queued prompt should start after run end, prompts=%v", prompts)
+	}
+	if !m.running {
+		t.Error("drained prompt should flip the model back to running")
+	}
+	if len(m.queued) != 0 {
+		t.Errorf("queue should be empty after the drain, got %v", m.queued)
 	}
 }
 

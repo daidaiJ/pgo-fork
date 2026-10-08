@@ -80,6 +80,15 @@ type Options struct {
 	// model-derived default); see cli.ResolveContextWindow.
 	MaxContext config.MaxContext
 
+	// Models is the config's [models."<id>"] profile face (T7.3 实测反馈):
+	// the /model switcher lists these ids and a switch rebuilds the provider
+	// from the profile. Nil/empty keeps the preset-catalog fallback.
+	Models map[string]config.ModelProfile
+	// ContextWindow / MaxOutputTokens are the startup profile's explicit
+	// overrides (0 = derive from the provider catalog, as before).
+	ContextWindow   int
+	MaxOutputTokens int
+
 	// Permissions is the user's [permissions] rules table (T5.2), loaded
 	// into the permission engine alongside the persisted permissions file.
 	Permissions config.PermissionsConfig
