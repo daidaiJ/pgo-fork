@@ -20,7 +20,6 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/prompts"
-	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
@@ -95,14 +94,10 @@ func newTestDepsOnStore(t *testing.T, p provider.Provider, store *session.Store,
 		slash:    reg,
 		creds:    provider.NewCredentialStore(nil),
 	}
-	// The promoted /status (T6.9): tests exercise the same registry-registered
-	// command production wires in interactive.go — the old hardcoded intercept
-	// is gone (D-1).
-	prompts.RegisterStatusCommand(reg, func() string {
-		var b bytes.Buffer
-		status.RunStatus(&b, &deps)
-		return b.String()
-	})
+	// T7.7: the loop's executor serves /status, /session and /compact through
+	// the registry's contract commands — register the live set exactly as
+	// production's BuildSlashRegistry wiring does.
+	prompts.RegisterLiveCommands(reg, live, deps.creds)
 	return deps
 }
 
@@ -238,10 +233,6 @@ func TestREPLUnknownCommandNoRun(t *testing.T) {
 func TestREPLModelSwitchTakesEffect(t *testing.T) {
 	p := &replProvider{reply: "hi"}
 	deps, _ := newTestDeps(t, p)
-	// Register the real live action commands (/model, /models, /help) against the
-	// same live config the REPL runs on, so /model mutates it.
-	prompts.RegisterLiveCommands(deps.slash, deps.live, nil)
-
 	var out bytes.Buffer
 	// /model with no arg reports the current model; /model <id> switches to an
 	// Ollama preset (no API key required); /exit ends the loop.

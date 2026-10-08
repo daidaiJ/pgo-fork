@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/smallnest/pigo/internal/cli/headless"
 	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
-	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/dream"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/plugin"
@@ -278,13 +276,14 @@ func Run(opts Options) error {
 	// skillsView aliases opts.Skills so /skills reload can swap the view
 	// without reaching into run state the registry cannot see.
 	skillsView := &opts.Skills
-	prompts.RegisterSurfaceCommands(slash, prompts.SurfaceDeps{
+	surface := &prompts.SurfaceDeps{
 		MCP:        opts.MCP,
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
 		SkillsDir:  run.SkillsDir(),
 		ConfigPath: config.FileConfigPath(),
-	})
+	}
+	prompts.RegisterSurfaceCommands(slash, surface)
 
 	// --approve grants the launch directory session trust up front (mirrors pi's
 	// --approve/-a), so the first-launch prompt is skipped and side-effect tools
@@ -340,16 +339,11 @@ func Run(opts Options) error {
 		permEngine: permEngine,
 		mcpMgr:     opts.MCP,
 		skillsView: skillsView,
+		surface:    surface,
 	}
-	// Promoted /status (T6.9 G-4): registered here — after deps exists — so
-	// the Action renders the full status.RunStatus report through the Host;
-	// the REPL's former hardcoded intercept is gone (D-1: behavior change is
-	// the point — the TUI gets /status from the same registry).
-	prompts.RegisterStatusCommand(slash, func() string {
-		var b strings.Builder
-		status.RunStatus(&b, &deps)
-		return b.String()
-	})
+	// Promoted /status (T6.9 G-4 → T7.7): the report moved to the slash
+	// Executor's Status hook — runREPL builds it from deps, so the REPL and
+	// the TUI render through the same shared status renderer.
 	return runREPL(os.Stdin, os.Stdout, deps)
 }
 

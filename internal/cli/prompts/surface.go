@@ -56,35 +56,21 @@ type SurfaceDeps struct {
 // front-end from the shared BuildSlashRegistry wiring; both front-ends
 // construct their own SurfaceDeps (what they can see differs, the commands do
 // not).
-func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps SurfaceDeps) {
+func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 	deps.registry = reg
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "skills",
 		ArgumentHint: "[list|disable|enable|info|reload]",
 		Description:  "list skills or toggle one: /skills disable <name> (writes config; next-session effect)",
-		Action:       deps.skillsAction,
+		Interactive:  true,
+		Parse:        parseSkills,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "mcp",
 		ArgumentHint: "[enable|disable <server> | tool enable|disable <server> <tool> | reload <server>]",
 		Description:  "MCP server and per-tool switches, connection state and schema reload",
-		Action:       deps.mcpAction,
-	})
-}
-
-// RegisterStatusCommand installs the promoted /status (T6.9 G-4 promotion: out
-// of the REPL's hardcoded intercept into the shared registry, so the TUI gets
-// it too). render is front-end supplied — the REPL renders the full
-// status.RunStatus report through its cli.Host; the TUI renders the sections
-// it can see. Nil render means the caller skipped registration entirely.
-func RegisterStatusCommand(reg *runtime.SlashRegistry, render func() string) {
-	if render == nil {
-		return
-	}
-	reg.AddBuiltin(runtime.SlashCommand{
-		Name:        "status",
-		Description: "show runtime config, context, MCP, skills, permissions, credentials, telemetry",
-		Action: func(string) string { return render() },
+		Interactive:  true,
+		Parse:        parseMCP,
 	})
 }
 
@@ -104,34 +90,6 @@ func (d *SurfaceDeps) disabledSkillNames() []string {
 	out := append([]string{}, cfg.Skills.Disabled...)
 	sort.Strings(out)
 	return out
-}
-
-// skillsAction implements /skills: bare list, disable/enable (config write +
-// registry sync), info, reload (rescan + view swap + registry sync).
-func (d *SurfaceDeps) skillsAction(args string) string {
-	fields := strings.Fields(args)
-	sub := ""
-	if len(fields) > 0 {
-		sub = strings.ToLower(fields[0])
-	}
-	switch sub {
-	case "":
-		return d.skillsList()
-	case "disable", "enable":
-		if len(fields) < 2 {
-			return fmt.Sprintf("skills: usage: /skills %s <name>", sub)
-		}
-		return d.skillsToggle(fields[1], sub == "disable")
-	case "info":
-		if len(fields) < 2 {
-			return "skills: usage: /skills info <name>"
-		}
-		return d.skillsInfo(fields[1])
-	case "reload":
-		return d.skillsReload()
-	default:
-		return fmt.Sprintf("skills: unknown subcommand %q (want list | disable | enable | info | reload)", sub)
-	}
 }
 
 // skillsList renders the skill face: loaded skills with their invocation mode
@@ -259,38 +217,6 @@ func (d *SurfaceDeps) skillsReload() string {
 	}
 	d.SetSkills(skills)
 	return fmt.Sprintf("skills: reloaded %d skill(s) from %s (slash list synced; prompt ads and materialized tools refresh next session)", len(skills), d.SkillsDir)
-}
-
-// mcpAction implements /mcp: bare list, server enable/disable, per-tool
-// enable/disable, and reload. Subcommand grammar mirrors the spec §4 table.
-func (d *SurfaceDeps) mcpAction(args string) string {
-	fields := strings.Fields(args)
-	sub := ""
-	if len(fields) > 0 {
-		sub = strings.ToLower(fields[0])
-	}
-	switch sub {
-	case "":
-		return d.mcpList()
-	case "enable", "disable":
-		if len(fields) < 2 {
-			return fmt.Sprintf("mcp: usage: /mcp %s <server>", sub)
-		}
-		return d.mcpServerToggle(fields[1], sub == "enable")
-	case "tool":
-		// /mcp tool enable|disable <server> <tool>
-		if len(fields) < 4 || (fields[1] != "enable" && fields[1] != "disable") {
-			return "mcp: usage: /mcp tool enable|disable <server> <tool>"
-		}
-		return d.mcpToolToggle(fields[2], fields[3], fields[1] == "disable")
-	case "reload":
-		if len(fields) < 2 {
-			return "mcp: usage: /mcp reload <server>"
-		}
-		return d.mcpReload(fields[1])
-	default:
-		return fmt.Sprintf("mcp: unknown subcommand %q (want enable | disable | tool | reload)", sub)
-	}
 }
 
 // mcpList renders the server face. No configured servers is a NEUTRAL state —

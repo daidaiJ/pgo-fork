@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -348,135 +347,64 @@ func formatNotifications(notes []plugin.CommandNotification) string {
 	return b.String()
 }
 
-// RegisterLiveCommands installs the built-in action commands that need live
-// runtime state. /model views or switches the active model; /help lists the
-// available commands. These are instance built-ins (AddBuiltin) because their
-// closures must capture live and the registry — state unreachable from an
-// init()-time global registration. creds resolves the API key for "/models
-// fetch" online discovery; it may be nil, which disables fetching (the static
-// preset listing still works).
+// RegisterLiveCommands installs the contract commands (T7.7): /model
+// /models /think /effect /status /session /compact declare identity plus a
+// pure Parse (parse.go); their Execute faces live in the front-end Executor
+// (executor.go). /help stays an Action closure — it renders the registry
+// itself. live and creds remain the wiring seam the front-ends pass; the
+// Executor carries them to the Execute face.
 func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, creds *provider.CredentialStore) {
+	// T7.7 contract command: Parse is pure (parse.go); the Execute face — the
+	// former closure body — lives in Executor.modelSwitch. Interactive marks
+	// the bare-submit dropdown projection the TUI opens.
 	reg.AddBuiltin(runtime.SlashCommand{
-		Name:        "model",
-		Description: "view or switch the active model: /model [model-id] [effort] (see /models for presets)",
+		Name:         "model",
+		Description:  "view or switch the active model: /model [model-id] [effort] (see /models for presets)",
 		ArgumentHint: "[model-id] [effort]",
-		Action: func(args string) string {
-			fields := strings.Fields(args)
-			if len(fields) == 0 {
-				return fmt.Sprintf("model: %s (provider: %s)\nrun /models to see presets, or /model <id> [effort] to switch", live.Model, live.ProviderName)
-			}
-			if len(fields) > 2 {
-				return fmt.Sprintf("model: unexpected extra argument %q (usage: /model <id> [effort])", fields[2])
-			}
-			id := fields[0]
-			// Trailing effort (grok grammar): a model+effort pair switches the
-			// current session's model AND its reasoning level in one line —
-			// the wire path /model <id> + /think <level> would take two.
-			effort := ""
-			if len(fields) > 1 {
-				v, ok := validThinkingLevel(fields[1])
-				if !ok {
-					return fmt.Sprintf("model: unknown effort level %q (want off|minimal|low|medium|high|xhigh|max)", fields[1])
-				}
-				effort = string(v)
-			}
-			applyEffort := func(msg string) string {
-				if effort == "" {
-					return msg
-				}
-				live.ThinkingLevel = agentcore.ThinkingLevel(effort)
-				return fmt.Sprintf("%s; effort: %s (next turn)", msg, effort)
-			}
-			// A bare provider name ("zai") selects that provider's default
-			// model (issue #564): carry the canonical id into live.Model so
-			// the wire request and status bar show a real model id.
-			// A config profile ([models."<id>"], T7.3 实测反馈) is the switch
-			// face of record: the provider is rebuilt from the profile — its
-			// base_url/protocol/provider win, unset fields keep the session's
-			// — and its api_key/credential/window/effort travel with it.
-			if key, prof, ok := live.ProfileFor(id); ok {
-				return switchToProfile(live, creds, key, prof, effort)
-			}
-			// An id from the fetched online catalog (issue #566) stays on the
-			// gateway that served it: resolve with the live provider name
-			// explicit instead of the heuristic chain, which could route a
-			// gateway-specific id to OpenRouter.
-			if providerName := live.ProviderName; len(live.FetchedModels) > 0 && slices.Contains(live.FetchedModels, id) {
-				prov, name, err := provider.ResolveProvider(id, live.BaseURL, live.Protocol, providerName, os.Getenv)
-				if err != nil {
-					return fmt.Sprintf("model: cannot switch to %q: %v", id, err)
-				}
-				live.Model = id
-				live.ProviderName = name
-				live.Provider = prov
-				// The compaction window follows the model: re-resolve against
-				// the new model's catalog window (the explicit [compaction]
-				// max_context cap stays applied, config still wins).
-				live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
-				live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
-				return applyEffort(fmt.Sprintf("model switched to %s (provider: %s, from fetched catalog)", id, name))
-			}
-			model := provider.CanonicalizeModel(id)
-			prov, providerName, err := provider.ResolveProvider(model, live.BaseURL, live.Protocol, "", os.Getenv)
-			if err != nil {
-				return fmt.Sprintf("model: cannot switch to %q: %v", id, err)
-			}
-			live.Model = model
-			live.ProviderName = providerName
-			live.Provider = prov
-			// The compaction window follows the model: re-resolve against the
-			// new model's catalog window (the explicit [compaction]
-			// max_context cap stays applied, config still wins).
-			live.ContextWindow = cli.ResolveContextWindow(prov, live.Model, live.MaxContext)
-			live.MaxOutputTokens = cli.ResolveMaxOutputTokens(prov, live.Model)
-			return applyEffort(fmt.Sprintf("model switched to %s (provider: %s)", model, providerName))
-		},
+		Interactive:  true,
+		Parse:        parseModel,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "models",
 		Description: "list preset providers and models you can switch to; /models fetch queries the live endpoint for its real catalog",
-		Action: func(args string) string {
-			if strings.TrimSpace(args) == "fetch" {
-				return fetchModelCatalog(live, creds)
-			}
-			if listing := profileListing(live); listing != "" {
-				if strings.TrimSpace(args) != "" {
-					return presetListing(strings.TrimSpace(args))
-				}
-				return listing + "\n\n" + presetListing("")
-			}
-			return presetListing(strings.TrimSpace(args))
-		},
+		Parse:       parseModels,
 	})
-	// thinkAction views or switches the reasoning-effort level. It backs both
-	// /think and its alias /effect, so the two commands share identical behavior.
-	thinkAction := func(args string) string {
-		lvl := strings.TrimSpace(args)
-		if lvl == "" {
-			cur := live.ThinkingLevel
-			if cur == "" {
-				cur = agentcore.ThinkingOff
-			}
-			return fmt.Sprintf("think: %s\nswitch with /think <off|minimal|low|medium|high|xhigh|max>", cur)
-		}
-		v, ok := validThinkingLevel(lvl)
-		if !ok {
-			return fmt.Sprintf("think: invalid level %q (want off|minimal|low|medium|high|xhigh|max)", lvl)
-		}
-		live.ThinkingLevel = v
-		return fmt.Sprintf("think level set to %s (applies to the next turn)", v)
-	}
+	// T7.7 contract commands: /think and its /effect alias share one Parse
+	// (parse.go); the Execute face — the former thinkAction body — lives in
+	// Executor.execute. Interactive marks the bare-submit dropdown the TUI
+	// opens for both names.
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "think",
 		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
 		Description:  "view or switch the reasoning-effort level; takes effect on the next turn",
-		Action:       thinkAction,
+		Interactive:  true,
+		Parse:        parseThink,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "effect",
 		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
 		Description:  "alias of /think: view or switch the reasoning-effort level",
-		Action:       thinkAction,
+		Interactive:  true,
+		Parse:        parseThink,
+	})
+	// T7.7 contract commands: /status /session /compact were an intercept or
+	// stub-table face (promoted render, stub entry, stub entry); they are
+	// declared commands now — Parse here, Execute in the front-end's Executor
+	// (Status/Session/Compact hooks).
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "status",
+		Description: "show runtime config, context, MCP, skills, permissions, credentials, telemetry",
+		Parse:       parseStatus,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "session",
+		Description: "show session stats: messages, tokens, model, compactions",
+		Parse:       parseSession,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "compact",
+		Description: "summarize and compact the conversation context now",
+		Parse:       parseCompact,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "help",
@@ -501,15 +429,16 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			return b.String()
 		},
 	})
-	// /exit, /quit, /compact, /fork, /clone, /tree, /export, /import, /copy,
-	// /session and /status are intercepted by the REPL loop before slash resolution
-	// (they must return from the loop, run an agent stream, or read/swap the active
-	// session/leaf — none of which an Action closure can do). They are registered
-	// here only so /help lists them; their Action is never actually reached.
+	// /exit, /quit, /fork, /clone, /tree, /rewind, /export, /import, /copy,
+	// /goal, /btw, /dream and /remote-control are intercepted by the REPL loop
+	// before slash resolution (they must return from the loop, run an agent
+	// stream, or read/swap the active session/leaf — none of which an Action
+	// closure can do). They are registered here only so /help lists them; their
+	// Action is never actually reached. /compact and /session left this table
+	// in T7.7 slice 1 — they are contract commands now (Parse + Executor).
 	for _, c := range []struct{ name, desc string }{
 		{"exit", "exit the REPL"},
 		{"quit", "exit the REPL"},
-		{"compact", "summarize and compact the conversation context now"},
 		{"fork", "branch from a historical message into a new session: /fork [n]"},
 		{"clone", "duplicate the current session into an independent branch"},
 		{"tree", "show the session branch tree; switch active branch: /tree [n]"},
@@ -517,7 +446,6 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		{"export", "export the session to a file: /export [path.jsonl|path.html]"},
 		{"import", "import a JSONL export as a new session: /import <path.jsonl>"},
 		{"copy", "copy the most recent assistant reply to the clipboard"},
-		{"session", "show session stats: messages, tokens, model, compactions"},
 		{"goal", "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear"},
 		{"btw", "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)"},
 		{"dream", "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing"},

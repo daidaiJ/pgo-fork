@@ -1,6 +1,6 @@
 // Tests for the /skills and /mcp surface actions (T6.9), driven through the
-// registered Action closures so the registry-sync behavior is exercised the
-// way production invokes it: toggles write config (the projection rule), a
+// T7.7 contract (Parse -> typed Intent -> Executor) so the registry-sync
+// behavior is exercised the way production invokes it: toggles write config (the projection rule), a
 // disabled skill's /name command leaves the registry immediately, /skills
 // reload re-syncs, and the MCP face renders its neutral state when nothing is
 // configured.
@@ -33,7 +33,7 @@ func testSkill(name string, slashOnly bool) *runtime.Skill {
 
 // surfaceSetup builds the deps + registry over a temp config and skills dir,
 // registering the surface commands exactly as the front-ends do.
-func surfaceSetup(t *testing.T, skills ...*runtime.Skill) (reg *runtime.SlashRegistry, cfgPath, skillsDir string) {
+func surfaceSetup(t *testing.T, skills ...*runtime.Skill) (reg *runtime.SlashRegistry, deps *SurfaceDeps, cfgPath, skillsDir string) {
 	t.Helper()
 	dir := testenv.Dir(t)
 	cfgPath = filepath.Join(dir, "config.toml")
@@ -52,24 +52,41 @@ func surfaceSetup(t *testing.T, skills ...*runtime.Skill) (reg *runtime.SlashReg
 		writeSkillFile(t, skillsDir, s.Frontmatter.Name)
 		reg.AddSkill(s.SlashCommand())
 	}
-	RegisterSurfaceCommands(reg, SurfaceDeps{
+	deps = &SurfaceDeps{
 		Skills:     func() []*runtime.Skill { return view },
 		SetSkills:  func(s []*runtime.Skill) { view = s },
 		SkillsDir:  skillsDir,
 		ConfigPath: cfgPath,
-	})
-	return reg, cfgPath, skillsDir
+	}
+	RegisterSurfaceCommands(reg, deps)
+	return reg, deps, cfgPath, skillsDir
 }
 
-// skillsAction runs /skills through the registry (nil-safe for tests that
-// registered no skills command).
-func skillsAction(t *testing.T, reg *runtime.SlashRegistry, args string) string {
+// skillsAction runs /skills through the contract (T7.7): the registry parses
+// the typed intent, the executor drives the surface face.
+func skillsAction(t *testing.T, reg *runtime.SlashRegistry, deps *SurfaceDeps, args string) string {
 	t.Helper()
-	cmd, ok := reg.Lookup("skills")
-	if !ok {
-		t.Fatal("/skills not registered")
+	return surfaceExec(t, reg, deps, "/skills "+args)
+}
+
+// mcpAction runs /mcp through the contract the same way.
+func mcpAction(t *testing.T, reg *runtime.SlashRegistry, deps *SurfaceDeps, args string) string {
+	t.Helper()
+	return surfaceExec(t, reg, deps, "/mcp "+args)
+}
+
+// surfaceExec resolves line and executes the intent against deps. A resolve
+// (usage) error surfaces as the message the old Action path printed.
+func surfaceExec(t *testing.T, reg *runtime.SlashRegistry, deps *SurfaceDeps, line string) string {
+	t.Helper()
+	out, err := reg.ResolveOutcome(line)
+	if err != nil {
+		return err.Error()
 	}
-	return cmd.Action(args)
+	if out.Kind != runtime.SlashIntent {
+		t.Fatalf("%s: kind = %v, want SlashIntent", line, out.Kind)
+	}
+	return (&Executor{Surface: deps}).Execute(out.Intent).Message
 }
 
 // writeSkillFile drops one skill file into the dir.
@@ -82,12 +99,12 @@ func writeSkillFile(t *testing.T, dir, name string) {
 }
 
 func TestSkillsToggleWritesConfigAndSyncsRegistry(t *testing.T) {
-	reg, cfgPath, dir := surfaceSetup(t, testSkill("weather", false))
+	reg, deps, cfgPath, dir := surfaceSetup(t, testSkill("weather", false))
 	writeSkillFile(t, dir, "weather")
 	if _, ok := reg.Lookup("weather"); !ok {
 		t.Fatal("precondition: /weather registered")
 	}
-	got := skillsAction(t, reg, "disable weather")
+	got := skillsAction(t, reg, deps, "disable weather")
 	if !strings.Contains(got, "written to config") {
 		t.Fatalf("disable message = %q, want config-write confirmation", got)
 	}
@@ -99,7 +116,7 @@ func TestSkillsToggleWritesConfigAndSyncsRegistry(t *testing.T) {
 		t.Fatalf("config not persisted: %v %+v", err, cfg)
 	}
 	// Enable: the skill file exists on disk, so the reload path re-registers it.
-	got = skillsAction(t, reg, "enable weather")
+	got = skillsAction(t, reg, deps, "enable weather")
 	if !strings.Contains(got, "re-registered") {
 		t.Fatalf("enable message = %q", got)
 	}
@@ -109,29 +126,29 @@ func TestSkillsToggleWritesConfigAndSyncsRegistry(t *testing.T) {
 }
 
 func TestSkillsListAndInfo(t *testing.T) {
-	reg, _, _ := surfaceSetup(t, testSkill("weather", false), testSkill("notes", true))
-	got := skillsAction(t, reg, "")
+	reg, deps, _, _ := surfaceSetup(t, testSkill("weather", false), testSkill("notes", true))
+	got := skillsAction(t, reg, deps, "")
 	if !strings.Contains(got, "weather  [model-invocable") || !strings.Contains(got, "notes  [slash-only") {
 		t.Fatalf("/skills list = %q", got)
 	}
-	info := skillsAction(t, reg, "info notes")
+	info := skillsAction(t, reg, deps, "info notes")
 	if !strings.Contains(info, "slash-only") || !strings.Contains(info, "notes.md") {
 		t.Fatalf("/skills info = %q", info)
 	}
-	if got := skillsAction(t, reg, "info nosuch"); !strings.Contains(got, "no skill named") {
+	if got := skillsAction(t, reg, deps, "info nosuch"); !strings.Contains(got, "no skill named") {
 		t.Fatalf("/skills info unknown = %q", got)
 	}
 }
 
 func TestSkillsReloadRescansAndSyncs(t *testing.T) {
-	reg, _, dir := surfaceSetup(t, testSkill("weather", false))
+	reg, deps, _, dir := surfaceSetup(t, testSkill("weather", false))
 	// Add notes.md and remove weather.md: reload must pick up the new skill
 	// and drop the deleted one from both the view and the registry.
 	writeSkillFile(t, dir, "notes")
 	if err := os.Remove(filepath.Join(dir, "weather.md")); err != nil {
 		t.Fatal(err)
 	}
-	got := skillsAction(t, reg, "reload")
+	got := skillsAction(t, reg, deps, "reload")
 	if !strings.Contains(got, "reloaded 1 skill") {
 		t.Fatalf("/skills reload = %q", got)
 	}
@@ -144,12 +161,12 @@ func TestSkillsReloadRescansAndSyncs(t *testing.T) {
 }
 
 func TestSkillsReloadHonorsConfigDisabled(t *testing.T) {
-	reg, cfgPath, dir := surfaceSetup(t)
+	reg, deps, cfgPath, dir := surfaceSetup(t)
 	writeSkillFile(t, dir, "weather")
 	// Disable first (writes config), then reload: the skill must stay out of
 	// the registry and the view — the hidden-tier semantics hold across reload.
-	skillsAction(t, reg, "disable weather")
-	got := skillsAction(t, reg, "reload")
+	skillsAction(t, reg, deps, "disable weather")
+	got := skillsAction(t, reg, deps, "reload")
 	if !strings.Contains(got, "reloaded 0 skill") {
 		t.Fatalf("/skills reload after disable = %q", got)
 	}
@@ -162,15 +179,11 @@ func TestSkillsReloadHonorsConfigDisabled(t *testing.T) {
 }
 
 func TestMCPNeutralWithoutServers(t *testing.T) {
-	reg, _, _ := surfaceSetup(t)
-	cmd, ok := reg.Lookup("mcp")
-	if !ok {
-		t.Fatal("/mcp not registered")
-	}
-	if got := cmd.Action(""); !strings.Contains(got, "no MCP servers configured") {
+	reg, deps, _, _ := surfaceSetup(t)
+	if got := mcpAction(t, reg, deps, ""); !strings.Contains(got, "no MCP servers configured") {
 		t.Fatalf("/mcp without servers = %q, want neutral state", got)
 	}
-	if got := cmd.Action("enable x"); !strings.Contains(got, "no MCP servers configured") {
+	if got := mcpAction(t, reg, deps, "enable x"); !strings.Contains(got, "no MCP servers configured") {
 		t.Fatalf("/mcp enable without servers = %q", got)
 	}
 }
@@ -180,12 +193,12 @@ func TestMCPToggleUnknownServerReports(t *testing.T) {
 	// name rather than pretending success. (Fresh registry: AddBuiltin panics
 	// on a same-name re-registration.)
 	reg := runtime.NewSlashRegistry()
-	RegisterSurfaceCommands(reg, SurfaceDeps{MCP: mcp.Connect(context.Background(), nil, nil, nil), ConfigPath: ""})
-	cmd, _ := reg.Lookup("mcp")
-	if got := cmd.Action("tool disable fs write_file"); !strings.Contains(got, "no server named") {
+	deps := &SurfaceDeps{MCP: mcp.Connect(context.Background(), nil, nil, nil), ConfigPath: ""}
+	RegisterSurfaceCommands(reg, deps)
+	if got := mcpAction(t, reg, deps, "tool disable fs write_file"); !strings.Contains(got, "no server named") {
 		t.Fatalf("/mcp tool on unknown server = %q", got)
 	}
-	if got := cmd.Action("disable fs"); !strings.Contains(got, "no server named") {
+	if got := mcpAction(t, reg, deps, "disable fs"); !strings.Contains(got, "no server named") {
 		t.Fatalf("/mcp disable on unknown server = %q", got)
 	}
 }

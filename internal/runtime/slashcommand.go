@@ -148,6 +148,34 @@ type SlashCommand struct {
 	// set by the AddX method matching the command's source; callers should not
 	// set it directly.
 	Tier Tier
+	// Aliases are alternative invocation names (declared identity, T7.7). The
+	// field is the declaration face; alias resolution at dispatch (with the
+	// model-authored fail-closed rule) lands with the alias/audience slice —
+	// no registered command declares aliases yet.
+	Aliases []string
+	// Audience gates who may invoke the command (T7.7 §4.3). Zero value is
+	// AudienceHumanOnly: fail-closed, a command stays human-only unless it
+	// explicitly opts in.
+	Audience Audience
+	// Interactive marks commands whose primary face is an interactive panel
+	// or dropdown the TUI opens on a bare submit (T7.3: "提交命令 → 面板").
+	// The parameter forms stay on Parse as the same command's non-interactive
+	// projection (user-ratified); the REPL projects the text form instead of
+	// faking the interaction.
+	Interactive bool
+	// Offered reports whether the command applies in the given loop state
+	// (T7.7 §4.2 applicability predicate). Nil means always offered; the
+	// menu, /help and dispatch share this one judgment (grok: "advertising
+	// and resolution consult the same gate"). Unadorned in slice 1 — the
+	// commands that need it declare it as the intercept lists fold in.
+	Offered func(SessionState) bool
+	// Parse turns the raw argument string into a typed Intent (T7.7 §4.2):
+	// pure — no live state, no side effects — so resolution never executes.
+	// Usage errors return an error carrying the same message text the old
+	// Action path printed. When set, ResolveOutcome returns the intent
+	// (Kind SlashIntent) for the front-end Executor to run; exactly one of
+	// Parse/Expand/Action/Run should be set, with Parse winning the dispatch.
+	Parse func(args string) (Intent, error)
 	// Expand maps the argument string (everything after "/name ") to the prompt
 	// text the command produces. For a built-in it may be arbitrary Go; for a
 	// user template it substitutes $ARGUMENTS into the markdown body. Nil for an
@@ -182,6 +210,12 @@ const (
 	// SlashAction means an action command already ran; the outcome carries only
 	// a status Message and no agent run should start.
 	SlashAction
+	// SlashIntent means the resolver parsed the invocation into a typed Intent
+	// (T7.7): the registry no longer runs side effects for these commands —
+	// the caller executes the Intent through its front-end Executor, which
+	// owns the loop state. The executor answers with the same SlashOutcome
+	// shape (Kind SlashAction), so front-end projection is unchanged.
+	SlashIntent
 )
 
 // SlashOutcome is the structured result of resolving one input line. Handled is
@@ -199,6 +233,9 @@ type SlashOutcome struct {
 	Kind    SlashKind
 	Prompt  string
 	Message string
+	// Intent carries the typed invocation when Kind is SlashIntent: pure data
+	// (slashintent.go) for the front-end Executor to run against loop state.
+	Intent Intent
 }
 
 // builtinCommands holds compile-time registered commands, keyed by name. It is
@@ -422,6 +459,16 @@ func (r *SlashRegistry) ResolveOutcome(input string) (SlashOutcome, error) {
 	cmd, ok := r.commands[name]
 	if !ok {
 		return SlashOutcome{}, fmt.Errorf("unknown command %q", "/"+name)
+	}
+	if cmd.Parse != nil {
+		// T7.7 contract command: parse into a typed intent and hand it back —
+		// resolution never executes. Usage errors surface the same message
+		// text the old Action path printed.
+		it, err := cmd.Parse(args)
+		if err != nil {
+			return SlashOutcome{}, err
+		}
+		return SlashOutcome{Handled: true, Kind: SlashIntent, Intent: it}, nil
 	}
 	if cmd.Action != nil {
 		return SlashOutcome{Handled: true, Kind: SlashAction, Message: cmd.Action(args)}, nil

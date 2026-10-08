@@ -15,11 +15,9 @@ func TestThinkCommandSwitchesLevel(t *testing.T) {
 	live := &cli.LiveConfig{Model: "test", ProviderName: "test", ThinkingLevel: agentcore.ThinkingMedium}
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, nil)
+	exec := &Executor{Live: live}
 
-	out, err := reg.ResolveOutcome("/think high")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /think high: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/think high")
 	if live.ThinkingLevel != agentcore.ThinkingHigh {
 		t.Errorf("ThinkingLevel = %q, want high", live.ThinkingLevel)
 	}
@@ -28,10 +26,7 @@ func TestThinkCommandSwitchesLevel(t *testing.T) {
 	}
 
 	// Bare /think reports the current level without changing it.
-	out, err = reg.ResolveOutcome("/think")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /think: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/think")
 	if live.ThinkingLevel != agentcore.ThinkingHigh {
 		t.Errorf("bare /think mutated level to %q", live.ThinkingLevel)
 	}
@@ -47,15 +42,13 @@ func TestThinkCommandRejectsInvalid(t *testing.T) {
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, nil)
 
-	out, err := reg.ResolveOutcome("/think bogus")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /think bogus: %v", err)
+	// T7.7: Parse rejects the unknown level purely — nothing mutates.
+	_, err := reg.ResolveOutcome("/think bogus")
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("ResolveOutcome /think bogus: err = %v, want an invalid-level refusal", err)
 	}
 	if live.ThinkingLevel != agentcore.ThinkingLow {
 		t.Errorf("invalid level changed ThinkingLevel to %q", live.ThinkingLevel)
-	}
-	if !strings.Contains(out.Message, "invalid") {
-		t.Errorf("message = %q, want an invalid-level notice", out.Message)
 	}
 }
 
@@ -65,11 +58,9 @@ func TestEffectAliasesThink(t *testing.T) {
 	live := &cli.LiveConfig{Model: "test", ProviderName: "test", ThinkingLevel: agentcore.ThinkingMedium}
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, nil)
+	exec := &Executor{Live: live}
 
-	out, err := reg.ResolveOutcome("/effect high")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /effect high: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/effect high")
 	if live.ThinkingLevel != agentcore.ThinkingHigh {
 		t.Errorf("ThinkingLevel = %q, want high", live.ThinkingLevel)
 	}
@@ -77,10 +68,7 @@ func TestEffectAliasesThink(t *testing.T) {
 		t.Errorf("message = %q, want it to mention high", out.Message)
 	}
 
-	out, err = reg.ResolveOutcome("/effect")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /effect: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/effect")
 	if !strings.Contains(out.Message, "high") {
 		t.Errorf("bare /effect message = %q, want current level high", out.Message)
 	}

@@ -1,20 +1,26 @@
 package tui
 
 // Regression pin for the phantom slash commands (T7.7, spec
-// wiki/port/slash-command-surface.md §4.7): the shared registry advertises 15
+// wiki/port/slash-command-surface.md §4.7): the shared registry advertises 14
 // REPL-intercepted built-ins as stubs whose Action returns "" (internal/cli/
 // prompts/registry.go, "registered here only so /help lists them"). The TUI
 // intercepts five of those names (/exit /quit /session /remote-control
-// /rewind); the remaining ten fall through runSlash's intercept chain to
+// /rewind); the remaining nine fall through runSlash's intercept chain to
 // registry resolution and silently do nothing: the line is echoed, the input
 // clears, and neither a status message nor a run follows. These tests pin the
 // defect exactly so the T7.7 contract refactor replaces it with execution or
 // an explicit rejection without the advertised surface regressing unnoticed —
 // flip the assertions when the phantom commands gain behavior.
+//
+// /compact left this table in T7.7 slice 1: it is a contract command now
+// (Parse + Executor) whose TUI projection executes for real — pinned by
+// TestCompactCommandExecutes below.
 
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // phantomLines is one representative invocation per advertised-but-inert TUI
@@ -23,7 +29,6 @@ import (
 // stub table in prompts/registry.go against the full fall-through of
 // runSlash (model.go).
 var phantomLines = []struct{ line, replDoes string }{
-	{"/compact", "run a manual compaction over the live context"},
 	{"/fork 2", "branch a new session from historical message 2"},
 	{"/clone", "duplicate the current session at its current leaf"},
 	{"/tree 2", "print the branch tree / switch the active branch"},
@@ -67,7 +72,7 @@ func TestPhantomCommandsAdvertised(t *testing.T) {
 }
 
 // TestPhantomCommandsDispatchSilently pins the defect itself: submitting one
-// of the ten commands echoes the line and clears the input but produces no
+// of the nine commands echoes the line and clears the input but produces no
 // status message, no run, and no command — a silent no-op where the REPL does
 // real work. T7.7 replaces this with execution or an explicit rejection; flip
 // the assertions then.
@@ -91,12 +96,64 @@ func TestPhantomCommandsDispatchSilently(t *testing.T) {
 	}
 }
 
+// TestCompactCommandExecutes pins /compact's slice-1 behavior (T7.7): the
+// former silent no-op is a contract command now. Session-less it refuses
+// explicitly; with a session the intercept runs the compaction off the tea
+// loop through the shared cli.RunManualCompact core — the empty context
+// completes without an LLM call, so the "nothing to compact" note rides
+// compactDoneMsg.
+func TestCompactCommandExecutes(t *testing.T) {
+	m := NewModel(Options{})
+	got, _ := m.runSlash("/compact")
+	gm := got.(Model)
+	blocks := blockTexts(gm.transcript)
+	if len(blocks) != 2 || blocks[1] != "(compact unavailable: no active session)" {
+		t.Errorf("/compact without a session: blocks = %q, want the echo + notice", blocks)
+	}
+	if gm.running {
+		t.Error("/compact without a session must not start a run")
+	}
+
+	store := newTestStore(t)
+	s, _, err := newRunSessionWithStore(store, Options{Model: "compact-model", ProviderName: "compact-provider"})
+	if err != nil {
+		t.Fatalf("newRunSessionWithStore: %v", err)
+	}
+	m = NewModel(Options{}).withSession(s, nil)
+	got, cmd := m.runSlash("/compact")
+	gm = got.(Model)
+	if !gm.running {
+		t.Error("/compact with a session should mark the model running while the stream works")
+	}
+	if cmd == nil {
+		t.Fatal("/compact with a session should return the compaction Cmd")
+	}
+	// runSlash batches the compaction with the spinner tick: unwrap and pick
+	// the compactDoneMsg carrier.
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if cm, isCompact := c().(compactDoneMsg); isCompact {
+				msg = cm
+				break
+			}
+		}
+	}
+	done, ok := msg.(compactDoneMsg)
+	if !ok {
+		t.Fatalf("cmd() = %T, want compactDoneMsg", msg)
+	}
+	if !strings.Contains(done.summary, "nothing to compact") {
+		t.Errorf("summary = %q, want the nothing-to-compact note", done.summary)
+	}
+}
+
 // TestInterceptedStubsStayReachable pins the other side of the same stub
-// table: /session and /rewind are intercepted by the TUI and degrade to an
-// explicit no-session notice instead of the registry's empty Action, and
-// /exit /quit quit (pinned by TestSlashExitQuits). When the intercept chain is
-// folded into declarations (T7.7 slice 2), these notices are the behavior to
-// preserve.
+// table: /session and /rewind degrade to an explicit no-session notice
+// instead of the registry's empty Action, and /exit /quit quit (pinned by
+// TestSlashExitQuits). /session left the intercept list in T7.7 slice 1 — the
+// intent executor's Session hook renders the same notice through the registry
+// path now, which is exactly what this pin guards.
 func TestInterceptedStubsStayReachable(t *testing.T) {
 	for _, line := range []string{"/session", "/rewind"} {
 		got, _ := NewModel(Options{}).runSlash(line)

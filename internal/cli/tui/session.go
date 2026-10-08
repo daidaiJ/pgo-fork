@@ -85,6 +85,11 @@ type runSession struct {
 	// run toggles through it (T7.3 interactive redesign). Tests swap it for a
 	// surface wired to a temp config.
 	surface prompts.SurfaceDeps
+	// slashCreds is the credential store the registry was assembled with
+	// (T7.7): the session's own when it has one, a fresh store carrying the
+	// flag overrides otherwise — the intent executor reads it for /model
+	// profile switches and /models fetch.
+	slashCreds *provider.CredentialStore
 	// telemetry holds the retained per-run telemetry events (US-001, #291) and
 	// the cumulative accumulator that sums metrics across all runs in the
 	// session. The run loop folds each run's TelemetryEvent into it; /status
@@ -257,7 +262,7 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		memoryRoot: run.MemoryRootFromTools(opts.Tools),
 		memstore:   run.MemoryStoreFromTools(opts.Tools),
 	}
-	s.slash, s.surface = newSlashRegistry(opts, live, creds)
+	s.slash, s.surface, s.slashCreds = newSlashRegistry(opts, live, creds)
 	// /trust is a per-session command (its closure captures mgr + cwd), so it is
 	// registered here rather than in newSlashRegistry. A nil mgr is a no-op.
 	trust.RegisterCommand(s.slash, mgr, cwd)
@@ -348,10 +353,10 @@ func chainTUIEvent(prev, next func(agentcore.AgentEvent)) func(agentcore.AgentEv
 func (s *runSession) buildConfig() runtime.RunConfig {
 	cfg := runtime.RunConfig{
 		LoopConfig: runtime.LoopConfig{
-			Model:         s.live.Model,
-			Provider:      s.live.ProviderName,
-			ThinkingLevel: s.live.ThinkingLevel,
-			Stream:        provider.StreamFnFromProvider(s.live.Provider),
+			Model:           s.live.Model,
+			Provider:        s.live.ProviderName,
+			ThinkingLevel:   s.live.ThinkingLevel,
+			Stream:          provider.StreamFnFromProvider(s.live.Provider),
 			GetAPIKey:       s.creds.GetAPIKey,
 			ContextWindow:   s.live.ContextWindow,
 			MaxOutputTokens: s.live.MaxOutputTokens,
@@ -412,6 +417,26 @@ func (s *runSession) rebuildCmd() tea.Cmd {
 	return func() tea.Msg {
 		summary, err := s.rebuild()
 		return rebuildDoneMsg{summary: summary, err: err}
+	}
+}
+
+// compactDoneMsg reports the outcome of a manual /compact to the model: the
+// summary carries the before/after counts or the failure notice (the context
+// is left unchanged on failure), mirroring rebuildDoneMsg.
+type compactDoneMsg struct{ summary string }
+
+// compactCmd runs a manual compaction off the tea loop (the summarization
+// stream must not block the UI goroutine) through the shared
+// cli.RunManualCompact core — T7.7: one implementation behind the REPL's
+// executor hook and this async projection — then persists the inserted
+// marker exactly like the REPL's PersistTurn step.
+func (s *runSession) compactCmd() tea.Cmd {
+	return func() tea.Msg {
+		msg := cli.RunManualCompact(&s.agentCtx.Messages, s.persisted, s.live, s.creds)
+		if err := s.persist(); err != nil {
+			msg += "\nSession save failed: " + err.Error()
+		}
+		return compactDoneMsg{summary: msg}
 	}
 }
 

@@ -15,9 +15,11 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/memstatus"
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/spans"
 )
@@ -132,6 +134,13 @@ type Model struct {
 	// reads. Built in NewModel (built-ins + disk templates) and rebuilt in
 	// withSession against the session's live config.
 	slash *runtime.SlashRegistry
+	// slashDeps and slashCreds are the surface face and credential store the
+	// registry was assembled with (T7.7): the session-less constructor keeps
+	// its own (arg forms like /skills disable work before a session binds);
+	// withSession rebinds both to the session's, matching the registry
+	// rebinding. The intent executor reads them.
+	slashDeps  *prompts.SurfaceDeps
+	slashCreds *provider.CredentialStore
 	// live is the mutable run configuration the /model command switches. In a
 	// session-bound model it is the SAME pointer the run loop reads (set by
 	// withSession), so a switch takes effect on the next turn.
@@ -246,9 +255,10 @@ func NewModel(opts Options) Model {
 		MaxOutputTokens: cli.SeedMaxOutputTokens(opts.Provider, opts.Model, opts.MaxOutputTokens),
 	}
 	// The session-less model still gets a registry (menu completion works
-	// before withSession binds the session); its surface deps are discarded —
-	// the /skills and /mcp panels need a live session.
-	slashReg, _ := newSlashRegistry(opts, live, nil)
+	// before withSession binds the session); its surface deps and creds stay
+	// on the model — the intent executor serves the arg forms (/skills
+	// disable x) session-less, while the panels need a live session.
+	slashReg, slashDeps, slashCreds := newSlashRegistry(opts, live, nil)
 	return Model{
 		opts:       opts,
 		theme:      theme,
@@ -259,6 +269,8 @@ func NewModel(opts Options) Model {
 		header:     header{cwd: abbreviateHome(cwd)},
 		toolCards:  make(map[string]*toolCard),
 		slash:      slashReg,
+		slashDeps:  &slashDeps,
+		slashCreds: slashCreds,
 		live:       live,
 		menu:       newSlashMenu(theme),
 		modelMenu:  modelMenu{theme: theme},
@@ -283,6 +295,8 @@ func (m Model) withSession(s *runSession, history []agentcore.Message) Model {
 	// newRunSessionWithStore), and /status can list skill/plugin/user commands.
 	m.live = s.live
 	m.slash = s.slash
+	m.slashDeps = &s.surface
+	m.slashCreds = s.slashCreds
 	// Seed the header's context readout (S1/S2) so it is visible from the first
 	// frame: the window is known from the live config and the used tokens come
 	// from the same live estimate the /context panel falls back to, instead of
@@ -609,6 +623,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.transcript.addSystem(msg.summary)
 		}
+		m.relayout()
+		return m, nil
+
+	case compactDoneMsg:
+		// A manual /compact finished: clear the pinned "Compacting conversation"
+		// spinner and report the outcome. compactCmd already applied the marker
+		// insert + persist (T7.7: the async projection of the shared
+		// cli.RunManualCompact core).
+		m.spinner.unpin()
+		m.spinner.stop()
+		m.running = false
+		m.transcript.addSystem(msg.summary)
 		m.relayout()
 		return m, nil
 
@@ -1080,6 +1106,33 @@ func (m Model) submitSlashSelected() (tea.Model, tea.Cmd) {
 	return m.runSlash(line)
 }
 
+// executor builds the slash Executor (T7.7) against the model's current
+// bindings: the surface deps + creds the registry was assembled with (the
+// session-less constructor keeps its own; withSession rebinds to the
+// session's) and the status/session renderers over the live session. The
+// intercepts stay TUI-owned for now (/compact's async projection among
+// them — slice 2 folds the list), so no Compact hook is wired.
+func (m Model) executor() *prompts.Executor {
+	ex := &prompts.Executor{
+		Live:    m.live,
+		Creds:   m.slashCreds,
+		Surface: m.slashDeps,
+	}
+	if s := m.session; s != nil {
+		ex.Status = func() string {
+			var b bytes.Buffer
+			status.RunStatus(&b, s)
+			return strings.TrimRight(b.String(), "\n")
+		}
+		ex.Session = func() string {
+			var b bytes.Buffer
+			s.renderSession(&b)
+			return strings.TrimRight(b.String(), "\n")
+		}
+	}
+	return ex
+}
+
 // runSlash resolves a slash-command line against the shared registry and folds
 // its outcome into the transcript, mirroring the REPL's dispatch: the invocation
 // is echoed as a user block; an action command's status (e.g. /help, /model)
@@ -1132,46 +1185,9 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.relayout()
 		return m, nil
 	}
-	// /status is intercepted before registry resolution (like /memory): it prints
-	// the shared runtime/context/project/credentials/telemetry report, which reads
-	// the session's live collaborators (live config, trust manager, telemetry
-	// holder, slash registry) that a slash Action closure (string→string) cannot
-	// reach. The rendering lives in the shared status package so the TUI and the
-	// REPL produce byte-identical output.
-	if line == "/status" || strings.HasPrefix(line, "/status ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		if m.session == nil {
-			m.transcript.addSystem("(status unavailable: no active session)")
-			m.relayout()
-			return m, nil
-		}
-		var buf bytes.Buffer
-		status.RunStatus(&buf, m.session)
-		m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
-		m.relayout()
-		return m, nil
-	}
-	// /session is intercepted before registry resolution (like /memory): it prints
-	// the conversation summary (session id, message count, estimated tokens, model/
-	// provider, created time, compaction count) from the live context — state a
-	// slash Action closure cannot reach. The rendering is shared with the REPL.
-	if line == "/session" {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		if m.session == nil {
-			m.transcript.addSystem("(session unavailable: no active session)")
-			m.relayout()
-			return m, nil
-		}
-		var buf bytes.Buffer
-		m.session.renderSession(&buf)
-		m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
-		m.relayout()
-		return m, nil
-	}
+	// /status and /session (T6.9 G-4 → T7.7) resolve through the registry: the
+	// intent executor's Status/Session hooks render the shared reports, so the
+	// TUI and the REPL project the same renderers (the intercepts are gone).
 	// /rebuild is intercepted before registry resolution (like /exit): it
 	// reconstructs the shared context from a persisted checkpoint (or falls back
 	// to compaction) and replaces the message list in place — work a slash Action
@@ -1192,6 +1208,31 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		m.running = true
 		m.relayout()
 		return m, tea.Batch(m.session.rebuildCmd(), m.tickSpinner())
+	}
+	// /compact is intercepted before registry resolution (like /rebuild): the
+	// summarization stream must run off the tea loop and insert the marker
+	// into the live context — loop-owned work the intent executor cannot do
+	// synchronously (T7.7: the intent is still declared and parsed by the
+	// shared contract; this is the TUI's async projection, and compactDoneMsg
+	// folds the result into the transcript).
+	if line == "/compact" {
+		m.transcript.addUser(line)
+		m.input.Clear()
+		m.closeMenus()
+		switch {
+		case m.session == nil:
+			m.transcript.addSystem("(compact unavailable: no active session)")
+		case m.running:
+			m.transcript.addSystem("(compact: a run is in progress — compact once it finishes)")
+		default:
+			m.spinner.begin(time.Now())
+			m.spinner.pin("Compacting conversation")
+			m.running = true
+			m.relayout()
+			return m, tea.Batch(m.session.compactCmd(), m.tickSpinner())
+		}
+		m.relayout()
+		return m, nil
 	}
 	// /sessions (grok /resume alias included) is intercepted before registry
 	// resolution (like /context): it opens the session-picker overlay (T7.3
@@ -1356,6 +1397,12 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if err != nil {
 		m.transcript.addSystem(err.Error())
 		return m, nil
+	}
+	if outcome.Kind == runtime.SlashIntent {
+		// T7.7: the registry parsed the invocation into a typed intent; the
+		// executor runs it against the model's bindings and answers with the
+		// same action-outcome shape projected below.
+		outcome = m.executor().Execute(outcome.Intent)
 	}
 	if outcome.Message != "" {
 		m.transcript.addSystem(outcome.Message)

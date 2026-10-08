@@ -13,6 +13,7 @@ package repl
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -24,27 +25,27 @@ import (
 	"sync"
 	"time"
 
-	"encoding/json"
-
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/btw"
+	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/goal"
 	"github.com/smallnest/pigo/internal/cli/memstatus"
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
+	"github.com/smallnest/pigo/internal/cli/status"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/clipboard"
 	"github.com/smallnest/pigo/internal/compaction"
-	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
-	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/spans"
 	"github.com/smallnest/pigo/internal/tooldecl"
 	"github.com/smallnest/pigo/internal/toolrules"
@@ -79,6 +80,13 @@ type replDeps struct {
 	uiInit *spans.Span
 	slash  *runtime.SlashRegistry
 	creds  *provider.CredentialStore
+	// surface is the config-surface face (/skills, /mcp) the executor drives;
+	// built in Run beside RegisterSurfaceCommands so both faces share one deps.
+	surface *prompts.SurfaceDeps
+	// exec runs the typed intents the registry resolves (T7.7). Built per
+	// runREPL from this deps: the hooks are the loop projections the former
+	// /status, /session and /compact intercepts performed.
+	exec *prompts.Executor
 
 	// notifier delivers agent lifecycle events to subscribed plugins (US-017,
 	// #133). It is nil when no plugin subscribes; DrainStream's OnEvent stays
@@ -279,6 +287,34 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 	deps.tee = newTeeWriter(out)
 	out = deps.tee
 
+	// The slash executor (T7.7): the registry resolves a typed intent; this
+	// executor runs it against the loop's own state. The hooks are the loop
+	// projections the former /status, /session and /compact intercepts
+	// performed: the full status.RunStatus report through the Host, the
+	// shared /session summary, and the blocking manual compaction with its
+	// persist-after ordering.
+	deps.exec = &prompts.Executor{
+		Live:    deps.live,
+		Creds:   deps.creds,
+		Surface: deps.surface,
+		Status: func() string {
+			var b bytes.Buffer
+			status.RunStatus(&b, &deps)
+			return strings.TrimRight(b.String(), "\n")
+		},
+		Session: func() string {
+			var b bytes.Buffer
+			cli.WriteSessionSummary(&b, deps.header, deps.live, deps.agentCtx.Messages)
+			return strings.TrimRight(b.String(), "\n")
+		},
+		Compact: func(string) string {
+			fmt.Fprintln(out, ui.Colorize(ui.Enabled(), ui.Dim, "Compacting conversation…"))
+			msg := cli.RunManualCompact(&deps.agentCtx.Messages, deps.persisted, deps.live, deps.creds)
+			cli.PersistTurn(out, &deps)
+			return msg
+		},
+	}
+
 	// Stop a still-running remote-control server when the REPL exits (FR-16), so
 	// quitting pigo tears down the LAN listener rather than leaking it. The
 	// closure reads deps.remote at exit time, so it covers a session started mid
@@ -439,17 +475,6 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		if line == "/exit" || line == "/quit" {
 			return nil
 		}
-		if line == "/compact" {
-			// /compact is intercepted here (like /exit) because compaction must run
-			// an agent stream and mutate the shared context — neither of which a
-			// slash Action closure (string in, string out) can do. T3.3 marker
-			// model: compaction only INSERTS a marker into the live list, so the
-			// plain tail append below carries it into the tree (no flatten, no
-			// linear re-save, abandoned branches intact).
-			runManualCompact(out, &deps)
-			cli.PersistTurn(out, &deps)
-			continue
-		}
 		if line == "/rebuild" {
 			// /rebuild is intercepted here for the same reason as /compact: it
 			// reconstructs the whole message list (checkpoint summary + retained
@@ -507,13 +532,6 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			// intercepted here (not a slash Action) because it must read the live
 			// message list, which an Action closure cannot reach.
 			runCopy(out, &deps)
-			continue
-		}
-		if line == "/session" {
-			// /session prints live session stats (message count, tokens, compactions)
-			// derived from deps.header + the in-memory context — state a pure
-			// string→string Action closure cannot see.
-			runSession(out, &deps)
 			continue
 		}
 		if line == "/memory" || strings.HasPrefix(line, "/memory ") {
@@ -576,6 +594,12 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			if err != nil {
 				fmt.Fprintf(out, "%v\n", err)
 				continue
+			}
+			if outcome.Kind == runtime.SlashIntent {
+				// T7.7: the registry parsed the invocation into a typed intent;
+				// the executor runs it against this loop's state and answers
+				// with the same action-outcome shape printed below.
+				outcome = deps.exec.Execute(outcome.Intent)
 			}
 			if outcome.Kind == runtime.SlashAction {
 				if outcome.Message != "" {
@@ -1109,119 +1133,6 @@ func runCopy(out io.Writer, deps *replDeps) {
 		return
 	}
 	fmt.Fprintf(out, "copied last reply to clipboard (%d chars)\n", len(text))
-}
-
-// runSession handles the /session command (US-009, #125): it prints a summary of
-// the live session — id, message count, estimated token usage, model/provider,
-// creation time, and how many compaction checkpoints it contains. Counts are
-// derived from the in-memory context (the source of truth for the live turn) so
-// the numbers reflect unsaved messages too.
-func runSession(out io.Writer, deps *replDeps) {
-	msgs := deps.agentCtx.Messages
-	tokens := compaction.EstimateContextTokens(msgs).Tokens
-	compactions := 0
-	for _, m := range msgs {
-		if _, ok := m.(agentcore.CompactionMessage); ok {
-			compactions++
-		}
-	}
-	fmt.Fprintf(out, "session:      %s\n", deps.header.ID)
-	fmt.Fprintf(out, "messages:     %d\n", len(msgs))
-	fmt.Fprintf(out, "tokens (est): %d\n", tokens)
-	model := deps.live.Model
-	providerName := deps.live.ProviderName
-	if model == "" {
-		model = deps.header.Model
-	}
-	if providerName == "" {
-		providerName = deps.header.Provider
-	}
-	fmt.Fprintf(out, "model:        %s (provider: %s)\n", model, providerName)
-	if !deps.header.CreatedAt.IsZero() {
-		fmt.Fprintf(out, "created:      %s\n", deps.header.CreatedAt.Format(time.RFC3339))
-	}
-	fmt.Fprintf(out, "compactions:  %d\n", compactions)
-}
-
-// runManualCompact compacts the shared context on an explicit /compact request:
-// it runs the summarization stream on the request view and inserts a compaction
-// marker into the live list (T3.3 marker-entry model — nothing is dropped; the
-// request view collapses the summarized prefix), then prints the before/after
-// token counts and retained message count. A failure is reported but non-fatal —
-// the original context is kept unchanged (US-004). It uses the same
-// provider/model as the live run, and chains from the view's existing marker so
-// successive /compact calls never drop the previous summary (defect-① fix).
-func runManualCompact(out io.Writer, deps *replDeps) {
-	persisted := deps.persisted
-	if persisted > len(deps.agentCtx.Messages) {
-		persisted = len(deps.agentCtx.Messages)
-	}
-	// The view→raw map (not the marker-anchor formula) converts the cut back:
-	// microcompact markers and context edits also drop entries from the view.
-	view, rawOf := compaction.ProjectViewMapped(deps.agentCtx.Messages)
-	settings := compaction.DefaultCompactionSettings
-	before := compaction.EstimateContextTokens(view).Tokens
-
-	stream := provider.StreamFnFromProvider(deps.live.Provider)
-	model := provider.Model{Provider: deps.live.ProviderName, ID: deps.live.Model, ContextWindow: deps.live.ContextWindow}
-
-	// Resolve the API key like a normal turn so summarization authenticates
-	// against auth-requiring providers (otherwise Compact fails with
-	// "missing API key" and /compact would always report a non-fatal failure).
-	scfg := provider.StreamConfig{}
-	if deps.creds != nil {
-		scfg.APIKey = deps.creds.GetAPIKey(context.Background(), deps.live.ProviderName)
-	}
-	fmt.Fprintln(out, ui.Colorize(ui.Enabled(), ui.Dim, "Compacting conversation…"))
-	// Iterative chain: the view's leading marker (if any) is the previous
-	// compaction — summarize only what came after it.
-	prevIdx := -1
-	var prevSummary string
-	var prevDetails *compaction.CompactionDetails
-	if len(view) > 0 {
-		if c, ok := view[0].(agentcore.CompactionMessage); ok {
-			prevIdx = 0
-			prevSummary = c.Summary
-			var d compaction.CompactionDetails
-			if err := json.Unmarshal(c.Details, &d); err == nil && (len(d.ReadFiles) > 0 || len(d.ModifiedFiles) > 0) {
-				prevDetails = &d
-			}
-		}
-	}
-	res, err := compaction.Compact(context.Background(), stream, model, view, settings, prevIdx, prevDetails, prevSummary, scfg)
-	if err != nil {
-		fmt.Fprintf(out, "compaction failed: %v (context left unchanged)\n", err)
-		return
-	}
-	if res == nil {
-		fmt.Fprintf(out, "nothing to compact (%d tokens, %d messages)\n", before, len(view))
-		return
-	}
-	// Map the view cut back to raw-list coordinates and insert the marker at the
-	// T3.3 topology position (after the persisted cursor so the next PersistTurn
-	// carries it into the tree).
-	fullCut := compaction.ViewRawOf(rawOf, res.FirstKeptIndex)
-	insertAt := fullCut
-	if insertAt < persisted {
-		insertAt = persisted
-	}
-	marker := res.Message(time.Now().UnixMilli())
-	marker.FirstKeptIndex = fullCut
-	marker.KeptBefore = insertAt - fullCut
-	newList := make(agentcore.MessageList, 0, len(deps.agentCtx.Messages)+1)
-	newList = append(newList, deps.agentCtx.Messages[:insertAt]...)
-	newList = append(newList, marker)
-	newList = append(newList, deps.agentCtx.Messages[insertAt:]...)
-	marker.TokensAfter = compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
-	newList[insertAt] = marker
-	deps.agentCtx.Messages = newList
-	after := compaction.EstimateContextTokens(compaction.ProjectView(newList)).Tokens
-	summarized := res.FirstKeptIndex - 1
-	if summarized < 0 {
-		summarized = 0
-	}
-	fmt.Fprintf(out, "compacted: %d → %d tokens, summarized %d messages, kept %d\n",
-		before, after, summarized, len(view)-res.FirstKeptIndex)
 }
 
 // runManualRebuild reconstructs the shared context on an explicit /rebuild

@@ -44,7 +44,7 @@ const maxMenuRows = 8
 // credential store: /models fetch and a config-profile /model switch both
 // authenticate through it, so a profile's api_key override reaches the
 // per-turn GetAPIKey the same way the REPL's shared store does.
-func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider.CredentialStore) (*runtime.SlashRegistry, prompts.SurfaceDeps) {
+func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider.CredentialStore) (*runtime.SlashRegistry, prompts.SurfaceDeps, *provider.CredentialStore) {
 	// A credentials store resolved from the same flags the run uses, so
 	// "/models fetch" (issue #566) can authenticate against the live endpoint.
 	creds := sessionCreds
@@ -74,39 +74,8 @@ func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider
 		SkillsDir:  run.SkillsDir(),
 		ConfigPath: config.FileConfigPath(),
 	}
-	prompts.RegisterSurfaceCommands(reg, deps)
-	prompts.RegisterStatusCommand(reg, func() string {
-		return tuiStatusReport(live, deps)
-	})
-	return reg, deps
-}
-
-// tuiStatusReport renders the promoted /status for the TUI: the runtime config
-// section plus the MCP / Skills / Permissions sections through the surface
-// deps. The context/credentials/telemetry sections need the REPL's cli.Host;
-// they are listed as unavailable rather than dropped, so the TUI report states
-// what it shows instead of silently omitting.
-func tuiStatusReport(live *cli.LiveConfig, deps prompts.SurfaceDeps) string {
-	var b strings.Builder
-	b.WriteString("runtime config:\n")
-	fmt.Fprintf(&b, "  model: %s (provider: %s)\n", live.Model, live.ProviderName)
-	if live.ContextWindow > 0 {
-		fmt.Fprintf(&b, "  context window: %d tokens\n", live.ContextWindow)
-	}
-	skills := "none loaded"
-	if deps.Skills != nil && len(deps.Skills()) > 0 {
-		names := make([]string, 0, len(deps.Skills()))
-		for _, s := range deps.Skills() {
-			names = append(names, s.Frontmatter.Name)
-		}
-		skills = strings.Join(names, ", ")
-	}
-	fmt.Fprintf(&b, "\nskills: %s\n", skills)
-	b.WriteString("\n")
-	b.WriteString(deps.MCPList())
-	b.WriteString("\n\npermissions: see the REPL /status for the full report (TUI shows MCP / skills here)\n")
-	b.WriteString("(context, credentials and telemetry sections are REPL-only in this slice)")
-	return b.String()
+	prompts.RegisterSurfaceCommands(reg, &deps)
+	return reg, deps, creds
 }
 
 // slashMenu is the autocomplete popup state. It holds the candidates matching

@@ -13,6 +13,22 @@ import (
 	"github.com/smallnest/pigo/internal/runtime"
 )
 
+// resolveExec drives line through the T7.7 contract the front-ends use: the
+// registry parses a typed intent, the executor runs it against live state. A
+// resolve (usage) error fails the test — error-grammar cases assert on the
+// resolver error directly.
+func resolveExec(t *testing.T, reg *runtime.SlashRegistry, exec *Executor, line string) runtime.SlashOutcome {
+	t.Helper()
+	out, err := reg.ResolveOutcome(line)
+	if err != nil {
+		t.Fatalf("%s: %v", line, err)
+	}
+	if out.Kind != runtime.SlashIntent {
+		t.Fatalf("%s: kind = %v, want SlashIntent", line, out.Kind)
+	}
+	return exec.Execute(out.Intent)
+}
+
 // TestModelCommandSwitchesToBareProviderName verifies /model zai selects the
 // zai provider's default model (issue #564): live.Model carries the concrete
 // preset id so the next turn's wire request targets a real model instead of
@@ -21,11 +37,9 @@ func TestModelCommandSwitchesToBareProviderName(t *testing.T) {
 	live := &cli.LiveConfig{Model: "openrouter/free", ProviderName: "openrouter"}
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, provider.NewCredentialStore(nil))
+	exec := &Executor{Live: live}
 
-	out, err := reg.ResolveOutcome("/model zai")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model zai: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/model zai")
 	if live.Model != "glm-4.7" {
 		t.Errorf("live.Model = %q, want glm-4.7", live.Model)
 	}
@@ -44,11 +58,9 @@ func TestModelCommandConcreteIdUnchanged(t *testing.T) {
 	live := &cli.LiveConfig{Model: "openrouter/free", ProviderName: "openrouter"}
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, provider.NewCredentialStore(nil))
+	exec := &Executor{Live: live}
 
-	out, err := reg.ResolveOutcome("/model glm-5.2")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model glm-5.2: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/model glm-5.2")
 	if live.Model != "glm-5.2" || live.ProviderName != "zai" {
 		t.Errorf("live = (%q, %q), want (glm-5.2, zai)", live.Model, live.ProviderName)
 	}
@@ -57,10 +69,7 @@ func TestModelCommandConcreteIdUnchanged(t *testing.T) {
 	}
 
 	// A concrete id for another provider switches verbatim as before.
-	out, err = reg.ResolveOutcome("/model deepseek-v4-pro")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model deepseek-v4-pro: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/model deepseek-v4-pro")
 	if live.Model != "deepseek-v4-pro" || live.ProviderName != "deepseek" {
 		t.Errorf("live = (%q, %q), want (deepseek-v4-pro, deepseek)", live.Model, live.ProviderName)
 	}
@@ -83,11 +92,9 @@ func TestModelsFetchCommandAndSwitch(t *testing.T) {
 	creds.SetOverride("openai", "test-key")
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, creds)
+	exec := &Executor{Live: live, Creds: creds}
 
-	out, err := reg.ResolveOutcome("/models fetch")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /models fetch: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/models fetch")
 	if gotAuth != "Bearer test-key" {
 		t.Errorf("Authorization = %q, want Bearer test-key", gotAuth)
 	}
@@ -102,10 +109,7 @@ func TestModelsFetchCommandAndSwitch(t *testing.T) {
 	}
 
 	// Switching to a fetched id pins the live provider.
-	out, err = reg.ResolveOutcome("/model m-b")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model m-b: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/model m-b")
 	if live.Model != "m-b" || live.ProviderName != "openai" {
 		t.Fatalf("live = (%q, %q), want (m-b, openai)", live.Model, live.ProviderName)
 	}
@@ -130,11 +134,9 @@ func TestModelsFetchDegrades(t *testing.T) {
 	creds.SetOverride("openai", "test-key")
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, creds)
+	exec := &Executor{Live: live, Creds: creds}
 
-	out, err := reg.ResolveOutcome("/models fetch")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /models fetch: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/models fetch")
 	if live.FetchedModels != nil {
 		t.Errorf("live.FetchedModels = %v, want nil after failed fetch", live.FetchedModels)
 	}
@@ -154,11 +156,9 @@ func TestModelCommandEffortArg(t *testing.T) {
 	live := &cli.LiveConfig{Model: "openrouter/free", ProviderName: "openrouter"}
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, provider.NewCredentialStore(nil))
+	exec := &Executor{Live: live}
 
-	out, err := reg.ResolveOutcome("/model glm-5.2 high")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model glm-5.2 high: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/model glm-5.2 high")
 	if live.Model != "glm-5.2" {
 		t.Errorf("live.Model = %q, want glm-5.2", live.Model)
 	}
@@ -169,23 +169,18 @@ func TestModelCommandEffortArg(t *testing.T) {
 		t.Errorf("message = %q, want it to mention the effort", out.Message)
 	}
 
-	// An unknown level refuses the whole switch.
+	// An unknown level refuses the whole switch: Parse rejects it before any
+	// live state is touched (T7.7 — resolution is pure).
 	before := live.Model
-	out, err = reg.ResolveOutcome("/model glm-5.2 turbo")
-	if err != nil {
-		t.Fatalf("ResolveOutcome with unknown level: %v", err)
-	}
-	if !strings.Contains(out.Message, "unknown effort level") || live.Model != before {
-		t.Errorf("unknown level: message = %q model = %q, want a refusal and no switch", out.Message, live.Model)
+	_, err := reg.ResolveOutcome("/model glm-5.2 turbo")
+	if err == nil || !strings.Contains(err.Error(), "unknown effort level") || live.Model != before {
+		t.Errorf("unknown level: err = %v model = %q, want a refusal and no switch", err, live.Model)
 	}
 
 	// Extra arguments are refused too.
-	out, err = reg.ResolveOutcome("/model glm-5.2 high extra")
-	if err != nil {
-		t.Fatalf("ResolveOutcome with extra arg: %v", err)
-	}
-	if !strings.Contains(out.Message, "unexpected extra argument") {
-		t.Errorf("extra arg: message = %q, want a usage refusal", out.Message)
+	_, err = reg.ResolveOutcome("/model glm-5.2 high extra")
+	if err == nil || !strings.Contains(err.Error(), "unexpected extra argument") {
+		t.Errorf("extra arg: err = %v, want a usage refusal", err)
 	}
 }
 
@@ -219,11 +214,9 @@ func TestModelCommandSwitchesViaConfigProfile(t *testing.T) {
 	creds := provider.NewCredentialStore(nil)
 	reg := runtime.NewSlashRegistry()
 	RegisterLiveCommands(reg, live, creds)
+	exec := &Executor{Live: live, Creds: creds}
 
-	out, err := reg.ResolveOutcome("/model gpt-56")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model gpt-56: %v", err)
-	}
+	out := resolveExec(t, reg, exec, "/model gpt-56")
 	if live.Model != "gpt-5.6-luna" || live.ProviderName != "openai" {
 		t.Errorf("live = (%q, %q), want (gpt-5.6-luna, openai)", live.Model, live.ProviderName)
 	}
@@ -244,10 +237,7 @@ func TestModelCommandSwitchesViaConfigProfile(t *testing.T) {
 	}
 
 	// An explicit effort argument wins over the profile's thinking_level.
-	out, err = reg.ResolveOutcome("/model gpt-56 low")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model gpt-56 low: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/model gpt-56 low")
 	if live.ThinkingLevel != agentcore.ThinkingLow {
 		t.Errorf("effort after explicit arg = %q, want low", live.ThinkingLevel)
 	}
@@ -257,19 +247,13 @@ func TestModelCommandSwitchesViaConfigProfile(t *testing.T) {
 
 	// A profile id with an effort suffix still routes through the profile,
 	// and an unknown id keeps the heuristic path (no profile match).
-	out, err = reg.ResolveOutcome("/model totally-unknown")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /model totally-unknown: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/model totally-unknown")
 	if !strings.Contains(out.Message, "cannot switch") && !strings.Contains(out.Message, "model switched") {
 		t.Errorf("unknown-id message = %q, want the heuristic path outcome", out.Message)
 	}
 
 	// /models lists the profiles ahead of the preset catalog.
-	out, err = reg.ResolveOutcome("/models")
-	if err != nil {
-		t.Fatalf("ResolveOutcome /models: %v", err)
-	}
+	out = resolveExec(t, reg, exec, "/models")
 	if !strings.Contains(out.Message, "config profiles") || !strings.Contains(out.Message, "gpt-56") {
 		t.Errorf("/models = %q, want the config-profile section", out.Message)
 	}
