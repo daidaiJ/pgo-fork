@@ -45,6 +45,9 @@
   **/compact 转正**（异步 compactCmd + compactDoneMsg，幻影 10→9）；
   `RegisterSurfaceCommands` 改 *SurfaceDeps（值副本令 executor 的 registry
   同步静默跳过——同步测试抓出）。
+- **排期口径（2026-10-09 用户裁定）：实用体验 > 小添头和主题美化**——T7.7
+  切片 2-4 等实用件排最前；T7.4 主题系统等美化/添头件排后（登记 =
+  `.handoff/handoff.md` §3.5）。
 - **详情指针：** 规格 + 偏差 = [slash-command-surface.md](wiki/port/slash-command-surface.md)
   §7 切片 1 段；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
   T7.7 ⑦；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09。
