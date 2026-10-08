@@ -29,28 +29,30 @@
   `D:\CODE\ai\{rpiv-mono, pi-dynamic-workflows-michaelliv,
   pi-dynamic-workflow-milanglacier, pi-dynamic-workflows-quintinshaw}`（不进库）
 
-### T7.7 命令面契约重构切片 1 — 已提交（下一步 = 切片 2）
+### T7.7 命令面契约重构切片 2 — 已提交（下一步 = 切片 3）
 
-- **当前状态：** 切片 1 落地 = `35edcd2`（2026-10-09，19 文件 +1113/−603，
-  本地 dev 不推）；42 包 0 FAIL（`.gtmp/s1-test2.log`）；两份二进制已刷
-  （**第二份 = `cp`，用户指正**，哈希一致）。
-- **关键证据：** 声明面（`runtime.SlashCommand` 扩 Aliases/Audience〔零值
-  fail-closed〕/Interactive/Offered/Parse）+ `Intent` 17 类封闭集
-  （`internal/runtime/slashintent.go`，纯数据可序列化——server 拆分接缝）+
-  `ResolveOutcome` 返 `SlashIntent`（registry 不再就地执行）+ prompts
-  `Executor`（Status/Session/Compact 钩子，nil = 明确不可用）；9 个注册转
-  契约命令（/model /models /think /effect /skills /mcp /status /session
-  /compact）、假注册 15→13；`cli.RunManualCompact` + `cli.WriteSessionSummary`
-  双份合一；REPL 删 /compact //session 拦截、TUI 删 /status //session 拦截 +
-  **/compact 转正**（异步 compactCmd + compactDoneMsg，幻影 10→9）；
-  `RegisterSurfaceCommands` 改 *SurfaceDeps（值副本令 executor 的 registry
-  同步静默跳过——同步测试抓出）。
+- **当前状态：** 切片 2 落地 = **`4bb2321`**（2026-10-09 深夜，12 文件
+  +796/−360，本地 dev 不推；切片 1 = `35edcd2` 照旧）；42 包 0 FAIL
+  （`.gtmp/s2-fulltest.log`）；两份二进制已刷（第二份 = `cp`）；REPL slash
+  面已用本地假端点（SSE）+ 管道配方真机核验（/memory /rebuild /fork
+  /sessions /rename /goal 全符合）。
+- **关键证据：** `Interactive` bool 换 **`Projection` 面枚举**（14 类，原字段
+  无读者）；**假注册 13→0**——9 个 REPL-face 命令（fork/clone/tree/export/
+  import/copy/goal/btw/dream）转 identity + `ProjREPLFace` 声明（menu//help
+  照列、TUI 明确拒绝、幻影静默断言翻转），exit/quit → `ProjQuit`；
+  **sessions/resume/rename/context/memory/rebuild 新登记为声明条目**（menu//
+  help 增 6 行，REPL 从 unknown command 变明确提示）；`/memory` `/rebuild`
+  契约化（Parse 拒参数 + Executor Memory/Rebuild 钩子，REPL 删两处拦截）；
+  **TUI runSlash 拦截清单归零**（slashCommandName → Lookup → 按 Projection
+  单 switch + 每面一个投影助手，裸形式门控、参数式落回 Parse）；拒绝文案
+  单源 `Projection.UnavailableNotice`；prompts `declarations_test.go`
+  （目录 29 名钉死 + 无静默 stub 不变式）+ tui `slash_declaration_test.go`。
 - **排期口径（2026-10-09 用户裁定）：实用体验 > 小添头和主题美化**——T7.7
-  切片 2-4 等实用件排最前；T7.4 主题系统等美化/添头件排后（登记 =
+  切片 3-4 等实用件排最前；T7.4 主题系统等美化/添头件排后（登记 =
   `.handoff/handoff.md` §3.5）。
 - **详情指针：** 规格 + 偏差 = [slash-command-surface.md](wiki/port/slash-command-surface.md)
-  §7 切片 1 段；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
-  T7.7 ⑦；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09。
+  §7 切片 2 段（切片 1 段照旧）；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
+  T7.7 ⑧；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09 深夜。
 
 ### T7.3 交互式 slash 改造四批 — 已提交（TUI 真机验收待用户）
 
@@ -107,12 +109,14 @@
       tool 启停写 config + note 回显）
 - [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
 - [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
-- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；切片 1 已落地 = `35edcd2`，
-      2026-10-09；下一步 = 切片 2 删 13 假注册 + TUI 拦截清单收编）**：现状 =
-      registry 15 个假注册（只为 `/help` 列出）+ 三面各自拦截（REPL 17 名 /
-      TUI 17 名）+ 7 个同名命令两份实现 + **TUI 里 10 个幻影命令静默无操作**
-      （`/compact` `/copy` `/export` `/import` `/fork` `/clone` `/tree` `/goal`
-      `/btw` `/dream`；`internal/cli/tui/phantom_slash_test.go` 已按现状钉实）；
+- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；切片 1 = `35edcd2`、切片 2 =
+      `4bb2321`〔均 2026-10-09，本地 dev 未推〕；下一步 = 切片 3 REPL 候选列表投影 +
+      headless 明确拒绝 + slash 菜单//help 同源收尾，切片 4 = 别名/受众门）**：
+      现状 = **假注册已清零**（9 个 REPL-face 命令 fork/clone/tree/export/
+      import/copy/goal/btw/dream 转 `ProjREPLFace` 身份声明，TUI 明确拒绝）+
+      `Projection` 面枚举（14 类）+ TUI runSlash 拦截清单归零（声明驱动单
+      switch）+ /memory //rebuild 契约化 + sessions/resume/rename/context/
+      memory/rebuild 入目录（menu//help 增 6 行）；
       目标形态照 grok（用户裁定"grok 这边明显更正确"）：
       **规格定稿 = [slash-command-surface.md](wiki/port/slash-command-surface.md)**
       （单份声明目录 + 类型化 `Intent`/`Execute` + TUI/REPL/headless 三投影器 +
@@ -121,7 +125,17 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-09：T7.7 命令面契约重构切片 1 落地（`35edcd2`，19 文件
+- **当前阶段**：**2026-10-09 深夜：T7.7 切片 2 落地（`4bb2321`，12 文件
+  +796/−360，本地 dev 未推）**——
+  `Projection` 面枚举（14 类，换掉无读者的 `Interactive` bool）+ 假注册
+  13→0（9 个 REPL-face 命令转 `ProjREPLFace` 身份声明 + 明确拒绝，幻影静默
+  断言翻转）+ sessions/resume/rename/context/memory/rebuild 入目录（menu//
+  help 增 6 行）+ /memory //rebuild 契约化（Executor Memory/Rebuild 钩子）+
+  **TUI runSlash 拦截清单归零**（声明驱动单 switch + 每面一个投影助手）+
+  拒绝文案单源 `UnavailableNotice`；42 包 0 FAIL（`.gtmp/s2-fulltest.log`）；
+  二进制两份重建；REPL 面管道真机核验过（本地 SSE 假端点）。偏差 =
+  slash-command-surface.md §7 切片 2 段。上一阶段：
+  **2026-10-09：T7.7 命令面契约重构切片 1 落地（`35edcd2`，19 文件
   +1113/−603，本地 dev 未推）**——声明面 + `Intent` 17 类封闭集（纯数据可序列化）
   + `ResolveOutcome` 返 `SlashIntent` + prompts `Executor`；9 注册转契约命令、
   假注册 15→13、`RunManualCompact`/`WriteSessionSummary` 双份合一、REPL 删
