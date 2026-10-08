@@ -84,10 +84,11 @@
       tool 启停写 config + note 回显）
 - [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
 - [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
-- [ ] **T7.7 多面命令契约重构待开工（2026-10-08 用户拍板独立立项）**：现状 =
+- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；第一步幻影回归测试已钉）**：现状 =
       registry 15 个假注册（只为 `/help` 列出）+ 三面各自拦截（REPL 17 名 /
-      TUI 14 名）+ 7 个同名命令两份实现 + **TUI 里 7 个幻影命令静默无操作**
-      （`/compact` `/copy` `/export` `/import` `/fork` `/tree` `/goal`）；
+      TUI 17 名）+ 7 个同名命令两份实现 + **TUI 里 10 个幻影命令静默无操作**
+      （`/compact` `/copy` `/export` `/import` `/fork` `/clone` `/tree` `/goal`
+      `/btw` `/dream`；`internal/cli/tui/phantom_slash_test.go` 已按现状钉实）；
       目标形态照 grok（用户裁定"grok 这边明显更正确"）：
       **规格定稿 = [slash-command-surface.md](wiki/port/slash-command-surface.md)**
       （单份声明目录 + 类型化 `Intent`/`Execute` + TUI/REPL/headless 三投影器 +
@@ -96,8 +97,9 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-08 深夜：T7.3 四批收口（三段提交到本地 dev）+ 立项
-  T7.7 多面命令契约重构**——`3509800`（testenv 迁移 + 两处 skill 测试 XDG
+- **当前阶段**：**2026-10-08 深夜：T7.3 四批收口（三段提交到本地 dev）+ T7.7 立项
+  并落第一步（幻影命令回归测试已钉 = `fe5079e`，幻影实为 10 个、TUI 拦截实为
+  17 名，旧口径 7/14 已在 wiki 与本文件修正；docs 段 = `920a838`）**——`3509800`（testenv 迁移 + 两处 skill 测试 XDG
   隔离）/ `0936716`（T7.3 交互式 slash 面，四批合一）/ docs 指针段；**TUI
   真机验收仍待用户**（清单 = [`.handoff/handoff.md`](.handoff/handoff.md) §2.2，
   前置 = config 先加 `[models."<id>"]` 档案）；同批用户裁定「slash 交互迁就
@@ -171,8 +173,9 @@
   目标形态 = **单份声明目录**（身份/别名/用法/参数形态/来源/适用性谓词/受众门
   全声明，目录序即菜单序）+ **纯 `Parse` → 类型化 `Intent`** + 执行层
   `Execute(loop, Intent)` + **TUI/REPL/headless 三投影器**；删 15 个假注册、
-  收编 TUI 14 条拦截清单、headless 对需交互命令明确报错、先给 7 个幻影命令钉
-  回归测试；四切片与验收见该文 §5/§6。登记 =
+  收编 TUI 17 条拦截清单、headless 对需交互命令明确报错；**幻影命令回归测试已钉
+  （2026-10-08 深夜，10 个幻影 + 被拦截 5 名可达性，`phantom_slash_test.go`）**；
+  四切片与验收见该文 §5/§6。登记 =
   [design-principles.md](wiki/port/design-principles.md) **R12** +
   [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
   [implementation-plan.md](wiki/port/implementation-plan.md) T7.7。
