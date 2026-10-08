@@ -16,6 +16,7 @@ import (
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func testSkill(name string, slashOnly bool) *runtime.Skill {
@@ -34,7 +35,7 @@ func testSkill(name string, slashOnly bool) *runtime.Skill {
 // registering the surface commands exactly as the front-ends do.
 func surfaceSetup(t *testing.T, skills ...*runtime.Skill) (reg *runtime.SlashRegistry, cfgPath, skillsDir string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	cfgPath = filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(cfgPath, []byte("# test config\n"), 0o600); err != nil {
 		t.Fatal(err)

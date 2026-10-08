@@ -9,6 +9,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // openMemoryStore opens a memory.Store over a temp DB + root and writes the
@@ -16,7 +17,7 @@ import (
 // store. Reconcile is left to the provider's ReconcileFirst.
 func openMemoryStore(t *testing.T, files map[string]string) *memory.Store {
 	t.Helper()
-	base := t.TempDir()
+	base := testenv.Dir(t)
 	root := filepath.Join(base, "mimo")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir root: %v", err)

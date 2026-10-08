@@ -4,7 +4,7 @@ package runtime
 // inserts the compression boundary at the watermark — collapsing the pre-watermark
 // prefix into the checkpoint summary and preserving the recent tail verbatim; with
 // no checkpoint it falls back to the lossy compaction path (compaction.Compact).
-// Filesystem access uses t.TempDir(), matching checkpoint_test.go; the summary
+// Filesystem access uses testenv.Dir(t), matching checkpoint_test.go; the summary
 // model is the shared summaryStream fake from compaction_test.go.
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/compaction"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // textUser builds a user message carrying body, used to seed a rebuildable history.
@@ -26,7 +27,7 @@ func textUser(body string) agentcore.UserMessage {
 }
 
 func TestRebuildFromCheckpoint_InsertsBoundary(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	const sessionID = "sess-rebuild"
 
 	// A 6-message history; the checkpoint collapses the first 4 into a summary and
@@ -103,7 +104,7 @@ func TestRebuildFromCheckpoint_InsertsBoundary(t *testing.T) {
 }
 
 func TestRebuildFromCheckpoint_ClampsStaleWatermark(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	const sessionID = "sess-stale"
 
 	msgs := agentcore.MessageList{textUser("a"), textUser("b")}
@@ -135,7 +136,7 @@ func TestRebuildFromCheckpoint_ClampsStaleWatermark(t *testing.T) {
 }
 
 func TestRebuildFromCheckpoint_WaitCallbackInvoked(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	const sessionID = "sess-wait"
 	cp := Checkpoint{Watermark: 0, Summary: "s", CreatedAt: time.Now().UTC()}
 	if err := WriteCheckpoint(sessionID, root, cp); err != nil {
@@ -154,7 +155,7 @@ func TestRebuildFromCheckpoint_WaitCallbackInvoked(t *testing.T) {
 }
 
 func TestRebuildFromCheckpoint_FallsBackToCompaction(t *testing.T) {
-	root := t.TempDir() // empty: no checkpoint on disk
+	root := testenv.Dir(t) // empty: no checkpoint on disk
 	const sessionID = "sess-nocp"
 
 	// Seed a long history so FindCutPoint leaves a summarizable prefix.
@@ -197,7 +198,7 @@ func TestRebuildFromCheckpoint_FallsBackToCompaction(t *testing.T) {
 }
 
 func TestRebuildFromCheckpoint_FallbackNoOpWhenNothingToCompact(t *testing.T) {
-	root := t.TempDir() // no checkpoint
+	root := testenv.Dir(t) // no checkpoint
 	const sessionID = "sess-empty"
 
 	// A single short message: no valid cut point leaves a summarization range, so

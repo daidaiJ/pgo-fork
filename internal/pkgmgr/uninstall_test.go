@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestListInstalled verifies ListInstalled returns entries sorted by name and
 // an empty slice when no lockfile exists.
 func TestListInstalled(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	lockPath := filepath.Join(home, "packages.json")
 
 	// No lockfile yet → empty.
@@ -44,7 +46,7 @@ func TestListInstalled(t *testing.T) {
 // TestUninstallRemovesFilesAndEntry verifies uninstall deletes the recorded
 // files (and payload dirs) and drops the lockfile entry.
 func TestUninstallRemovesFilesAndEntry(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	lockPath := filepath.Join(home, "packages.json")
 
 	// Lay down a payload dir + a file inside it, and a standalone launcher file.
@@ -100,7 +102,7 @@ func TestUninstallRemovesFilesAndEntry(t *testing.T) {
 // TestUninstallMissingFilesSkipped verifies uninstall converges (removes the
 // entry) even when some recorded files are already gone.
 func TestUninstallMissingFilesSkipped(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	lockPath := filepath.Join(home, "packages.json")
 
 	present := filepath.Join(home, "commands", "x.md")
@@ -135,7 +137,7 @@ func TestUninstallMissingFilesSkipped(t *testing.T) {
 
 // TestUninstallNotInstalled verifies uninstalling an unknown package errors.
 func TestUninstallNotInstalled(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "packages.json")
+	lockPath := filepath.Join(testenv.Dir(t), "packages.json")
 	if err := Uninstall("nope", lockPath, nil); err == nil {
 		t.Fatal("Uninstall of missing package = nil error, want error")
 	}

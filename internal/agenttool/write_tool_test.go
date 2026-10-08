@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func runWrite(t *testing.T, tool *WriteTool, args map[string]any) agentcore.AgentToolResult {
@@ -25,7 +26,7 @@ func runWrite(t *testing.T, tool *WriteTool, args map[string]any) agentcore.Agen
 }
 
 func TestWriteToolCreate(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	tool := &WriteTool{Root: dir}
 	res := runWrite(t, tool, map[string]any{"path": "out.txt", "content": "hello"})
 	if !strings.Contains(resultText(res), "Created") {
@@ -38,7 +39,7 @@ func TestWriteToolCreate(t *testing.T) {
 }
 
 func TestWriteToolCreatesParentDirs(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	tool := &WriteTool{Root: dir}
 	res := runWrite(t, tool, map[string]any{"path": "a/b/c/deep.txt", "content": "x"})
 	if strings.Contains(resultText(res), "error") {
@@ -50,7 +51,7 @@ func TestWriteToolCreatesParentDirs(t *testing.T) {
 }
 
 func TestWriteToolOverwrite(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "exists.txt")
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -72,7 +73,7 @@ func TestWriteToolOverwrite(t *testing.T) {
 }
 
 func TestWriteToolPathTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	tool := &WriteTool{Root: dir}
 	res := runWrite(t, tool, map[string]any{"path": "../escape.txt", "content": "x"})
 	if !strings.Contains(resultText(res), "outside the workspace root") {
@@ -85,8 +86,8 @@ func TestWriteToolPathTraversal(t *testing.T) {
 }
 
 func TestWriteToolExtraRootsAllowsSkillAuthoring(t *testing.T) {
-	work := t.TempDir()
-	skills := t.TempDir()
+	work := testenv.Dir(t)
+	skills := testenv.Dir(t)
 
 	// Without ExtraRoots, authoring a skill outside the workspace is rejected.
 	target := filepath.Join(skills, "newskill", "SKILL.md")
@@ -113,9 +114,9 @@ func TestWriteToolExtraRootsAllowsSkillAuthoring(t *testing.T) {
 }
 
 func TestWriteToolExtraRootsStillBlocksUntrustedPath(t *testing.T) {
-	work := t.TempDir()
-	skills := t.TempDir()
-	other := t.TempDir()
+	work := testenv.Dir(t)
+	skills := testenv.Dir(t)
+	other := testenv.Dir(t)
 	target := filepath.Join(other, "escape.txt")
 
 	tool := &WriteTool{Root: work, ExtraRoots: []string{skills}}
@@ -129,7 +130,7 @@ func TestWriteToolExtraRootsStillBlocksUntrustedPath(t *testing.T) {
 }
 
 func TestWriteToolDirectoryTarget(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	sub := filepath.Join(dir, "adir")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -142,7 +143,7 @@ func TestWriteToolDirectoryTarget(t *testing.T) {
 }
 
 func TestWriteToolMissingArgs(t *testing.T) {
-	tool := &WriteTool{Root: t.TempDir()}
+	tool := &WriteTool{Root: testenv.Dir(t)}
 	res := runWrite(t, tool, map[string]any{"content": "x"})
 	if !strings.Contains(resultText(res), "path is required") {
 		t.Errorf("expected path-required error, got %q", resultText(res))

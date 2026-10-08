@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestFileConfigPath_XDGOverride(t *testing.T) {
@@ -30,7 +32,7 @@ func TestFileConfigPath_DefaultHome(t *testing.T) {
 }
 
 func TestLoadFileConfig_Missing(t *testing.T) {
-	cfg, err := LoadFileConfig(filepath.Join(t.TempDir(), "does-not-exist.toml"))
+	cfg, err := LoadFileConfig(filepath.Join(testenv.Dir(t), "does-not-exist.toml"))
 	if err != nil {
 		t.Fatalf("missing file should not error, got %v", err)
 	}
@@ -50,7 +52,7 @@ func TestLoadFileConfig_EmptyPath(t *testing.T) {
 }
 
 func TestLoadFileConfig_Valid(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	content := `
 model = "claude-opus-4-8"
 base_url = "https://example.com"
@@ -90,7 +92,7 @@ system_prompt = "be terse"
 }
 
 func TestLoadFileConfig_Malformed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.toml")
+	path := filepath.Join(testenv.Dir(t), "bad.toml")
 	if err := os.WriteFile(path, []byte("model = = ="), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +102,7 @@ func TestLoadFileConfig_Malformed(t *testing.T) {
 }
 
 func TestLoadFileConfigPromptsArray(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	content := "prompts = [\"./my-prompts\", \"/abs/x.md\"]\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -134,7 +136,7 @@ func TestGenericBaseURLEnvVar(t *testing.T) {
 }
 
 func TestLoadFileConfig_DreamTable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	content := `
 [dream]
 enabled = false
@@ -160,7 +162,7 @@ recent_sessions = 50
 }
 
 func TestLoadFileConfig_DreamTableAbsent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	if err := os.WriteFile(path, []byte("model = \"foo\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

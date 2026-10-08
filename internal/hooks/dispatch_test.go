@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestNewDispatcherNilOnEmpty(t *testing.T) {
@@ -37,7 +39,7 @@ func TestDispatchMergesContext(t *testing.T) {
 			}},
 		},
 	}
-	d := NewDispatcher(set, t.TempDir(), nil)
+	d := NewDispatcher(set, testenv.Dir(t), nil)
 	dec := d.Dispatch(context.Background(), "PostToolUse", "write", HookInput{})
 	if dec.AdditionalContext != "first\nsecond" {
 		t.Fatalf("expected merged context, got %q", dec.AdditionalContext)
@@ -56,7 +58,7 @@ func TestDispatchPreToolUseFirstBlockShortCircuits(t *testing.T) {
 			}},
 		},
 	}
-	d := NewDispatcher(set, t.TempDir(), nil)
+	d := NewDispatcher(set, testenv.Dir(t), nil)
 	dec := d.Dispatch(context.Background(), "PreToolUse", "bash", HookInput{})
 	if !dec.Block {
 		t.Fatal("expected block")
@@ -79,7 +81,7 @@ func TestDispatchFailOpen(t *testing.T) {
 		},
 	}
 	var warn bytes.Buffer
-	d := NewDispatcher(set, t.TempDir(), &warn)
+	d := NewDispatcher(set, testenv.Dir(t), &warn)
 	dec := d.Dispatch(context.Background(), "PreToolUse", "bash", HookInput{})
 	if dec.Block {
 		t.Fatal("failed hook must not block (fail-open)")
@@ -104,7 +106,7 @@ func TestDispatchUpdatedInputLastWins(t *testing.T) {
 			}},
 		},
 	}
-	d := NewDispatcher(set, t.TempDir(), nil)
+	d := NewDispatcher(set, testenv.Dir(t), nil)
 	dec := d.Dispatch(context.Background(), "PreToolUse", "bash", HookInput{})
 	if string(dec.UpdatedInput) != `{"n":2}` {
 		t.Fatalf("expected last writer wins, got %s", dec.UpdatedInput)

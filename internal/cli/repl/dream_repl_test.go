@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/dream"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // sampleReport is a non-trivial Report used across the renderer tests: every
@@ -205,7 +206,7 @@ func TestDreamLockHeld(t *testing.T) {
 	if dreamLockHeld("") {
 		t.Fatal("empty memoryRoot must read as not held")
 	}
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// No lock file yet → not held.
 	if dreamLockHeld(root) {
 		t.Fatal("missing lock must read as not held")
@@ -230,7 +231,7 @@ func TestDreamLockHeld(t *testing.T) {
 // TestRunDreamLockedNotice asserts the manual command surfaces the locked
 // message and does NOT spawn when a live lock is present (SPEC §6.1).
 func TestRunDreamLockedNotice(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	lock, err := dream.AcquireLock(root)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)

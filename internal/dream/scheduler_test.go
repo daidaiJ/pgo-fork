@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // fixedNow returns a func yielding t, for the Now seam.
@@ -21,7 +23,7 @@ func writeDueState(t *testing.T, memoryRoot string, lastRun time.Time) {
 }
 
 func TestSchedulerDue(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	now := time.Date(2026, 1, 20, 12, 0, 0, 0, time.UTC)
 	cfg := NewConfig(nil, 7, 20) // enabled, 7-day interval
 
@@ -52,7 +54,7 @@ func TestSchedulerDue(t *testing.T) {
 }
 
 func TestMaybeRunBackground_NotSpawnedWhenDisabled(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	writeDueState(t, root, time.Now().Add(-30*24*time.Hour)) // would be due if enabled
 
 	var spawned bool
@@ -74,7 +76,7 @@ func TestMaybeRunBackground_NotSpawnedWhenDisabled(t *testing.T) {
 }
 
 func TestMaybeRunBackground_NotSpawnedWhenNotDue(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	now := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
 	writeDueState(t, root, now.Add(-1*24*time.Hour)) // 1 day ago, interval 7d → not due
 
@@ -94,7 +96,7 @@ func TestMaybeRunBackground_NotSpawnedWhenNotDue(t *testing.T) {
 }
 
 func TestMaybeRunBackground_SpawnsAndNoticesOnChanges(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	now := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
 	writeDueState(t, root, now.Add(-10*24*time.Hour)) // due
 
@@ -141,7 +143,7 @@ func TestMaybeRunBackground_SpawnsAndNoticesOnChanges(t *testing.T) {
 }
 
 func TestMaybeRunBackground_SkippedRunIsSilent(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	now := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
 	writeDueState(t, root, now.Add(-10*24*time.Hour)) // due
 
@@ -174,7 +176,7 @@ func TestMaybeRunBackground_SkippedRunIsSilent(t *testing.T) {
 }
 
 func TestMaybeRunBackground_FailureIsSilent(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	now := time.Date(2026, 3, 5, 9, 0, 0, 0, time.UTC)
 	writeDueState(t, root, now.Add(-10*24*time.Hour)) // due
 

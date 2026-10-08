@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // mapSet builds a Set backed by an in-memory tree so bootstrap can be exercised
@@ -22,8 +24,8 @@ func mapSet(name, version string, skills ...string) Set {
 // TestBootstrapInstallsSkills verifies a fresh bootstrap lays every named skill
 // down under skillsDir with its SKILL.md and support files intact.
 func TestBootstrapInstallsSkills(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	set := mapSet("test-set", "v1", "alpha", "beta")
 
 	bootstrap([]Set{set}, home, skills, nil)
@@ -47,8 +49,8 @@ func TestBootstrapInstallsSkills(t *testing.T) {
 // TestBootstrapSkipsWhenAlreadyInstalled verifies a second bootstrap at the same
 // version does not touch an existing (possibly user-edited) skill.
 func TestBootstrapSkipsWhenAlreadyInstalled(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	set := mapSet("test-set", "v1", "alpha")
 
 	bootstrap([]Set{set}, home, skills, nil)
@@ -72,8 +74,8 @@ func TestBootstrapSkipsWhenAlreadyInstalled(t *testing.T) {
 // TestBootstrapDoesNotClobberPreexistingSkill verifies a skill directory that
 // already exists before the first bootstrap is left untouched (never overwritten).
 func TestBootstrapDoesNotClobberPreexistingSkill(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	// Pre-place a user's own "alpha" skill.
 	if err := os.MkdirAll(filepath.Join(skills, "alpha"), 0o755); err != nil {
 		t.Fatal(err)
@@ -99,8 +101,8 @@ func TestBootstrapDoesNotClobberPreexistingSkill(t *testing.T) {
 // re-triggers installation of skills that are missing, without disturbing ones
 // already present.
 func TestBootstrapVersionBumpReinstallsMissing(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 
 	bootstrap([]Set{mapSet("test-set", "v1", "alpha")}, home, skills, nil)
 
@@ -116,15 +118,15 @@ func TestBootstrapVersionBumpReinstallsMissing(t *testing.T) {
 // bootstrap without panicking or erroring.
 func TestBootstrapEmptyHomeIsNoop(t *testing.T) {
 	bootstrap([]Set{mapSet("s", "v1", "alpha")}, "", "", nil)
-	bootstrap([]Set{mapSet("s", "v1", "alpha")}, t.TempDir(), "", nil)
+	bootstrap([]Set{mapSet("s", "v1", "alpha")}, testenv.Dir(t), "", nil)
 }
 
 // TestBootstrapEmptyVersionInstalls verifies a Set with a blank Version is not
 // mistaken for "already installed" (the zero-value state lookup also equals "")
 // and so its skills are installed on a fresh run.
 func TestBootstrapEmptyVersionInstalls(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 
 	bootstrap([]Set{mapSet("test-set", "", "alpha")}, home, skills, nil)
 
@@ -149,8 +151,8 @@ func TestManifestEmbedsAllSkills(t *testing.T) {
 // TestBootstrapInstallsRealManifest verifies the embedded manifest installs its
 // full skill set into a temp skills dir — the end-to-end offline install path.
 func TestBootstrapInstallsRealManifest(t *testing.T) {
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 
 	Bootstrap(home, skills, nil)
 

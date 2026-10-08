@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -16,7 +17,7 @@ import (
 // can assert on the payload the hook received.
 func captureNotifier(t *testing.T, event string) (*HookNotifier, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	out := filepath.Join(dir, "capture.json")
 	set := HookSet{
 		event: {{Matcher: "*", Hooks: []HookConfig{{Command: "cat >> " + out}}}},

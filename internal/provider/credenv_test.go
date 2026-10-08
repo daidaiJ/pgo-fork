@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 )
 
@@ -78,7 +79,7 @@ func TestScrubEnv(t *testing.T) {
 // the permission warning heuristic.
 func TestCredentialFileRoundTrip(t *testing.T) {
 	testgate.WinSkip(t, testgate.POSIXPerms)
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, ".credentials.yaml")
 	body := "deepseek-main: sk-aaa\nzai-coding: sk-bbb\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

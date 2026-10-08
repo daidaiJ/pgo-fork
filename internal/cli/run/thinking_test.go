@@ -13,17 +13,18 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // isolateConfig points PIGO_HOME at a temp dir and chdir's into a temp working
 // directory (restored on cleanup), so no real global/project config leaks in.
 func isolateConfig(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	t.Setenv("PIGO_THINKING_LEVEL", "")
 
-	wd := t.TempDir()
+	wd := testenv.Dir(t)
 	prev, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

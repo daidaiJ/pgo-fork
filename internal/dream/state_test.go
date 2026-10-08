@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestStateRoundTrip(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	report := &Report{Merged: 3, Deduped: 1, DryRun: false}
 	want := State{
 		LastRunAt:  time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC),
@@ -37,7 +39,7 @@ func TestStateRoundTrip(t *testing.T) {
 }
 
 func TestSaveStateCreatesDir(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	if err := SaveState(root, State{LastStatus: "ok"}); err != nil {
 		t.Fatalf("SaveState: %v", err)
 	}
@@ -47,7 +49,7 @@ func TestSaveStateCreatesDir(t *testing.T) {
 }
 
 func TestLoadStateMissingIsZero(t *testing.T) {
-	got, err := LoadState(t.TempDir())
+	got, err := LoadState(testenv.Dir(t))
 	if err != nil {
 		t.Fatalf("LoadState: %v", err)
 	}
@@ -57,7 +59,7 @@ func TestLoadStateMissingIsZero(t *testing.T) {
 }
 
 func TestLoadStateCorruptTolerated(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	dir := filepath.Join(root, "global", "dream")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

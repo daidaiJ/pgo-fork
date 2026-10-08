@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writePkg writes a package.json (and optional extra files) into a fresh temp
@@ -12,7 +14,7 @@ import (
 // path ending in "/" is created as a directory.
 func writePkg(t *testing.T, packageJSON string, extraFiles map[string]string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(packageJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func TestClassifyUnknown(t *testing.T) {
 
 // TestClassifyMissingPackageJSON verifies a missing package.json errors.
 func TestClassifyMissingPackageJSON(t *testing.T) {
-	if _, _, _, err := Classify(t.TempDir()); err == nil {
+	if _, _, _, err := Classify(testenv.Dir(t)); err == nil {
 		t.Fatal("Classify with no package.json = nil error, want error")
 	}
 }

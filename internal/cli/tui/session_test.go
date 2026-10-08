@@ -7,13 +7,14 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // newTestStore opens a session store rooted at a temp dir so persistence/resume
 // can be exercised without touching ~/.pigo.
 func newTestStore(t *testing.T) *session.Store {
 	t.Helper()
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -239,7 +240,7 @@ func TestPersistAfterCompaction(t *testing.T) {
 // channel denied, silently blocking even read-only bash (git log/status) while
 // the model saw "permission denied by the user".
 func TestTUIApproveGrantsEngineTrust(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir()) // isolated trust store: no persisted grants
+	t.Setenv("PIGO_HOME", testenv.Dir(t)) // isolated trust store: no persisted grants
 	store := newTestStore(t)
 	call := agentcore.AgentToolCall{
 		ID:        "t1",
@@ -268,4 +269,3 @@ func TestTUIApproveGrantsEngineTrust(t *testing.T) {
 		t.Error("restricted TUI (no --approve, no /trust) must block bash when no approval channel exists")
 	}
 }
-

@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // openTempWithRoots opens a Store backed by a temp-file DB with explicit mimo
 // root and cc base directories (both created on disk).
 func openTempWithRoots(t *testing.T) (st *Store, root, ccBase string) {
 	t.Helper()
-	base := t.TempDir()
+	base := testenv.Dir(t)
 	root = filepath.Join(base, "mimo")
 	ccBase = filepath.Join(base, "cc")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -238,7 +240,7 @@ func TestReconcileBothRootsNoCrossPrune(t *testing.T) {
 // TestReconcileMissingRoots verifies reconcile is a no-op when roots do not
 // exist yet (ENOENT tolerated).
 func TestReconcileMissingRoots(t *testing.T) {
-	base := t.TempDir()
+	base := testenv.Dir(t)
 	dbPath := filepath.Join(base, "memory.db")
 	st, err := Open(dbPath, filepath.Join(base, "nope"), filepath.Join(base, "nocc"))
 	if err != nil {

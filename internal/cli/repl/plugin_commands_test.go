@@ -16,8 +16,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/smallnest/pigo/internal/testgate"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
+	"github.com/smallnest/pigo/internal/testgate"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
@@ -123,9 +125,9 @@ func loadTestManager(t *testing.T) *plugin.Manager {
 	// Build in a build dir, then move only the binary into the plugins dir so
 	// Discover (which loads every executable file in the dir) sees just the one
 	// plugin executable.
-	buildDir := t.TempDir()
+	buildDir := testenv.Dir(t)
 	buildPluginInDir(t, buildDir, "greeter", cmdPluginMain)
-	pluginsDir := t.TempDir()
+	pluginsDir := testenv.Dir(t)
 	binName := "greeter"
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
@@ -147,7 +149,7 @@ func loadTestManager(t *testing.T) *plugin.Manager {
 // command is registered as a resolvable slash command in the registry.
 func TestBuildSlashRegistryRegistersPluginCommand(t *testing.T) {
 	testgate.WinSkip(t, testgate.PluginSubprocess)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	mgr := loadTestManager(t)
 	defer mgr.Close()
 
@@ -181,7 +183,7 @@ func TestBuildSlashRegistryRegistersPluginCommand(t *testing.T) {
 // is shadowed and the built-in's behavior is what resolves.
 func TestBuiltinWinsOverPluginCommand(t *testing.T) {
 	testgate.WinSkip(t, testgate.PluginSubprocess)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	mgr := loadTestManager(t)
 	defer mgr.Close()
 
@@ -210,7 +212,7 @@ func TestBuiltinWinsOverPluginCommand(t *testing.T) {
 // in the conversation history).
 func TestREPLPluginCommandInjectsPrompt(t *testing.T) {
 	testgate.WinSkip(t, testgate.PluginSubprocess)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	mgr := loadTestManager(t)
 	defer mgr.Close()
 
@@ -219,7 +221,7 @@ func TestREPLPluginCommandInjectsPrompt(t *testing.T) {
 		t.Fatalf("buildSlashRegistry: %v", err)
 	}
 
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}

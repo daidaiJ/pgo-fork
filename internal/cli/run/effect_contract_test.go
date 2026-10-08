@@ -10,10 +10,11 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestBuiltinToolsDeclareEffect(t *testing.T) {
-	tools := BuiltinTools(t.TempDir(), false)
+	tools := BuiltinTools(testenv.Dir(t), false)
 	if len(tools) == 0 {
 		t.Fatal("expected builtin tools")
 	}

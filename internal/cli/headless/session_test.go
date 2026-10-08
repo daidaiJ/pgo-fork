@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func textUser(s string) agentcore.UserMessage {
@@ -23,7 +24,7 @@ func textAssistant(s string) agentcore.AssistantMessage {
 // and empty prior messages, and that persist writes the run's messages so they
 // can be resumed.
 func TestOpenHeadlessSessionFresh(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 
 	prior, hs, err := openHeadlessSession("", "faux-model", "faux", "sys prompt")
 	if err != nil {
@@ -59,7 +60,7 @@ func TestOpenHeadlessSessionFresh(t *testing.T) {
 // and that a subsequent run appends only the new tail as a branch, so the
 // session grows rather than being rewritten.
 func TestOpenHeadlessSessionResume(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 
 	// First run: create and persist a session.
 	_, hs1, err := openHeadlessSession("", "faux-model", "faux", "sys")
@@ -104,7 +105,7 @@ func TestOpenHeadlessSessionResume(t *testing.T) {
 // TestHeadlessPersistNoop verifies persist is a no-op (no error, no growth) when
 // the run produced nothing new past what was already persisted.
 func TestHeadlessPersistNoop(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	_, hs, err := openHeadlessSession("", "m", "p", "s")
 	if err != nil {
 		t.Fatalf("openHeadlessSession: %v", err)
@@ -131,7 +132,7 @@ func TestHeadlessPersistNoop(t *testing.T) {
 // compaction replaces agentCtx.Messages). The persisted cursor is clamped so
 // the tail slice stays in bounds rather than panicking.
 func TestHeadlessPersistCompactionShrink(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	_, hs, err := openHeadlessSession("", "m", "p", "s")
 	if err != nil {
 		t.Fatalf("openHeadlessSession: %v", err)

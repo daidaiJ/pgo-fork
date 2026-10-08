@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // fakeNPMVersioned writes a fake `npm` onto PATH that packs whichever tarball is
@@ -12,7 +14,7 @@ import (
 // version `npm pack` returns between Install and Update.
 func fakeNPMVersioned(t *testing.T, tarballs map[string]map[string]string, whichFile string) {
 	t.Helper()
-	binDir := t.TempDir()
+	binDir := testenv.Dir(t)
 	// Build every tarball once under binDir; the script copies the one named in
 	// whichFile.
 	for ver, files := range tarballs {
@@ -43,9 +45,9 @@ func TestUpdateToNewerVersion(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake npm shell script is POSIX-only")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
-	whichFile := filepath.Join(t.TempDir(), "which")
+	whichFile := filepath.Join(testenv.Dir(t), "which")
 
 	tarballs := map[string]map[string]string{
 		"1.0.0": {
@@ -105,9 +107,9 @@ func TestUpdateUpToDate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-only")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
-	whichFile := filepath.Join(t.TempDir(), "which")
+	whichFile := filepath.Join(testenv.Dir(t), "which")
 
 	tarballs := map[string]map[string]string{
 		"1.0.0": {
@@ -135,7 +137,7 @@ func TestUpdateUpToDate(t *testing.T) {
 
 // TestUpdateNotInstalled verifies updating an unknown package errors.
 func TestUpdateNotInstalled(t *testing.T) {
-	if _, err := Update("nope", filepath.Join(t.TempDir(), "packages.json"), nil); err == nil {
+	if _, err := Update("nope", filepath.Join(testenv.Dir(t), "packages.json"), nil); err == nil {
 		t.Fatal("Update of missing package = nil error, want error")
 	}
 }

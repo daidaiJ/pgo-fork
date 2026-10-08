@@ -7,13 +7,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writeUpdateCache seeds the selfupdate cache under a temp PIGO_HOME so the
 // banner's cached-latest lookup is deterministic.
 func writeUpdateCache(t *testing.T, latest string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", dir)
 	data, _ := json.Marshal(map[string]any{
 		"checked_at": time.Now(),
@@ -25,7 +27,7 @@ func writeUpdateCache(t *testing.T, latest string) {
 }
 
 func TestRenderBannerShowsVersion(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir()) // empty cache: no upgrade hint
+	t.Setenv("PIGO_HOME", testenv.Dir(t)) // empty cache: no upgrade hint
 	out := renderBanner(DefaultTheme(), Options{Version: "v0.3.1"}, "/tmp/proj")
 	if !strings.Contains(out, "pigo") || !strings.Contains(out, "v0.3.1") {
 		t.Errorf("banner missing version badge: %q", out)
@@ -84,7 +86,7 @@ func TestRenderBannerProtocolLabel(t *testing.T) {
 		{"", "—"},
 	}
 	for _, c := range cases {
-		t.Setenv("PIGO_HOME", t.TempDir())
+		t.Setenv("PIGO_HOME", testenv.Dir(t))
 		out := renderBanner(DefaultTheme(), Options{Version: "dev", Protocol: c.protocol}, "/tmp/proj")
 		if !strings.Contains(out, c.want) {
 			t.Errorf("protocol %q: banner should show %q, got: %q", c.protocol, c.want, out)

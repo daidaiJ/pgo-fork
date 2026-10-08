@@ -14,10 +14,11 @@ import (
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/testutil"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestLoadSettingsPromptsFileDirMissing(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	// file entry -> 1 cmd.
 	filePath := filepath.Join(home, "single.md")
 	if err := os.WriteFile(filePath, []byte("Single: $ARGUMENTS"), 0o644); err != nil {
@@ -53,7 +54,7 @@ func TestLoadSettingsPromptsFileDirMissing(t *testing.T) {
 }
 
 func TestBuildSlashRegistryLoadsSettingsPrompts(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// A settings-tier prompt dir (loaded via configPrompts).
 	settingsDir := filepath.Join(home, "settings-prompts")
@@ -79,7 +80,7 @@ func TestBuildSlashRegistryLoadsSettingsPrompts(t *testing.T) {
 }
 
 func TestBuildSlashRegistryGlobalOverridesSettings(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// global prompt (TierGlobal) under ~/.pigo/prompts.
 	testutil.WritePrompt(t, home, "prompts", "dup.md", "FROM GLOBAL")

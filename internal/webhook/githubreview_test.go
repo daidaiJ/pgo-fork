@@ -19,6 +19,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 const testPayload = `{"action":"ready_for_review","repository":{"full_name":"smallnest/pigo"},"pull_request":{"number":42,"title":"Add scheduler","html_url":"https://github.com/smallnest/pigo/pull/42","head":{"ref":"feat/scheduler"}}}`
@@ -70,7 +71,7 @@ func (r *recordingRunner) waitCalls(t *testing.T, n int) []ReviewRequest {
 
 func newTestServer(t *testing.T) (*Server, *recordingRunner) {
 	t.Helper()
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

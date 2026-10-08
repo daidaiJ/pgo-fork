@@ -4,16 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestDistributeTheme verifies a theme package is stored under
 // $PIGO_HOME/themes/<name>/ with its files intact.
 func TestDistributeTheme(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-dark","version":"1.0.0","pi":{"type":"theme"}}`, map[string]string{
-		"theme.json":     `{"bg":"#000"}`,
+		"theme.json":      `{"bg":"#000"}`,
 		"assets/logo.txt": "logo",
 	})
 
@@ -34,7 +36,7 @@ func TestDistributeTheme(t *testing.T) {
 
 // TestDistributeThemeReinstallReplaces verifies reinstall clears stale files.
 func TestDistributeThemeReinstallReplaces(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg1 := writePkg(t, `{"name":"pi-t","version":"1.0.0"}`, map[string]string{

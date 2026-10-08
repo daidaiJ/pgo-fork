@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 )
 
@@ -40,7 +41,7 @@ func TestResolveAppendInstructionsLiteral(t *testing.T) {
 // TestResolveAppendInstructionsFile verifies a value that names an existing
 // file has its contents read and appended.
 func TestResolveAppendInstructionsFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "guidance.txt")
 	if err := os.WriteFile(path, []byte("FILE GUIDANCE"), 0o644); err != nil {
 		t.Fatalf("write temp file: %v", err)
@@ -66,7 +67,7 @@ func TestResolveAppendInstructionsFile(t *testing.T) {
 // succeeds on it (so it is not treated as literal text) while os.ReadFile fails.
 func TestResolveAppendInstructionsUnreadableFile(t *testing.T) {
 	testgate.WinSkip(t, testgate.POSIXPerms)
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	// A directory: Stat succeeds and IsDir() is true, so it is treated as literal
 	// text — assert that. Then create an actually-unreadable regular file to hit
 	// the read-error path.

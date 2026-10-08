@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func runEdit(t *testing.T, tool *EditTool, args map[string]any) agentcore.AgentToolResult {
@@ -35,7 +36,7 @@ func seedFile(t *testing.T, dir, name, content string) string {
 }
 
 func TestEditToolUniqueMatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	p := seedFile(t, dir, "f.txt", "alpha\nbeta\ngamma\n")
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "f.txt", "old_string": "beta", "new_string": "BETA"})
@@ -53,7 +54,7 @@ func TestEditToolUniqueMatch(t *testing.T) {
 }
 
 func TestEditToolNonUniqueErrors(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	seedFile(t, dir, "f.txt", "x\nx\nx\n")
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "f.txt", "old_string": "x", "new_string": "y"})
@@ -68,7 +69,7 @@ func TestEditToolNonUniqueErrors(t *testing.T) {
 }
 
 func TestEditToolReplaceAll(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	p := seedFile(t, dir, "f.txt", "x\nx\nx\n")
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "f.txt", "old_string": "x", "new_string": "y", "replace_all": true})
@@ -83,7 +84,7 @@ func TestEditToolReplaceAll(t *testing.T) {
 }
 
 func TestEditToolNotFound(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	seedFile(t, dir, "f.txt", "hello\n")
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "f.txt", "old_string": "missing", "new_string": "x"})
@@ -93,7 +94,7 @@ func TestEditToolNotFound(t *testing.T) {
 }
 
 func TestEditToolMissingFile(t *testing.T) {
-	tool := &EditTool{Root: t.TempDir()}
+	tool := &EditTool{Root: testenv.Dir(t)}
 	res := runEdit(t, tool, map[string]any{"path": "nope.txt", "old_string": "a", "new_string": "b"})
 	if !strings.Contains(resultText(res), "does not exist") {
 		t.Errorf("expected does-not-exist, got %q", resultText(res))
@@ -101,7 +102,7 @@ func TestEditToolMissingFile(t *testing.T) {
 }
 
 func TestEditToolIdenticalStrings(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	seedFile(t, dir, "f.txt", "a\n")
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "f.txt", "old_string": "a", "new_string": "a"})
@@ -111,7 +112,7 @@ func TestEditToolIdenticalStrings(t *testing.T) {
 }
 
 func TestEditToolPathTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	tool := &EditTool{Root: dir}
 	res := runEdit(t, tool, map[string]any{"path": "../x.txt", "old_string": "a", "new_string": "b"})
 	if !strings.Contains(resultText(res), "outside the workspace root") {
@@ -120,8 +121,8 @@ func TestEditToolPathTraversal(t *testing.T) {
 }
 
 func TestEditToolExtraRootsAllowsSkillModification(t *testing.T) {
-	work := t.TempDir()
-	skills := t.TempDir()
+	work := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	skillFile := filepath.Join(skills, "weather", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

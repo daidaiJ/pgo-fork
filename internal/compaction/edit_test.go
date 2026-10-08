@@ -14,6 +14,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // toolTurn builds an assistant tool call + its result; it returns the pair and
@@ -223,7 +224,7 @@ func TestProjectViewMappedIndicesWithDroppedEntries(t *testing.T) {
 }
 
 func TestProjectContextEditSessionRoundTripAndBranches(t *testing.T) {
-	store, err := session.NewStore(filepath.Join(t.TempDir(), "sessions"))
+	store, err := session.NewStore(filepath.Join(testenv.Dir(t), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}

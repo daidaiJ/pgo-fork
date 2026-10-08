@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestDistributeExtensionStringBin verifies a package with a string "bin"
@@ -13,11 +15,11 @@ func TestDistributeExtensionStringBin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-demo","version":"1.0.0","bin":"./cli.js"}`, map[string]string{
-		"cli.js":  "#!/usr/bin/env node\nconsole.log('hi')\n",
+		"cli.js":   "#!/usr/bin/env node\nconsole.log('hi')\n",
 		"lib/x.js": "module.exports=1\n",
 	})
 
@@ -79,7 +81,7 @@ func TestDistributeExtensionObjectBin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-adapter","version":"2.0.0","bin":{"pi-adapter":"./main.js","other":"./other.js"}}`, map[string]string{
@@ -103,7 +105,7 @@ func TestDistributeExtensionReinstallReplaces(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg1 := writePkg(t, `{"name":"pi-x","version":"1.0.0","bin":"./a.js"}`, map[string]string{
@@ -133,7 +135,7 @@ func TestDistributeExtensionPiExtensionsEntry(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-simplify","version":"0.2.3","pi":{"extensions":["dist/index.js"]}}`, map[string]string{
@@ -192,7 +194,7 @@ func TestDistributeExtensionBinaryBinDirectExec(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-native","version":"1.0.0","bin":"./server"}`, map[string]string{
@@ -235,7 +237,7 @@ func TestDistributeExtensionMainEntry(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	pkg := writePkg(t, `{"name":"pi-main","version":"1.0.0","main":"./dist/index.js"}`, map[string]string{
@@ -256,7 +258,7 @@ func TestDistributeExtensionNoBin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("extension install not supported on windows")
 	}
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	pkg := writePkg(t, `{"name":"pi-nobin","version":"1.0.0"}`, nil)
 	if _, err := DistributeExtension(pkg, "pi-nobin"); err == nil {
 		t.Fatal("DistributeExtension without bin = nil error, want error")

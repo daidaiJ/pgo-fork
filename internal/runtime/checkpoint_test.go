@@ -2,7 +2,7 @@ package runtime
 
 // Tests for checkpoint persistence (#480): the write→load round-trip, the
 // missing-file sentinel, and the summarize→Checkpoint bridge. They drive the
-// real filesystem via t.TempDir(), matching the session/memory test style.
+// real filesystem via testenv.Dir(t), matching the session/memory test style.
 
 import (
 	"context"
@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestCheckpointRoundTrip is the core acceptance check: a written checkpoint
 // loads back with watermark, summary, createdAt, and covered count preserved.
 func TestCheckpointRoundTrip(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	created := time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
 	cp := Checkpoint{
 		Watermark:       42,
@@ -55,7 +56,7 @@ func TestCheckpointRoundTrip(t *testing.T) {
 // TestCheckpointFileLayoutAndFrontmatter verifies the file lands at the expected
 // path and carries the repo's name/description/metadata.type=checkpoint convention.
 func TestCheckpointFileLayoutAndFrontmatter(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	cp := Checkpoint{Watermark: 3, Summary: "body text", CreatedAt: time.Now().UTC(), CoveredMessages: 3}
 	if err := WriteCheckpoint("s1", root, cp); err != nil {
 		t.Fatalf("WriteCheckpoint: %v", err)
@@ -83,7 +84,7 @@ func TestCheckpointFileLayoutAndFrontmatter(t *testing.T) {
 // TestLoadCheckpointMissing verifies a missing checkpoint is the (nil,false,nil)
 // sentinel, not an error — callers treat "no checkpoint yet" as normal.
 func TestLoadCheckpointMissing(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	cp, ok, err := LoadCheckpoint("nope", root)
 	if err != nil {
 		t.Fatalf("LoadCheckpoint on missing file: err = %v, want nil", err)

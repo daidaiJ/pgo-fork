@@ -11,6 +11,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestCopyUnavailableWhenNoUtility verifies Copy returns ErrUnavailable and
@@ -18,7 +20,7 @@ import (
 // contract the REPL relies on to degrade to printing.
 func TestCopyUnavailableWhenNoUtility(t *testing.T) {
 	// Point PATH at an empty dir so exec.LookPath finds no pbcopy/xclip/etc.
-	empty := t.TempDir()
+	empty := testenv.Dir(t)
 	t.Setenv("PATH", empty)
 
 	if Available() {
@@ -38,7 +40,7 @@ func TestCopyUsesUtilityOnPath(t *testing.T) {
 	if len(cands) == 0 {
 		t.Skip("no clipboard candidates for this platform")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	name := cands[0].name
 	if os.PathSeparator == '\\' {
 		t.Skip("fake-executable planting not supported on Windows in this test")

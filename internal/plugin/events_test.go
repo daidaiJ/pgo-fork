@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // eventPluginSrc declares a subscription to two event types and appends every
@@ -94,7 +95,7 @@ func TestEventNotifierDeliversSubscribedOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell/exec plugin test is unix-oriented")
 	}
-	logPath := filepath.Join(t.TempDir(), "events.log")
+	logPath := filepath.Join(testenv.Dir(t), "events.log")
 	t.Setenv("PIGO_EVENT_LOG", logPath)
 
 	bin := buildTestPlugin(t, "watcher", eventPluginSrc)

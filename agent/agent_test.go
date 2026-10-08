@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/agent"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // hermetic points provider/skill/plugin discovery at throwaway dirs and supplies
@@ -15,7 +16,7 @@ import (
 func hermetic(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 }
 
 func contains(set []string, name string) bool {

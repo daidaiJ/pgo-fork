@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // guardedContext returns a context carrying an AgentContext with a fresh
@@ -35,7 +36,7 @@ func ledgerRead(t *testing.T, ctx context.Context, dir, path string) agentcore.A
 }
 
 func TestEditGuardRejectsUnreadFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	seedFile(t, dir, "f.txt", "alpha\n")
 	tool := &EditTool{Root: dir}
 	res := runEditWithCtx(t, guardedContext(), tool, map[string]any{"path": "f.txt", "old_string": "alpha", "new_string": "beta"})
@@ -49,7 +50,7 @@ func TestEditGuardRejectsUnreadFile(t *testing.T) {
 }
 
 func TestEditGuardPassesAfterRead(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	ctx := guardedContext()
 	ledgerRead(t, ctx, dir, "f.txt")
 	tool := &EditTool{Root: dir}
@@ -65,7 +66,7 @@ func TestEditGuardPassesAfterRead(t *testing.T) {
 }
 
 func TestEditGuardRejectsFingerprintMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	ctx := guardedContext()
 	seedFile(t, dir, "f.txt", "alpha\n")
 	ledgerRead(t, ctx, dir, "f.txt")
@@ -80,7 +81,7 @@ func TestEditGuardRejectsFingerprintMismatch(t *testing.T) {
 }
 
 func TestEditGuardWriteProvesResidency(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	ctx := guardedContext()
 	tool := &WriteTool{Root: dir}
 	// Write without any read: legal (file creation path), and it proves
@@ -99,7 +100,7 @@ func TestEditGuardWriteProvesResidency(t *testing.T) {
 func TestEditGuardTruncatedReadArmsResidency(t *testing.T) {
 	// Spec D-2: qwen's "partial read does not re-arm" is not adopted — a
 	// truncated read still carries real current content, so it arms residency.
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	content := strings.Repeat("line\n", 3000)
 	seedFile(t, dir, "f.txt", content)
 	ctx := guardedContext()
@@ -114,7 +115,7 @@ func TestEditGuardTruncatedReadArmsResidency(t *testing.T) {
 func TestEditGuardNilLedgerSkipsGuard(t *testing.T) {
 	// Tools used outside a loop carry no ledger (AgentContext absent or
 	// ReadFiles nil): behavior must be unchanged from pre-T3.5.
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	seedFile(t, dir, "f.txt", "alpha\n")
 	tool := &EditTool{Root: dir}
 	res := runEditWithCtx(t, context.Background(), tool, map[string]any{"path": "f.txt", "old_string": "alpha", "new_string": "beta"})

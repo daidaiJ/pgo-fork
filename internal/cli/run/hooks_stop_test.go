@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/hooks"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func stopDispatcher(t *testing.T, event, cmd string) *hooks.Dispatcher {
@@ -13,7 +14,7 @@ func stopDispatcher(t *testing.T, event, cmd string) *hooks.Dispatcher {
 	set := hooks.HookSet{
 		event: {{Matcher: "*", Hooks: []hooks.HookConfig{{Command: cmd}}}},
 	}
-	d := hooks.NewDispatcher(set, t.TempDir(), nil)
+	d := hooks.NewDispatcher(set, testenv.Dir(t), nil)
 	if d == nil {
 		t.Fatal("expected non-nil dispatcher")
 	}

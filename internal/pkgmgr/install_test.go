@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // fakeNPMForInstall writes a fake `npm` onto PATH that packs a prebuilt tarball
 // (built from files) into --pack-destination, mimicking `npm pack`.
 func fakeNPMForInstall(t *testing.T, tarballFiles map[string]string, packName string) {
 	t.Helper()
-	binDir := t.TempDir()
+	binDir := testenv.Dir(t)
 	srcTarball := filepath.Join(binDir, "src.tgz")
 	makeTarGz(t, srcTarball, tarballFiles)
 	script := `#!/bin/sh
@@ -36,7 +38,7 @@ func TestInstallExtensionEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake npm shell script + extension install are POSIX-only")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	fakeNPMForInstall(t, map[string]string{
@@ -84,8 +86,8 @@ func TestInstallMultiType(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-only")
 	}
-	home := t.TempDir()
-	skills := t.TempDir()
+	home := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	t.Setenv("PIGO_SKILLS_DIR", skills)
 
@@ -116,7 +118,7 @@ func TestInstallUnrecognized(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-only")
 	}
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 
 	fakeNPMForInstall(t, map[string]string{
@@ -134,7 +136,7 @@ func TestInstallUnrecognized(t *testing.T) {
 
 // TestInstallBadRef verifies an invalid reference is rejected before any fetch.
 func TestInstallBadRef(t *testing.T) {
-	if _, err := Install("github:owner/repo", filepath.Join(t.TempDir(), "packages.json"), nil); err == nil {
+	if _, err := Install("github:owner/repo", filepath.Join(testenv.Dir(t), "packages.json"), nil); err == nil {
 		t.Fatal("Install with non-npm ref = nil error, want error")
 	}
 }

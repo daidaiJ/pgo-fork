@@ -8,6 +8,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // promptDispatcher builds a Dispatcher for a single UserPromptSubmit matcher.
@@ -16,7 +17,7 @@ func promptDispatcher(t *testing.T, cmd string) *hooks.Dispatcher {
 	set := hooks.HookSet{
 		"UserPromptSubmit": {{Matcher: "*", Hooks: []hooks.HookConfig{{Command: cmd}}}},
 	}
-	d := hooks.NewDispatcher(set, t.TempDir(), nil)
+	d := hooks.NewDispatcher(set, testenv.Dir(t), nil)
 	if d == nil {
 		t.Fatal("expected non-nil dispatcher")
 	}

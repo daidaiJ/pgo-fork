@@ -3,12 +3,14 @@ package memory
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // openTemp opens a Store backed by a temp-file DB and registers cleanup.
 func openTemp(t *testing.T) *Store {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	dbPath := filepath.Join(dir, "sub", "memory.db") // sub/ must be created by Open
 	st, err := Open(dbPath, dir, "")
 	if err != nil {
@@ -138,7 +140,7 @@ func TestTriggerSyncInsertDeleteUpdate(t *testing.T) {
 // TestOpenIdempotent verifies that running the migration twice on the same file
 // is safe and preserves data.
 func TestOpenIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	dbPath := filepath.Join(dir, "memory.db")
 
 	st1, err := Open(dbPath, dir, "")

@@ -7,11 +7,12 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestInstallHooksEmptyShortCircuits(t *testing.T) {
 	var cfg runtime.RunConfig
-	if d := InstallHooks(&cfg, nil, HookDeps{ProjectDir: t.TempDir()}); d != nil {
+	if d := InstallHooks(&cfg, nil, HookDeps{ProjectDir: testenv.Dir(t)}); d != nil {
 		t.Fatalf("expected nil dispatcher for empty hook set, got %v", d)
 	}
 	if d := InstallHooks(&cfg, hooks.HookSet{}, HookDeps{}); d != nil {
@@ -24,7 +25,7 @@ func TestInstallHooksBuildsDispatcher(t *testing.T) {
 		"PreToolUse": {{Matcher: "*", Hooks: []hooks.HookConfig{{Command: "true"}}}},
 	}
 	var cfg runtime.RunConfig
-	d := InstallHooks(&cfg, set, HookDeps{ProjectDir: t.TempDir()})
+	d := InstallHooks(&cfg, set, HookDeps{ProjectDir: testenv.Dir(t)})
 	if d == nil {
 		t.Fatal("expected non-nil dispatcher for non-empty hook set")
 	}

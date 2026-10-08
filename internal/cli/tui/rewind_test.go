@@ -10,13 +10,14 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // rewindFixture builds a model with an active session holding one persisted
 // user turn ("hello there") as the session's first branch entry.
 func rewindFixture(t *testing.T) Model {
 	t.Helper()
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

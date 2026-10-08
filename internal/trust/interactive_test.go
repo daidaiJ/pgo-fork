@@ -16,6 +16,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // newTrustManagerAt builds a Manager backed by path.
@@ -32,7 +33,7 @@ func newTrustManagerAt(t *testing.T, path string) *Manager {
 // manager plus its path (so a test can reload to verify persistence).
 func newTrustManager(t *testing.T) (*Manager, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "trust.json")
+	path := filepath.Join(testenv.Dir(t), "trust.json")
 	return newTrustManagerAt(t, path), path
 }
 
@@ -43,7 +44,7 @@ func readerOf(s string) *bufio.Reader { return bufio.NewReader(strings.NewReader
 // directory) persists a Trusted decision for cwd.
 func TestEnsureTrustPromptTrustedThisDir(t *testing.T) {
 	mgr, _ := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	var out bytes.Buffer
 	EnsureTrustPrompt(&out, readerOf("1\n1\n"), mgr, cwd)
 
@@ -59,7 +60,7 @@ func TestEnsureTrustPromptTrustedThisDir(t *testing.T) {
 // (parent) persists an Untrusted decision for the parent directory.
 func TestEnsureTrustPromptRejectParent(t *testing.T) {
 	mgr, _ := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	parent := filepath.Dir(cwd)
 	EnsureTrustPrompt(&bytes.Buffer{}, readerOf("3\n2\n"), mgr, cwd)
 
@@ -72,7 +73,7 @@ func TestEnsureTrustPromptRejectParent(t *testing.T) {
 // trust without persisting: IsTrusted is true now but false after a reload.
 func TestEnsureTrustPromptJustOnce(t *testing.T) {
 	mgr, path := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	EnsureTrustPrompt(&bytes.Buffer{}, readerOf("2\n"), mgr, cwd)
 
 	if !mgr.IsTrusted(cwd) {
@@ -89,7 +90,7 @@ func TestEnsureTrustPromptJustOnce(t *testing.T) {
 // exists, EnsureTrustPrompt is a no-op: it writes nothing and reads nothing.
 func TestEnsureTrustPromptSkipsWhenDecided(t *testing.T) {
 	mgr, _ := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	if err := mgr.SetDecision(cwd, Trusted); err != nil {
 		t.Fatalf("SetDecision: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestEnsureTrustPromptSkipsWhenDecided(t *testing.T) {
 // reload — --approve is per-run, not a saved decision.
 func TestEstablishTrustApprove(t *testing.T) {
 	mgr, path := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	var out bytes.Buffer
 	EstablishTrust(&out, readerOf(""), mgr, cwd, true)
 
@@ -127,7 +128,7 @@ func TestEstablishTrustApprove(t *testing.T) {
 // defers to the first-launch prompt (which runs for an undecided directory).
 func TestEstablishTrustWithoutApprove(t *testing.T) {
 	mgr, _ := newTrustManager(t)
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	var out bytes.Buffer
 	// "2\n" answers the just-once prompt; if the prompt did not run, this input
 	// would be left unread and IsTrusted would stay false.
@@ -204,7 +205,7 @@ func TestToolCallSummaryTruncates(t *testing.T) {
 // trusted dir -> allow; untrusted + deny -> block; untrusted + always -> allow
 // and grant session trust so the next call is allowed without a prompt.
 func TestTrustBeforeToolCallGating(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	mu := &sync.Mutex{}
 	call := agentcore.AgentToolCall{Name: "write", Arguments: []byte(`{"path":"/tmp/x"}`)}
 
@@ -253,7 +254,7 @@ func TestTrustBeforeToolCallGating(t *testing.T) {
 // TestTrustBeforeToolCallSkipsNonSideEffect verifies read-only tools are never
 // gated, even in an untrusted directory.
 func TestTrustBeforeToolCallSkipsNonSideEffect(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	mgr, _ := newTrustManager(t)
 	mu := &sync.Mutex{}
 	hook := BeforeToolCall(mgr, cwd, readerOf(""), &bytes.Buffer{}, mu)
@@ -270,7 +271,7 @@ func TestTrustBeforeToolCallSkipsNonSideEffect(t *testing.T) {
 // ClearSessionTrust, an active "always"/once grant would keep IsTrusted true
 // until restart), and an unknown arg yields usage.
 func TestRegisterTrustCommand(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := testenv.Dir(t)
 	mgr, _ := newTrustManager(t)
 	reg := runtime.NewSlashRegistry()
 	RegisterCommand(reg, mgr, cwd)
@@ -293,7 +294,7 @@ func TestRegisterTrustCommand(t *testing.T) {
 
 	// Fresh dir: once grants session trust (in-memory), off must revoke it and
 	// persist Untrusted so IsTrusted is false immediately.
-	cwd2 := t.TempDir()
+	cwd2 := testenv.Dir(t)
 	mgr2, _ := newTrustManager(t)
 	reg2 := runtime.NewSlashRegistry()
 	RegisterCommand(reg2, mgr2, cwd2)

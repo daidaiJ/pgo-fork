@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // searchHits reopens the memory store that Runner.Run built at
@@ -42,7 +43,7 @@ func searchHits(t *testing.T, root, query string) map[string]bool {
 // assertions check that stale tokens vanish from the index while the compacted
 // token appears.
 func TestReconcileConvergesAfterConsolidation(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 
 	// Seed distinct (non-duplicate, path-ref-free) fragments so the deterministic
 	// dedupe/path-clean passes are no-ops and the Consolidator drives the change.

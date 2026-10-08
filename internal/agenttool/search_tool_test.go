@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -29,7 +30,7 @@ func runSearch(t *testing.T, tool agentcore.AgentTool, args map[string]any) agen
 // seedTree writes a small directory tree with a .gitignore for the search tests.
 func seedTree(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	mustWrite := func(rel, content string) {
 		p := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -178,7 +179,7 @@ func TestSearchToolModes(t *testing.T) {
 }
 
 func TestGitignoreNegation(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.txt\n!keep.txt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestGitignoreNegation(t *testing.T) {
 // rule matches only at the root; and a slash-bearing pattern matches the full
 // relative path.
 func TestGitignoreMatchModes(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	// node_modules: non-anchored → matches any segment (nested too).
 	// /root.log: anchored → only at repo root.
 	// a/b.tmp: contains "/" → full-path match.

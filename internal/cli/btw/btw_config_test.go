@@ -13,6 +13,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // fakeHost satisfies cli.Host by embedding the interface (so every method is
@@ -31,7 +32,7 @@ func (f fakeHost) Live() *cli.LiveConfig { return f.live }
 // temp dir is cleaned up by t.TempDir. It restores PIGO_HOME after the test.
 func withBtwConfig(t *testing.T, contents string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", dir)
 	if contents != "" {
 		if err := os.WriteFile(filepath.Join(dir, "btw.json"), []byte(contents), 0o644); err != nil {

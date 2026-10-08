@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // pngBytes is a minimal 1x1 PNG (valid signature + IHDR) so mime detection and
@@ -26,7 +27,7 @@ var pngBytes = []byte{
 
 func writeTempPNG(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "pixel.png")
 	if err := os.WriteFile(path, pngBytes, 0o644); err != nil {
 		t.Fatalf("write temp png: %v", err)

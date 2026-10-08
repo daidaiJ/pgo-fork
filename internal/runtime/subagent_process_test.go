@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/provider"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // errorTurn scripts a turn whose final message stops on StopReasonError, so a
@@ -268,7 +269,7 @@ func TestSubAgentProcessDefaultCall(t *testing.T) {
 // imports, so it stays a standalone main package).
 func buildSubAgentHelper(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	srcPath := filepath.Join(dir, "subagent_helper.go")
 	if err := os.WriteFile(srcPath, []byte(subAgentHelperSrc), 0o644); err != nil {
 		t.Fatalf("write helper source: %v", err)

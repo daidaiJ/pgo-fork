@@ -13,6 +13,7 @@ import (
 	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writeSkill creates a skill markdown file with the given frontmatter body.
@@ -36,9 +37,9 @@ func findSkill(skills []*runtime.Skill, name string) *runtime.Skill {
 // TestLoadSkillsFromDir verifies skills in PIGO_SKILLS_DIR are loaded and expose
 // a /skill-name slash command whose expansion is the skill body.
 func TestLoadSkillsFromDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", dir)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	writeSkill(t, dir, "greet.md", "---\nname: greet\ndescription: say hello\n---\nYou are a friendly greeter.")
 
 	skills, err := run.LoadSkills(false)
@@ -67,9 +68,9 @@ func TestLoadSkillsFromDir(t *testing.T) {
 // TestLoadSkillsNoSkills verifies --no-skills skips discovery entirely: no
 // skills are loaded and the skills dir is left untouched (no bootstrap).
 func TestLoadSkillsNoSkills(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", dir)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 
 	skills, err := run.LoadSkills(true)
 	if err != nil {
@@ -90,10 +91,10 @@ func TestLoadSkillsNoSkills(t *testing.T) {
 // TestBuildSlashRegistryIncludesSkills verifies buildSlashRegistry wires the
 // pre-loaded skills into the registry so /skill-name resolves.
 func TestBuildSlashRegistryIncludesSkills(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", dir)
 	// Keep the user-commands path from touching a real home dir.
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	writeSkill(t, dir, "summarize.md", "---\nname: summarize\ndescription: summarize input\n---\nSummarize the following: $ARGUMENTS")
 
 	skills, err := run.LoadSkills(false)
@@ -123,7 +124,7 @@ func TestBuildSlashRegistryIncludesSkills(t *testing.T) {
 // under --no-skills, where loadSkills returns nil), a /skill-name command is not
 // registered even though a skill file exists on disk (mirrors pi's --no-skills).
 func TestBuildSlashRegistryNoSkills(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 
 	reg, err := prompts.BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil, prompts.PromptTemplateSources{})
 	if err != nil {
@@ -140,9 +141,13 @@ func TestBuildSlashRegistryNoSkills(t *testing.T) {
 // PIGO_SKILLS_DIR the built-in skills are installed and loaded (first-run
 // bootstrap), so e.g. /prd resolves without any manual install.
 func TestLoadSkillsBootstrapsBuiltinSkills(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", dir)
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
+// FileConfigPath resolves via XDG/home — it does not honor PIGO_HOME — so without
+// this the host real [skills] disabled list (weather is disabled on this
+// machine) leaks in and filters the bootstrap-ed skills.
+t.Setenv("XDG_CONFIG_HOME", testenv.Dir(t))
 
 	skills, err := run.LoadSkills(false)
 	if err != nil {

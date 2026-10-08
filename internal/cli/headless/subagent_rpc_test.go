@@ -18,13 +18,14 @@ import (
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/jsonrpc"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestFilterBuiltinTools verifies the subprocess tool filter: an empty name
 // list keeps all builtins, a subset keeps only the named tools, and unknown
 // names are silently ignored.
 func TestFilterBuiltinTools(t *testing.T) {
-	all := run.BuiltinTools(t.TempDir(), false)
+	all := run.BuiltinTools(testenv.Dir(t), false)
 	if len(all) == 0 {
 		t.Fatal("BuiltinTools returned no tools")
 	}

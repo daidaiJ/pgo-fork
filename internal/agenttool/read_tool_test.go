@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func runRead(t *testing.T, tool *ReadTool, args map[string]any) (agentcore.AgentToolResult, bool) {
@@ -35,7 +36,7 @@ func resultText(res agentcore.AgentToolResult) string {
 }
 
 func TestReadToolBasic(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "hello.txt")
 	if err := os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -53,7 +54,7 @@ func TestReadToolBasic(t *testing.T) {
 }
 
 func TestReadToolOffsetLimit(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	var sb strings.Builder
 	for i := 1; i <= 10; i++ {
 		sb.WriteString("row\n")
@@ -75,7 +76,7 @@ func TestReadToolOffsetLimit(t *testing.T) {
 }
 
 func TestReadToolMissingFile(t *testing.T) {
-	tool := &ReadTool{Root: t.TempDir()}
+	tool := &ReadTool{Root: testenv.Dir(t)}
 	res, _ := runRead(t, tool, map[string]any{"path": "nope.txt"})
 	if !strings.Contains(resultText(res), "does not exist") {
 		t.Errorf("expected does-not-exist error, got %q", resultText(res))
@@ -83,7 +84,7 @@ func TestReadToolMissingFile(t *testing.T) {
 }
 
 func TestReadToolPathTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	// A secret sits outside the root.
 	parent := filepath.Dir(dir)
 	secret := filepath.Join(parent, "secret.txt")
@@ -104,7 +105,7 @@ func TestReadToolPathTraversal(t *testing.T) {
 }
 
 func TestReadToolDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	sub := filepath.Join(dir, "subdir")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -117,7 +118,7 @@ func TestReadToolDirectory(t *testing.T) {
 }
 
 func TestReadToolTruncation(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	var sb strings.Builder
 	for i := 0; i < readToolMaxLines+50; i++ {
 		sb.WriteString("x\n")
@@ -134,7 +135,7 @@ func TestReadToolTruncation(t *testing.T) {
 }
 
 func TestReadToolMissingPathArg(t *testing.T) {
-	tool := &ReadTool{Root: t.TempDir()}
+	tool := &ReadTool{Root: testenv.Dir(t)}
 	res, _ := runRead(t, tool, map[string]any{})
 	if !strings.Contains(resultText(res), "path is required") {
 		t.Errorf("expected path-required error, got %q", resultText(res))
@@ -142,9 +143,9 @@ func TestReadToolMissingPathArg(t *testing.T) {
 }
 
 func TestReadToolExtraRootsAllowsTrustedOutsidePath(t *testing.T) {
-	work := t.TempDir()
+	work := testenv.Dir(t)
 	// A skill file lives OUTSIDE the workspace root (mirrors ~/.agents/skills).
-	skills := t.TempDir()
+	skills := testenv.Dir(t)
 	skillFile := filepath.Join(skills, "weather", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -169,10 +170,10 @@ func TestReadToolExtraRootsAllowsTrustedOutsidePath(t *testing.T) {
 }
 
 func TestReadToolExtraRootsStillBlocksUntrustedPath(t *testing.T) {
-	work := t.TempDir()
-	skills := t.TempDir()
+	work := testenv.Dir(t)
+	skills := testenv.Dir(t)
 	// A secret sits outside BOTH the workspace root and the extra root.
-	other := t.TempDir()
+	other := testenv.Dir(t)
 	secret := filepath.Join(other, "secret.txt")
 	if err := os.WriteFile(secret, []byte("top secret"), 0o644); err != nil {
 		t.Fatalf("write secret: %v", err)

@@ -17,6 +17,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // blockingPreToolUse is a hook set whose PreToolUse hook exits 2 (Claude Code
@@ -43,7 +44,7 @@ func fireBeforeToolCall(cfg *runtime.RunConfig) bool {
 // TestHookConvergenceBothPaths asserts the same PreToolUse hook set fires in both
 // driver wiring paths: the one-shot headless path and the multi-turn REPL path.
 func TestHookConvergenceBothPaths(t *testing.T) {
-	deps := HookDeps{SessionID: "s1", ProjectDir: t.TempDir()}
+	deps := HookDeps{SessionID: "s1", ProjectDir: testenv.Dir(t)}
 	set := blockingPreToolUse()
 
 	// Headless / subagent_rpc path: InstallDriverHooks wires the seams all-in-one.
@@ -76,7 +77,7 @@ func TestHookConvergenceBothPaths(t *testing.T) {
 // wiring path installs a BeforeToolCall seam, so both drivers behave exactly as
 // they did before hooks existed.
 func TestHookConvergenceNoHooksUnchanged(t *testing.T) {
-	deps := HookDeps{ProjectDir: t.TempDir()}
+	deps := HookDeps{ProjectDir: testenv.Dir(t)}
 
 	t.Run("headless", func(t *testing.T) {
 		var cfg runtime.RunConfig

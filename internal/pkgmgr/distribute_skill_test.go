@@ -4,17 +4,19 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestDistributeSkill verifies a skill package copies into skillsDir/<name>/
 // with its SKILL.md and supporting files, discoverable by LoadSkillsDir's
 // nested layout.
 func TestDistributeSkill(t *testing.T) {
-	skills := t.TempDir()
+	skills := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", skills)
 
 	pkg := writePkg(t, `{"name":"pi-writing","version":"1.0.0","pi":{"type":"skill"}}`, map[string]string{
-		"SKILL.md":          "---\nname: writing\ndescription: help writing\n---\nbody",
+		"SKILL.md":           "---\nname: writing\ndescription: help writing\n---\nbody",
 		"references/tips.md": "tips",
 	})
 
@@ -45,7 +47,7 @@ func TestDistributeSkill(t *testing.T) {
 
 // TestDistributeSkillReinstallReplaces verifies reinstalling clears stale files.
 func TestDistributeSkillReinstallReplaces(t *testing.T) {
-	skills := t.TempDir()
+	skills := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", skills)
 
 	pkg1 := writePkg(t, `{"name":"pi-s","version":"1.0.0"}`, map[string]string{
@@ -68,7 +70,7 @@ func TestDistributeSkillReinstallReplaces(t *testing.T) {
 
 // TestDistributeSkillNoSkillMd verifies a package without SKILL.md errors.
 func TestDistributeSkillNoSkillMd(t *testing.T) {
-	t.Setenv("PIGO_SKILLS_DIR", t.TempDir())
+	t.Setenv("PIGO_SKILLS_DIR", testenv.Dir(t))
 	pkg := writePkg(t, `{"name":"pi-noskill","version":"1.0.0"}`, nil)
 	if _, err := DistributeSkill(pkg, "pi-noskill"); err == nil {
 		t.Fatal("DistributeSkill without SKILL.md = nil error, want error")

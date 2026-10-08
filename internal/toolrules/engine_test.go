@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // quoteJSON renders s as a JSON string literal.
@@ -150,8 +151,8 @@ func TestEngineOrderTable(t *testing.T) {
 	}
 	// Word boundary: "tr" must not match "truncate".
 	e2 := newTestEngine(t, EngineConfig{
-		Cwd: "/w",
-		Effects: EffectTable([]agentcore.AgentTool{&fakeTool{name: "bash"}}),
+		Cwd:          "/w",
+		Effects:      EffectTable([]agentcore.AgentTool{&fakeTool{name: "bash"}}),
 		SessionRules: []Rule{{Tool: "bash", Pattern: "tr", Action: ActionAllow}},
 	})
 	if dec := e2.BeforeToolCall(ctx, call("bash", `{"command":"truncate -s 0 f"}`)); dec == nil || !dec.Block {
@@ -165,7 +166,7 @@ func TestEngineOrderTable(t *testing.T) {
 // TestEngineUntrustedAsk covers the untrusted fallback: ask approve/deny and
 // rule settlement.
 func TestEngineUntrustedAsk(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	var askDecision AskDecision
 	var settled Rule
 	e := newTestEngine(t, EngineConfig{
@@ -214,10 +215,10 @@ func TestEngineNilAskFailsClosed(t *testing.T) {
 // TestEngineSelfEdit locks the self-edit surface: rules and trust never
 // auto-approve a write to pigo's own configuration.
 func TestEngineSelfEdit(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	trustFile := filepath.Join(home, "trust.json")
 	e := newTestEngine(t, EngineConfig{
-		Cwd:     t.TempDir(),
+		Cwd:     testenv.Dir(t),
 		Effects: EffectTable([]agentcore.AgentTool{&fakeTool{name: "write"}, &fakeTool{name: "bash"}}),
 		SessionRules: []Rule{
 			{Tool: "write", Action: ActionAllow},
@@ -256,12 +257,12 @@ func TestEngineSelfEdit(t *testing.T) {
 // TestSelfEditSymlinkPenetration: a symlink pointing at a protected file hits
 // the surface (qwen symlink-penetration check).
 func TestSelfEditSymlinkPenetration(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	trustFile := filepath.Join(home, "trust.json")
 	if err := os.WriteFile(trustFile, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(t.TempDir(), "link.json")
+	link := filepath.Join(testenv.Dir(t), "link.json")
 	if err := os.Symlink(trustFile, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
@@ -285,7 +286,7 @@ func TestSelfEditSymlinkPenetration(t *testing.T) {
 
 // TestStoreRoundTrip covers persistence: add, dedupe, reload.
 func TestStoreRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "permissions.json")
+	path := filepath.Join(testenv.Dir(t), "permissions.json")
 	s, err := LoadStore(path)
 	if err != nil {
 		t.Fatalf("LoadStore: %v", err)
@@ -312,7 +313,7 @@ func TestStoreRoundTrip(t *testing.T) {
 
 // TestStoreCorruptFile: a malformed store is a hard error.
 func TestStoreCorruptFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "permissions.json")
+	path := filepath.Join(testenv.Dir(t), "permissions.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}

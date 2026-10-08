@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // seedLedgerFile writes a file and returns its resolved path plus stat, the
@@ -25,7 +27,7 @@ func seedLedgerFile(t *testing.T, dir, name, content string) (string, string, ti
 
 func TestReadFileStateRecordAndResidency(t *testing.T) {
 	s := NewReadFileState()
-	resolved, arg, mod, size := seedLedgerFile(t, t.TempDir(), "f.txt", "hello\n")
+	resolved, arg, mod, size := seedLedgerFile(t, testenv.Dir(t), "f.txt", "hello\n")
 
 	if s.Known(resolved) || s.Residency(resolved) {
 		t.Fatal("empty ledger must know nothing")
@@ -54,7 +56,7 @@ func TestReadFileStateRecordAndResidency(t *testing.T) {
 
 func TestReadFileStateMutationProvesResidency(t *testing.T) {
 	s := NewReadFileState()
-	resolved, arg, mod, size := seedLedgerFile(t, t.TempDir(), "f.txt", "hello\n")
+	resolved, arg, mod, size := seedLedgerFile(t, testenv.Dir(t), "f.txt", "hello\n")
 	s.RecordRead(ReadRecord{CallID: "call-1", ArgPath: arg, ResolvedPath: resolved, Content: "hello\n", ModTime: mod, Size: size})
 	s.RevokeCall("call-1")
 
@@ -81,7 +83,7 @@ func TestReadFileStateTwoReadCallsPartialRevoke(t *testing.T) {
 	// The microcompaction-reversal case: two reads of the same file, one
 	// evicted — the newer read keeps the file resident.
 	s := NewReadFileState()
-	resolved, arg, mod, size := seedLedgerFile(t, t.TempDir(), "f.txt", "hello\n")
+	resolved, arg, mod, size := seedLedgerFile(t, testenv.Dir(t), "f.txt", "hello\n")
 	s.RecordRead(ReadRecord{CallID: "call-1", ArgPath: arg, ResolvedPath: resolved, Content: "a", ModTime: mod, Size: size})
 	s.RecordRead(ReadRecord{CallID: "call-2", ArgPath: arg, ResolvedPath: resolved, Content: "b", ModTime: mod, Size: size})
 	s.RevokeCall("call-1")
@@ -100,7 +102,7 @@ func TestReadFileStateRevokeAllResidency(t *testing.T) {
 	// #4239 "cannot reverse-map → revoke everything": every entry loses
 	// residency, fingerprints and snapshots survive.
 	s := NewReadFileState()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	for _, name := range []string{"a.txt", "b.txt"} {
 		resolved, arg, mod, size := seedLedgerFile(t, dir, name, "x\n")
 		s.RecordRead(ReadRecord{CallID: "call-" + name, ArgPath: arg, ResolvedPath: resolved, Content: "x\n", ModTime: mod, Size: size})
@@ -118,7 +120,7 @@ func TestReadFileStateRevokeAllResidency(t *testing.T) {
 
 func TestReadFileStateSnapshotCapAndArgPathLookup(t *testing.T) {
 	s := NewReadFileState()
-	resolved, arg, mod, size := seedLedgerFile(t, t.TempDir(), "big.txt", strings.Repeat("x", 20*1024))
+	resolved, arg, mod, size := seedLedgerFile(t, testenv.Dir(t), "big.txt", strings.Repeat("x", 20*1024))
 	s.RecordRead(ReadRecord{CallID: "call-1", ArgPath: arg, ResolvedPath: resolved, Content: strings.Repeat("x", 20*1024), ModTime: mod, Size: size})
 
 	got, ok := s.ContentByArgPath(arg)
@@ -137,7 +139,7 @@ func TestReadFileStateRevokeEvictedIdentified(t *testing.T) {
 	// Two files; the evicted read calls are identifiable via the reverse
 	// index → per-file revocation, the other file keeps residency.
 	s := NewReadFileState()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	aPath, aArg, aMod, aSize := seedLedgerFile(t, dir, "a.go", "a\n")
 	bPath, bArg, bMod, bSize := seedLedgerFile(t, dir, "b.go", "b\n")
 	s.RecordRead(ReadRecord{CallID: "call-a1", ArgPath: aArg, ResolvedPath: aPath, Content: "a\n", ModTime: aMod, Size: aSize})
@@ -158,7 +160,7 @@ func TestReadFileStateRevokeEvictedUnmappableRevokeAll(t *testing.T) {
 	// write/edit proven residency survives (those results are whitelist-exempt
 	// from eviction, so the evidence is still in the history).
 	s := NewReadFileState()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	rPath, rArg, rMod, rSize := seedLedgerFile(t, dir, "r.go", "r\n")
 	wPath, _, wMod, wSize := seedLedgerFile(t, dir, "w.go", "w\n")
 	s.RecordRead(ReadRecord{CallID: "old-call", ArgPath: rArg, ResolvedPath: rPath, Content: "r\n", ModTime: rMod, Size: rSize})

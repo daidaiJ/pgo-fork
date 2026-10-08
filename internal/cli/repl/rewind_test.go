@@ -14,6 +14,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // seedTurn persists one user turn as the session's first branch entry and
@@ -37,7 +38,7 @@ func TestREPLRewindListsPoints(t *testing.T) {
 	deps.snap = agenttool.NewFileSnapshotRecorder()
 	seedTurn(t, &deps, "add feature X")
 
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	f := filepath.Join(dir, "a.txt")
 	if err := os.WriteFile(f, []byte("v0"), 0o644); err != nil {
 		t.Fatal(err)
@@ -64,7 +65,7 @@ func TestREPLRewindRestoresFiles(t *testing.T) {
 	deps.snap = agenttool.NewFileSnapshotRecorder()
 	seedTurn(t, &deps, "edit a.txt")
 
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	f := filepath.Join(dir, "a.txt")
 	if err := os.WriteFile(f, []byte("original"), 0o644); err != nil {
 		t.Fatal(err)

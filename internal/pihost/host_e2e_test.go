@@ -23,6 +23,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/pihost"
 	"github.com/smallnest/pigo/internal/plugin"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // piSDKProbe mirrors pihost.mjs's own SDK resolution (loadSdk): try a direct
@@ -105,7 +106,7 @@ func TestPiHostExtensionE2E(t *testing.T) {
 
 	// Exercise the EMBEDDED host bytes: write pihost.Script to a temp .mjs so
 	// the test drives exactly what pigo ships, not a stray on-disk copy.
-	tmp := t.TempDir()
+	tmp := testenv.Dir(t)
 	hostPath := filepath.Join(tmp, "pihost.mjs")
 	if err := os.WriteFile(hostPath, pihost.Script, 0o644); err != nil {
 		t.Fatalf("write embedded pihost.mjs: %v", err)

@@ -10,6 +10,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // recordingTool is a fake AgentTool that records whether Execute ran and echoes
@@ -38,7 +39,7 @@ func wiredConfig(t *testing.T, tool agentcore.AgentTool, set hooks.HookSet) runt
 	}
 	var cfg runtime.RunConfig
 	cfg.Batch.ToolExecutorConfig.Registry = reg
-	if d := InstallHooks(&cfg, set, HookDeps{SessionID: "s1", ProjectDir: t.TempDir()}); d == nil {
+	if d := InstallHooks(&cfg, set, HookDeps{SessionID: "s1", ProjectDir: testenv.Dir(t)}); d == nil {
 		t.Fatal("expected non-nil dispatcher")
 	}
 	return cfg
@@ -134,7 +135,7 @@ func TestPreToolUseUpdatedInputRewritesArgs(t *testing.T) {
 	}
 	var cfg runtime.RunConfig
 	cfg.Batch.ToolExecutorConfig.Registry = reg
-	if d := InstallHooks(&cfg, set, HookDeps{ProjectDir: t.TempDir()}); d == nil {
+	if d := InstallHooks(&cfg, set, HookDeps{ProjectDir: testenv.Dir(t)}); d == nil {
 		t.Fatal("expected non-nil dispatcher")
 	}
 

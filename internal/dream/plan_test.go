@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writeMemFile writes body to <root>/<rel> creating parent dirs, returning the
@@ -22,8 +24,8 @@ func writeMemFile(t *testing.T, root, rel, body string) string {
 }
 
 func TestBuildPlanEnumeratesGlobalAndProjectExcludingSessionsAndCheckpoint(t *testing.T) {
-	root := t.TempDir()
-	projectDir := t.TempDir()
+	root := testenv.Dir(t)
+	projectDir := testenv.Dir(t)
 	pid := projectID(projectDir)
 
 	gUser := writeMemFile(t, root, "global/user/prefs.md", "global user prefs\n")
@@ -57,7 +59,7 @@ func TestBuildPlanEnumeratesGlobalAndProjectExcludingSessionsAndCheckpoint(t *te
 }
 
 func TestBuildPlanEmptyRoot(t *testing.T) {
-	plan, err := BuildPlan(filepath.Join(t.TempDir(), "does-not-exist"), "")
+	plan, err := BuildPlan(filepath.Join(testenv.Dir(t), "does-not-exist"), "")
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
@@ -67,7 +69,7 @@ func TestBuildPlanEmptyRoot(t *testing.T) {
 }
 
 func TestExactDedupGrouping(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	same := "identical memory body\nline two\n"
 	a := writeMemFile(t, root, "global/user/a.md", same)
 	b := writeMemFile(t, root, "global/reference/b.md", same)
@@ -93,8 +95,8 @@ func TestExactDedupGrouping(t *testing.T) {
 }
 
 func TestPathValidation(t *testing.T) {
-	root := t.TempDir()
-	projectDir := t.TempDir()
+	root := testenv.Dir(t)
+	projectDir := testenv.Dir(t)
 
 	// A real file the memory references (relative to projectDir).
 	existingRel := "src/main.go"
@@ -151,8 +153,8 @@ func wantsURLReject(r string) bool {
 }
 
 func TestPathValidationIgnoresProseSlashes(t *testing.T) {
-	root := t.TempDir()
-	projectDir := t.TempDir()
+	root := testenv.Dir(t)
+	projectDir := testenv.Dir(t)
 	// Prose tokens with slashes but no file extension must not be flagged as
 	// missing local paths.
 	body := "We support TCP/IP and read/write access; input/output is N/A here.\n"
@@ -168,7 +170,7 @@ func TestPathValidationIgnoresProseSlashes(t *testing.T) {
 }
 
 func TestNearDupPairingThreshold(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// Two highly-overlapping (but not identical) bodies -> should pair.
 	writeMemFile(t, root, "global/user/a.md",
 		"the quick brown fox jumps over the lazy dog near the river bank today\n")
@@ -198,7 +200,7 @@ func TestNearDupPairingThreshold(t *testing.T) {
 }
 
 func TestNearDupSkipsExactDuplicates(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	same := "one two three four five six seven eight nine ten\n"
 	writeMemFile(t, root, "global/user/a.md", same)
 	writeMemFile(t, root, "global/user/b.md", same)

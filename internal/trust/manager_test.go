@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 )
 
@@ -21,7 +22,7 @@ import (
 // construction fails. Every test starts from an empty store.
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
-	m, err := NewManager(filepath.Join(t.TempDir(), "trust.json"))
+	m, err := NewManager(filepath.Join(testenv.Dir(t), "trust.json"))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -314,7 +315,7 @@ func TestSaveIsSorted(t *testing.T) {
 // TestMalformedFileIsError verifies a corrupted trust file is a hard error
 // rather than being silently overwritten, so the user's data is surfaced.
 func TestMalformedFileIsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "trust.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("write malformed file: %v", err)

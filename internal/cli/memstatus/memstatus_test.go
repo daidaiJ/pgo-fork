@@ -9,6 +9,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestRunMemoryDisabled renders the disabled state when the store is nil and
@@ -27,7 +28,7 @@ func TestRunMemoryDisabled(t *testing.T) {
 // TestRunMemoryEnabledCounts reconciles a store with entries and asserts the
 // report shows enabled status and per-scope counts.
 func TestRunMemoryEnabledCounts(t *testing.T) {
-	base := t.TempDir()
+	base := testenv.Dir(t)
 	root := filepath.Join(base, "mem")
 	if err := os.MkdirAll(filepath.Join(root, "global", "reference"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestCachedLatest(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", dir)
 
 	// No cache file yet → not fresh, empty latest.
@@ -42,7 +44,7 @@ func TestCachedLatest(t *testing.T) {
 }
 
 func TestStartBackgroundCheckDevNoWrite(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", dir)
 	// dev is not a release version → must not touch the network or write a cache.
 	StartBackgroundCheck("dev")

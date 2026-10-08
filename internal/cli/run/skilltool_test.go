@@ -14,12 +14,17 @@ import (
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestSetupEnvMaterializesSkillTools(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
-	skillsDir := t.TempDir()
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
+	// FileConfigPath ignores PIGO_HOME (registered config-path defect):
+	// isolate the XDG config too, or the host config's [skills] disabled
+	// bleeds into the loaded skill set.
+	t.Setenv("XDG_CONFIG_HOME", testenv.Dir(t))
+	skillsDir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 	writeSkillFile(t, skillsDir, "secret", "---\nname: secret\ndescription: hidden skill\ndisable-model-invocation: true\n---\nSlash only.")
@@ -39,8 +44,12 @@ func TestSetupEnvMaterializesSkillTools(t *testing.T) {
 
 func TestSetupEnvNoToolsSkipsSkillTools(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
-	skillsDir := t.TempDir()
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
+	// FileConfigPath ignores PIGO_HOME (registered config-path defect):
+	// isolate the XDG config too, or the host config's [skills] disabled
+	// bleeds into the loaded skill set.
+	t.Setenv("XDG_CONFIG_HOME", testenv.Dir(t))
+	skillsDir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 

@@ -11,14 +11,15 @@ import (
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/testutil"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestBuildSlashRegistryLoadsProjectPromptsTrusted: with the project trusted,
 // .pigo/prompts/*.md loads at the project tier.
 func TestBuildSlashRegistryLoadsProjectPromptsTrusted(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home) // empty global
-	cwdTmp := t.TempDir()
+	cwdTmp := testenv.Dir(t)
 	testutil.WritePrompt(t, cwdTmp, filepath.Join(".pigo", "prompts"), "review.md", "Review: $ARGUMENTS")
 
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil,
@@ -41,9 +42,9 @@ func TestBuildSlashRegistryLoadsProjectPromptsTrusted(t *testing.T) {
 // TestBuildSlashRegistryProjectPromptsUntrustedSkipped: when the project is not
 // trusted, .pigo/prompts is not loaded.
 func TestBuildSlashRegistryProjectPromptsUntrustedSkipped(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
-	cwdTmp := t.TempDir()
+	cwdTmp := testenv.Dir(t)
 	testutil.WritePrompt(t, cwdTmp, filepath.Join(".pigo", "prompts"), "review.md", "Review: $ARGUMENTS")
 
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil,
@@ -62,9 +63,9 @@ func TestBuildSlashRegistryProjectPromptsUntrustedSkipped(t *testing.T) {
 // TestBuildSlashRegistryProjectMissingDirNoError: a missing .pigo/prompts is
 // not an error (most projects don't have one).
 func TestBuildSlashRegistryProjectMissingDirNoError(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
-	cwdTmp := t.TempDir() // no .pigo/prompts created
+	cwdTmp := testenv.Dir(t) // no .pigo/prompts created
 
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil,
 		PromptTemplateSources{
@@ -82,12 +83,12 @@ func TestBuildSlashRegistryProjectMissingDirNoError(t *testing.T) {
 // TestBuildSlashRegistryProjectOverridesGlobal: a project template overrides a
 // same-named global one (project tier wins, global shadowed).
 func TestBuildSlashRegistryProjectOverridesGlobal(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// global
 	testutil.WritePrompt(t, home, "prompts", "dup.md", "FROM GLOBAL")
 	// project
-	cwdTmp := t.TempDir()
+	cwdTmp := testenv.Dir(t)
 	testutil.WritePrompt(t, cwdTmp, filepath.Join(".pigo", "prompts"), "dup.md", "FROM PROJECT")
 
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil,
@@ -119,9 +120,9 @@ func TestBuildSlashRegistryProjectOverridesGlobal(t *testing.T) {
 // TestBuildSlashRegistryNoPromptTemplatesDisablesProject: --no-prompt-templates
 // suppresses project prompts too.
 func TestBuildSlashRegistryNoPromptTemplatesDisablesProject(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
-	cwdTmp := t.TempDir()
+	cwdTmp := testenv.Dir(t)
 	testutil.WritePrompt(t, cwdTmp, filepath.Join(".pigo", "prompts"), "review.md", "Review: $ARGUMENTS")
 
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil,

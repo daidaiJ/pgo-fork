@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/dream"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // syncWriter is a concurrency-safe writer whose first Write closes done, so a
@@ -53,7 +54,7 @@ func seedDueDreamState(t *testing.T, memoryRoot string) {
 }
 
 func TestMaybeStartBackgroundDream_NoticeOnChanges(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	seedDueDreamState(t, root)
 
 	orig := spawnDream
@@ -83,7 +84,7 @@ func TestMaybeStartBackgroundDream_NoticeOnChanges(t *testing.T) {
 }
 
 func TestMaybeStartBackgroundDream_DisabledNoSpawn(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	seedDueDreamState(t, root)
 
 	orig := spawnDream
@@ -115,7 +116,7 @@ func TestMaybeStartBackgroundDream_EmptyRootNoSpawn(t *testing.T) {
 
 func TestMaybeStartBackgroundDream_NeverRunNoSpawn(t *testing.T) {
 	// A fresh memory root (no state.json) is "never run" → not due → no spawn.
-	root := filepath.Join(t.TempDir(), "empty")
+	root := filepath.Join(testenv.Dir(t), "empty")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}

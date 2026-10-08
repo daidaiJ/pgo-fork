@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // resetForTest restores the package to a pristine state so each test controls
@@ -78,7 +80,7 @@ func TestDisabledBeginIsNilAndFree(t *testing.T) {
 }
 
 func TestNestedSpansFoldAccounting(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	clk := useFixedClock(t, time.Unix(0, 0))
 
 	root := Begin("startup.total")
@@ -109,8 +111,8 @@ func TestNestedSpansFoldAccounting(t *testing.T) {
 	// memory: 2ms wall; setup_env: 9ms wall − 2ms child = 7ms;
 	// total: 10ms wall − 9ms child = 1ms.
 	want := map[string]int64{
-		"startup.total":                   1000,
-		"startup.total;startup.setup_env": 7000,
+		"startup.total":                                            1000,
+		"startup.total;startup.setup_env":                          7000,
 		"startup.total;startup.setup_env;startup.setup_env.memory": 2000,
 	}
 	if len(got) != len(want) {
@@ -124,7 +126,7 @@ func TestNestedSpansFoldAccounting(t *testing.T) {
 }
 
 func TestOverlappingChildrenSaturateSelf(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	clk := useFixedClock(t, time.Unix(0, 0))
 
 	parent := Begin("p")
@@ -148,7 +150,7 @@ func TestOverlappingChildrenSaturateSelf(t *testing.T) {
 }
 
 func TestJSONLEventsAndMarks(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	clk := useFixedClock(t, time.Unix(0, 0))
 
 	s := Begin("startup.session_load")
@@ -179,7 +181,7 @@ func TestJSONLEventsAndMarks(t *testing.T) {
 func TestFlushRetriesAfterWriteFailure(t *testing.T) {
 	// outDir points at a regular file, so MkdirAll fails and the records must
 	// survive for the next exit point (grok's kill-loses-profile lesson).
-	fileDir := filepath.Join(t.TempDir(), "not-a-dir")
+	fileDir := filepath.Join(testenv.Dir(t), "not-a-dir")
 	if err := os.WriteFile(fileDir, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestFlushRetriesAfterWriteFailure(t *testing.T) {
 	}
 
 	// Repair the sink and flush again: the first span must be in the file.
-	realDir := t.TempDir()
+	realDir := testenv.Dir(t)
 	outDir = realDir
 	Flush()
 	data, err := os.ReadFile(filepath.Join(realDir, foldedName()))
@@ -211,7 +213,7 @@ func TestFlushRetriesAfterWriteFailure(t *testing.T) {
 }
 
 func TestFlushWithoutRecordsIsNoop(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	resetForTest(t, dir)
 	Flush() // must not write anything
 	entries, err := os.ReadDir(dir)
@@ -224,7 +226,7 @@ func TestFlushWithoutRecordsIsNoop(t *testing.T) {
 }
 
 func TestMaxPathsCapDropsNewPaths(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	old := maxPaths
 	maxPaths = 2
 	t.Cleanup(func() { maxPaths = old })
@@ -268,7 +270,7 @@ func TestTraceTimeline(t *testing.T) {
 }
 
 func TestFoldPathOrdering(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	useFixedClock(t, time.Unix(0, 0))
 
 	a := Begin("a")
@@ -286,7 +288,7 @@ func TestFoldPathOrdering(t *testing.T) {
 }
 
 func TestEndIsIdempotent(t *testing.T) {
-	resetForTest(t, t.TempDir())
+	resetForTest(t, testenv.Dir(t))
 	useFixedClock(t, time.Unix(0, 0))
 
 	s := Begin("once-only")

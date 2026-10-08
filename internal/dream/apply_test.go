@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestUpdateScopeIndexesDropsDanglingLinks(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// A global MEMORY.md linking to two entries; b.md will be deleted.
 	writeMemFile(t, root, "global/user/a.md", "keep me")
 	b := writeMemFile(t, root, "global/user/b.md", "remove me")
@@ -42,7 +43,7 @@ func TestUpdateScopeIndexesDropsDanglingLinks(t *testing.T) {
 // referencing a different entry whose name merely contains "b.md" as a
 // substring (e.g. club.md).
 func TestUpdateScopeIndexesBoundaryMatch(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	writeMemFile(t, root, "global/user/club.md", "keep me")
 	b := writeMemFile(t, root, "global/user/b.md", "remove me")
 	idx := writeMemFile(t, root, "global/MEMORY.md",
@@ -62,7 +63,7 @@ func TestUpdateScopeIndexesBoundaryMatch(t *testing.T) {
 }
 
 func TestUpdateScopeIndexesNoIndexIsNoOp(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	writeMemFile(t, root, "global/user/a.md", "x")
 	deleted := map[string]struct{}{filepath.Join(root, "global", "user", "a.md"): {}}
 	if err := updateScopeIndexes(root, "", deleted); err != nil {
@@ -76,7 +77,7 @@ func TestUpdateScopeIndexesNoIndexIsNoOp(t *testing.T) {
 // counters are correct, and a full-text search no longer hits the merged-away
 // fragment (US-003 / US-006 / US-009).
 func TestRunEndToEndWithMerge(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	a := writeMemFile(t, root, "global/user/a.md", "shared topic original a")
 	b := writeMemFile(t, root, "global/user/b.md", "shared topic zebrafragment only in b")
 	c := writeMemFile(t, root, "global/user/c.md", "outdated standalone note")

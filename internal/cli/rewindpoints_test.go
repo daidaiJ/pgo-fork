@@ -10,10 +10,11 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestDeriveRewindPointsTree(t *testing.T) {
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

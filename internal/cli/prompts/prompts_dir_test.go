@@ -10,12 +10,13 @@ import (
 
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/testutil"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestBuildSlashRegistryLoadsLegacyCommandsDir verifies the legacy
 // ~/.pigo/commands directory still loads templates (regression).
 func TestBuildSlashRegistryLoadsLegacyCommandsDir(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	testutil.WritePrompt(t, home, "commands", "legacy.md", "Legacy: $ARGUMENTS")
 
@@ -35,7 +36,7 @@ func TestBuildSlashRegistryLoadsLegacyCommandsDir(t *testing.T) {
 // TestBuildSlashRegistryLoadsPromptsDir verifies the pi-aligned ~/.pigo/prompts
 // directory loads templates.
 func TestBuildSlashRegistryLoadsPromptsDir(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	testutil.WritePrompt(t, home, "prompts", "review.md", "Review: $ARGUMENTS")
 
@@ -56,7 +57,7 @@ func TestBuildSlashRegistryLoadsPromptsDir(t *testing.T) {
 // template in prompts/ overrides one in commands/ (both global tier; prompts is
 // loaded second so last-write-wins), with no shadow entry.
 func TestBuildSlashRegistryPromptsOverridesCommands(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	testutil.WritePrompt(t, home, "commands", "dup.md", "FROM COMMANDS")
 	testutil.WritePrompt(t, home, "prompts", "dup.md", "FROM PROMPTS")
@@ -80,7 +81,7 @@ func TestBuildSlashRegistryPromptsOverridesCommands(t *testing.T) {
 // TestBuildSlashRegistryMissingDirsNoError verifies that with neither commands/
 // nor prompts/ present, BuildSlashRegistry returns no error (built-ins only).
 func TestBuildSlashRegistryMissingDirsNoError(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	reg, err := BuildSlashRegistry(&cli.LiveConfig{Model: "test", ProviderName: "test"}, nil, nil, nil, PromptTemplateSources{})
 	if err != nil {
 		t.Fatalf("BuildSlashRegistry with no prompt dirs: %v", err)

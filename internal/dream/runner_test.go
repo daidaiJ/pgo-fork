@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/smallnest/pigo/internal/testgate"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
+	"github.com/smallnest/pigo/internal/testgate"
 )
 
 // stubConsolidator returns a fixed result and records that it was called.
@@ -24,7 +26,7 @@ func (s *stubConsolidator) Consolidate(context.Context, ConsolidateInput) (Conso
 // TestRunEmptyMemoryDir: an empty memory dir yields an all-zero Report with
 // status ok (no error). Reconcile tolerates the missing scopes.
 func TestRunEmptyMemoryDir(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	r := &Runner{MemoryRoot: root}
 	rep, err := r.Run(context.Background(), RunOptions{})
 	if err != nil {
@@ -49,7 +51,7 @@ func TestRunEmptyMemoryDir(t *testing.T) {
 // TestRunDryRunWritesNothing: dry-run computes counts, writes no files, does not
 // update state, but still acquires + releases the lock.
 func TestRunDryRunWritesNothing(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// Two byte-identical files → one dedupe candidate.
 	a := writeMemFile(t, root, "global/user/a.md", "same content")
 	b := writeMemFile(t, root, "global/user/b.md", "same content")
@@ -91,7 +93,7 @@ func TestRunDryRunWritesNothing(t *testing.T) {
 // TestRunLockedSkips: when a live lock is already held, Run returns a zero-count
 // report and NO error (exit-0 "skipped" semantics), and does not touch state.
 func TestRunLockedSkips(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	writeMemFile(t, root, "global/user/a.md", "content")
 
 	held, err := AcquireLock(root)
@@ -118,7 +120,7 @@ func TestRunLockedSkips(t *testing.T) {
 // TestRunAppliesDedupe: a non-dry-run removes exact duplicates, updates state,
 // and reflects counts in the Report.
 func TestRunAppliesDedupe(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	a := writeMemFile(t, root, "global/user/a.md", "same content")
 	b := writeMemFile(t, root, "global/user/b.md", "same content")
 
@@ -151,8 +153,8 @@ func TestRunAppliesDedupe(t *testing.T) {
 // TestWithinScope: the path-boundary guard accepts in-scope targets and rejects
 // everything outside <memoryRoot>/global and the active project's directory.
 func TestWithinScope(t *testing.T) {
-	root := t.TempDir()
-	projectDir := t.TempDir()
+	root := testenv.Dir(t)
+	projectDir := testenv.Dir(t)
 	pid := projectID(projectDir)
 	otherPID := "0123456789ab" // a different, unrelated project id
 	cases := []struct {
@@ -189,8 +191,8 @@ func TestWithinScope(t *testing.T) {
 // not let a target escape memoryRoot. The guard resolves symlinks on existing
 // ancestors before the containment check (SPEC §7.1 defense-in-depth).
 func TestWithinScopeSymlinkEscape(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir() // a directory fully outside memoryRoot
+	root := testenv.Dir(t)
+	outside := testenv.Dir(t) // a directory fully outside memoryRoot
 
 	globalDir := filepath.Join(root, "global")
 	if err := os.MkdirAll(globalDir, 0o755); err != nil {
@@ -214,8 +216,8 @@ func TestWithinScopeSymlinkEscape(t *testing.T) {
 // reference stripped and counted.
 func TestRunPathClean(t *testing.T) {
 	testgate.WinSkip(t, testgate.PathSeparator)
-	root := t.TempDir()
-	proj := t.TempDir()
+	root := testenv.Dir(t)
+	proj := testenv.Dir(t)
 	missing := filepath.Join(proj, "does", "not", "exist.go")
 	body := "See `" + missing + "` for details."
 	f := writeMemFile(t, root, "global/reference/r.md", body)
@@ -240,7 +242,7 @@ func TestRunPathClean(t *testing.T) {
 // TestRunConsolidatorApplied: an injected Consolidator's new-entry write and
 // counters flow through, and the write lands within scope.
 func TestRunConsolidatorApplied(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	writeMemFile(t, root, "global/user/a.md", "hello")
 
 	newPath := filepath.Join(root, "global", "user", "distilled.md")
@@ -270,8 +272,8 @@ func TestRunConsolidatorApplied(t *testing.T) {
 // TestApplyConsolidationRejectsOutOfScope: a Consolidator that tries to write
 // outside the memory root is rejected by the guard.
 func TestApplyConsolidationRejectsOutOfScope(t *testing.T) {
-	root := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "escape.md")
+	root := testenv.Dir(t)
+	outside := filepath.Join(testenv.Dir(t), "escape.md")
 	cres := ConsolidateResult{
 		NewEntries: []NewEntry{{Path: outside, Body: "x"}},
 	}
@@ -286,7 +288,7 @@ func TestApplyConsolidationRejectsOutOfScope(t *testing.T) {
 // TestRunDryRunLeavesStaleLockTakeable is a small guard that dry-run's lock is
 // released promptly (no leftover live lock).
 func TestRunDryRunLockReleased(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	r := &Runner{MemoryRoot: root}
 	if _, err := r.Run(context.Background(), RunOptions{DryRun: true}); err != nil {
 		t.Fatalf("Run: %v", err)

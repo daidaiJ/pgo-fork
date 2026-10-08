@@ -10,6 +10,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // stubSessions is an in-memory SessionSource for distill tests: it lists the
@@ -43,8 +44,8 @@ func asstMsg(text string) agentcore.AssistantMessage {
 // most-recent recentN matching sessions, ordered most-recent-first, filtered to
 // the active project.
 func TestCollectRecentSessionsFirstRunWindow(t *testing.T) {
-	proj := t.TempDir()
-	other := t.TempDir()
+	proj := testenv.Dir(t)
+	other := testenv.Dir(t)
 	base := time.Now().UTC()
 	headers := []session.SessionHeader{
 		{ID: "s1", Cwd: proj, UpdatedAt: base.Add(-3 * time.Hour)},
@@ -65,7 +66,7 @@ func TestCollectRecentSessionsFirstRunWindow(t *testing.T) {
 // TestCollectRecentSessionsIncremental: a non-zero LastRunAt selects only
 // matching sessions updated strictly after it (incremental distillation).
 func TestCollectRecentSessionsIncremental(t *testing.T) {
-	proj := t.TempDir()
+	proj := testenv.Dir(t)
 	base := time.Now().UTC()
 	last := base.Add(-2 * time.Hour)
 	headers := []session.SessionHeader{
@@ -87,7 +88,7 @@ func TestCollectRecentSessionsIncremental(t *testing.T) {
 // TestCollectRecentSessionsGlobalOnlyNoMatch: an empty projectDir (global-only
 // run) matches nothing, so the window is empty (no-op path).
 func TestCollectRecentSessionsGlobalOnlyNoMatch(t *testing.T) {
-	proj := t.TempDir()
+	proj := testenv.Dir(t)
 	headers := []session.SessionHeader{{ID: "s1", Cwd: proj, UpdatedAt: time.Now().UTC()}}
 	if got := collectRecentSessions(headers, State{}, "", 20); len(got) != 0 {
 		t.Fatalf("global-only run must match no sessions, got %d", len(got))
@@ -97,10 +98,10 @@ func TestCollectRecentSessionsGlobalOnlyNoMatch(t *testing.T) {
 // TestCollectTranscriptsNoSourceOrNoMatch: nil source or no matching session
 // yields "" so the caller records Distilled=0 with a "无新增" note.
 func TestCollectTranscriptsNoSourceOrNoMatch(t *testing.T) {
-	if got := collectTranscripts(nil, State{}, t.TempDir(), 20, 0); got != "" {
+	if got := collectTranscripts(nil, State{}, testenv.Dir(t), 20, 0); got != "" {
 		t.Fatalf("nil source must yield empty transcript, got %q", got)
 	}
-	src := &stubSessions{headers: []session.SessionHeader{{ID: "s1", Cwd: t.TempDir(), UpdatedAt: time.Now().UTC()}}}
+	src := &stubSessions{headers: []session.SessionHeader{{ID: "s1", Cwd: testenv.Dir(t), UpdatedAt: time.Now().UTC()}}}
 	// Ask for a different (empty) project → no match.
 	if got := collectTranscripts(src, State{}, "", 20, 0); got != "" {
 		t.Fatalf("no matching session must yield empty transcript, got %q", got)
@@ -110,7 +111,7 @@ func TestCollectTranscriptsNoSourceOrNoMatch(t *testing.T) {
 // TestCollectTranscriptsRendersRoleTagged: matching sessions are rendered into a
 // role-tagged transcript containing the session id and message text.
 func TestCollectTranscriptsRendersRoleTagged(t *testing.T) {
-	proj := t.TempDir()
+	proj := testenv.Dir(t)
 	src := &stubSessions{
 		headers: []session.SessionHeader{{ID: "sess-abc", Cwd: proj, UpdatedAt: time.Now().UTC()}},
 		msgs: map[string]agentcore.MessageList{
@@ -130,7 +131,7 @@ func TestCollectTranscriptsRendersRoleTagged(t *testing.T) {
 // dropped.
 func TestParseDistillResponseNewEntries(t *testing.T) {
 	root := "/mem"
-	proj := t.TempDir()
+	proj := testenv.Dir(t)
 	pid := projectID(proj)
 	raw := "```json\n" + `{
 	  "entries": [
@@ -202,8 +203,8 @@ func TestParseDistillResponseUnparseable(t *testing.T) {
 // and a stub completer-backed llmConsolidator distills a durable fact into a new
 // on-disk memory entry, counts it, and reports it.
 func TestRunDistillsThroughRunner(t *testing.T) {
-	root := t.TempDir()
-	proj := t.TempDir()
+	root := testenv.Dir(t)
+	proj := testenv.Dir(t)
 
 	src := &stubSessions{
 		headers: []session.SessionHeader{{ID: "s1", Cwd: proj, UpdatedAt: time.Now().UTC()}},
@@ -236,8 +237,8 @@ func TestRunDistillsThroughRunner(t *testing.T) {
 // TestRunDryRunDistillsButWritesNothing: a dry-run still runs the distill pass
 // and reports the count, but writes no new memory files and updates no state.
 func TestRunDryRunDistillsButWritesNothing(t *testing.T) {
-	root := t.TempDir()
-	proj := t.TempDir()
+	root := testenv.Dir(t)
+	proj := testenv.Dir(t)
 
 	src := &stubSessions{
 		headers: []session.SessionHeader{{ID: "s1", Cwd: proj, UpdatedAt: time.Now().UTC()}},
@@ -267,8 +268,8 @@ func TestRunDryRunDistillsButWritesNothing(t *testing.T) {
 // TestRunNoDurableFactsNoOp: when distillation adds nothing, the report records
 // Distilled=0 with the "无新增" note (SPEC §5.5).
 func TestRunNoDurableFactsNoOp(t *testing.T) {
-	root := t.TempDir()
-	proj := t.TempDir()
+	root := testenv.Dir(t)
+	proj := testenv.Dir(t)
 	src := &stubSessions{
 		headers: []session.SessionHeader{{ID: "s1", Cwd: proj, UpdatedAt: time.Now().UTC()}},
 		msgs:    map[string]agentcore.MessageList{"s1": {userMsg("some transient chatter")}},

@@ -13,11 +13,12 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func seedSession(t *testing.T) (string, string) {
 	t.Helper()
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	store, err := session.NewStore(filepath.Join(home, "sessions"))
 	if err != nil {
@@ -37,7 +38,7 @@ func seedSession(t *testing.T) (string, string) {
 // file must not contain the secret material even though the session does.
 func TestRunExportRedactsByDefault(t *testing.T) {
 	_, id := seedSession(t)
-	out := filepath.Join(t.TempDir(), "share.md")
+	out := filepath.Join(testenv.Dir(t), "share.md")
 
 	var stdout, stderr bytes.Buffer
 	code := Run("export", []string{id, "--output", out}, &stdout, &stderr)

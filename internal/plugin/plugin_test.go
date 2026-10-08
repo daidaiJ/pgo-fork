@@ -15,13 +15,14 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // buildTestPlugin compiles the given Go source into an executable under a temp
 // dir and returns its path. The source is a standalone main package.
 func buildTestPlugin(t *testing.T, name, src string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	srcPath := filepath.Join(dir, name+".go")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write plugin source: %v", err)

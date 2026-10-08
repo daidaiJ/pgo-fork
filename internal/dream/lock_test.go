@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writeLock writes a lock file with the given pid and started_at directly, for
@@ -29,7 +31,7 @@ func writeLock(t *testing.T, root string, pid int, startedAt time.Time) string {
 }
 
 func TestAcquireLockMutualExclusion(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	l1, err := AcquireLock(root)
 	if err != nil {
 		t.Fatalf("first AcquireLock: %v", err)
@@ -47,7 +49,7 @@ func TestAcquireLockMutualExclusion(t *testing.T) {
 }
 
 func TestAcquireLockCreatesFileWithBody(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	l, err := AcquireLock(root)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)
@@ -72,7 +74,7 @@ func TestAcquireLockCreatesFileWithBody(t *testing.T) {
 }
 
 func TestAcquireLockDoesNotTouchState(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	l, err := AcquireLock(root)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)
@@ -84,7 +86,7 @@ func TestAcquireLockDoesNotTouchState(t *testing.T) {
 }
 
 func TestAcquireLockStaleTakeover(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// Existing lock older than staleAfter → takeable.
 	writeLock(t, root, 99999, time.Now().Add(-DefaultStaleAfter-time.Minute))
 
@@ -109,7 +111,7 @@ func TestAcquireLockStaleTakeover(t *testing.T) {
 }
 
 func TestAcquireLockFreshLockNotTakeable(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	// A recently-started lock is live, not stale.
 	writeLock(t, root, 99999, time.Now().Add(-time.Minute))
 
@@ -119,7 +121,7 @@ func TestAcquireLockFreshLockNotTakeable(t *testing.T) {
 }
 
 func TestAcquireLockMalformedTakeover(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	dir := filepath.Join(root, "global", "dream")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -136,7 +138,7 @@ func TestAcquireLockMalformedTakeover(t *testing.T) {
 }
 
 func TestReleaseAndReacquire(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	l1, err := AcquireLock(root)
 	if err != nil {
 		t.Fatalf("first AcquireLock: %v", err)
@@ -157,7 +159,7 @@ func TestReleaseAndReacquire(t *testing.T) {
 }
 
 func TestReleaseDoubleCallSafe(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	l, err := AcquireLock(root)
 	if err != nil {
 		t.Fatalf("AcquireLock: %v", err)
@@ -179,7 +181,7 @@ func TestReleaseNilSafe(t *testing.T) {
 }
 
 func TestStaleLockBoundary(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	path := writeLock(t, root, 1, time.Unix(0, 0).UTC())
 	now := time.Unix(0, 0).UTC()
 	if staleLock(path, now.Add(DefaultStaleAfter-time.Second)) {

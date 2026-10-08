@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -412,7 +413,7 @@ func TestFormatSkillsForPromptAbsoluteLocation(t *testing.T) {
 // TestLoadSkillsDir verifies loading flat *.md skills and nested <name>/SKILL.md,
 // sorted by name; a missing dir is not an error.
 func TestLoadSkillsDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "beta.md"), []byte("---\ndescription: beta skill\n---\nbeta body"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +625,7 @@ func TestParseUserCommand(t *testing.T) {
 // TestLoadUserCommandsDir verifies loading *.md command templates from a dir,
 // sorted by name; a missing dir is not an error.
 func TestLoadUserCommandsDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "deploy.md"), []byte("Deploy $ARGUMENTS now"), 0o644); err != nil {
 		t.Fatal(err)
 	}

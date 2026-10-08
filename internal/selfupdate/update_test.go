@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestArchiveName(t *testing.T) {
@@ -60,7 +62,7 @@ func TestExtractBinaryTarGz(t *testing.T) {
 }
 
 func TestReplaceAtomic(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	target := filepath.Join(dir, "pigo")
 	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -100,7 +102,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	target := filepath.Join(dir, "pigo")
 	_ = os.WriteFile(target, []byte("old"), 0o755)
 
@@ -137,7 +139,7 @@ func TestApplyChecksumMismatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	target := filepath.Join(dir, "pigo")
 	_ = os.WriteFile(target, []byte("old"), 0o755)
 

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 const sampleConfig = `# my hand-written config — comments must survive
@@ -35,7 +37,7 @@ disabled_tools = ["smartsearch"]  # existing list
 
 func writeSample(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	if err := os.WriteFile(path, []byte(sampleConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestPatchUnknownOrAmbiguousServerFails(t *testing.T) {
 		t.Fatal("unknown server must error")
 	}
 	// Duplicate names must refuse rather than patch one arbitrarily.
-	path2 := filepath.Join(t.TempDir(), "dup.toml")
+	path2 := filepath.Join(testenv.Dir(t), "dup.toml")
 	dup := strings.Replace(sampleConfig, `name    = "web"`, `name    = "fs"`, 1)
 	if err := os.WriteFile(path2, []byte(dup), 0o600); err != nil {
 		t.Fatal(err)
@@ -161,7 +163,7 @@ func TestPatchUnknownOrAmbiguousServerFails(t *testing.T) {
 }
 
 func TestPatchMissingFileFails(t *testing.T) {
-	if err := SetSkillsDisabled(filepath.Join(t.TempDir(), "absent.toml"), "x", true); err == nil {
+	if err := SetSkillsDisabled(filepath.Join(testenv.Dir(t), "absent.toml"), "x", true); err == nil {
 		t.Fatal("missing file must error (no silent creation)")
 	}
 }

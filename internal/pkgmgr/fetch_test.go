@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // makeTarGz writes a gzip tarball at path containing the given files, each under
@@ -35,7 +37,7 @@ func makeTarGz(t *testing.T, path string, files map[string]string) {
 
 // TestExtractTarGz verifies a tarball extracts with its files intact.
 func TestExtractTarGz(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := testenv.Dir(t)
 	tarball := filepath.Join(tmp, "pkg.tgz")
 	makeTarGz(t, tarball, map[string]string{
 		"package/package.json": `{"name":"x","version":"1.0.0"}`,
@@ -84,7 +86,7 @@ func TestFetchWithFakeNPM(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake npm shell script is POSIX-only")
 	}
-	binDir := t.TempDir()
+	binDir := testenv.Dir(t)
 	// The fake npm: on `pack`, copy a prebuilt tarball into --pack-destination
 	// and print its filename, mimicking real npm pack output.
 	srcTarball := filepath.Join(binDir, "src.tgz")
@@ -142,7 +144,7 @@ func TestFetchNPMFailurePropagates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake npm shell script is POSIX-only")
 	}
-	binDir := t.TempDir()
+	binDir := testenv.Dir(t)
 	fakeNPM := filepath.Join(binDir, "npm")
 	script := `#!/bin/sh
 echo "npm error code E404" >&2

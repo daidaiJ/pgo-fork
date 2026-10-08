@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestLoadMissingFileIsEmpty verifies a missing lockfile yields an empty,
 // usable lockfile rather than an error.
 func TestLoadMissingFileIsEmpty(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "packages.json")
+	path := filepath.Join(testenv.Dir(t), "packages.json")
 	lf, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load missing file: %v", err)
@@ -24,7 +26,7 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 
 // TestSaveThenLoadRoundTrips verifies a written lockfile reads back identically.
 func TestSaveThenLoadRoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "packages.json") // sub dir must be created
+	path := filepath.Join(testenv.Dir(t), "sub", "packages.json") // sub dir must be created
 	lf, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -65,7 +67,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 
 // TestSaveIsIndentedJSON verifies the on-disk format is human-readable.
 func TestSaveIsIndentedJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "packages.json")
+	path := filepath.Join(testenv.Dir(t), "packages.json")
 	lf, _ := Load(path)
 	lf.Set(InstalledPackage{Name: "x", Source: "npm:x", Version: "1", Types: []PackageType{TypeSkill}})
 	if err := lf.Save(); err != nil {
@@ -83,7 +85,7 @@ func TestSaveIsIndentedJSON(t *testing.T) {
 // TestLoadCorruptFileIsError verifies a malformed lockfile is surfaced, never
 // silently overwritten.
 func TestLoadCorruptFileIsError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "packages.json")
+	path := filepath.Join(testenv.Dir(t), "packages.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}

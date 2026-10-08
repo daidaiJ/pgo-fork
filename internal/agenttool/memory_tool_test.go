@@ -10,6 +10,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // newMemoryStoreWithCorpus opens a *memory.Store over a temp DB + temp mimo root
@@ -17,7 +18,7 @@ import (
 // tool's ReconcileFirst=true is expected to index them lazily on first search.
 func newMemoryStoreWithCorpus(t *testing.T) *memory.Store {
 	t.Helper()
-	base := t.TempDir()
+	base := testenv.Dir(t)
 	root := filepath.Join(base, "mimo")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir root: %v", err)

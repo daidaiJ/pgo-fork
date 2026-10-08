@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func writeFileT(t *testing.T, path, content string) {
@@ -29,7 +31,7 @@ func readFileT(t *testing.T, path string) string {
 // A turn's first Record for a path is the baseline; later Records that turn are
 // ignored, and Commit groups the turn's files into one point.
 func TestRecorderRecordDedupAndCommit(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	f := filepath.Join(dir, "a.txt")
 	writeFileT(t, f, "v0")
 
@@ -58,7 +60,7 @@ func TestRecorderRecordDedupAndCommit(t *testing.T) {
 // Restoring rolls files back and deletes ones that did not exist before, and
 // returns the pre-turn leaf id.
 func TestRecorderRestore(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	existing := filepath.Join(dir, "keep.txt")
 	created := filepath.Join(dir, "new.txt")
 	writeFileT(t, existing, "orig")
@@ -103,7 +105,7 @@ func TestRecorderRestore(t *testing.T) {
 // When a file is edited across several turns, restoring to before the earliest
 // of them lands it at its oldest baseline (not an intermediate version).
 func TestRecorderRestoreOldestBaselineWins(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	f := filepath.Join(dir, "a.txt")
 	writeFileT(t, f, "v0")
 

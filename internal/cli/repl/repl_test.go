@@ -25,6 +25,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/session"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // replProvider is a minimal Provider that streams one scripted text turn per
@@ -63,7 +64,7 @@ func (p *replProvider) StreamCompletion(ctx context.Context, req provider.Comple
 // command fired.
 func newTestDeps(t *testing.T, p provider.Provider) (replDeps, *session.Store) {
 	t.Helper()
-	store, err := session.NewStore(t.TempDir())
+	store, err := session.NewStore(testenv.Dir(t))
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -534,7 +535,7 @@ func TestREPLExportImportRoundTrip(t *testing.T) {
 	p := &replProvider{reply: "the answer"}
 	deps, store := newTestDeps(t, p)
 	origID := deps.header.ID
-	out := filepath.Join(t.TempDir(), "sess.jsonl")
+	out := filepath.Join(testenv.Dir(t), "sess.jsonl")
 
 	var buf bytes.Buffer
 	in := strings.NewReader("hello\n/export " + out + "\n/import " + out + "\n/exit\n")
@@ -575,7 +576,7 @@ func TestREPLExportImportRoundTrip(t *testing.T) {
 func TestREPLExportDefaultsToJSONL(t *testing.T) {
 	p := &replProvider{reply: "ok"}
 	deps, _ := newTestDeps(t, p)
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	// Run inside a temp dir so the default relative filename lands there.
 	cwd, _ := os.Getwd()
 	if err := os.Chdir(dir); err != nil {
@@ -657,7 +658,7 @@ func TestREPLCopyEmpty(t *testing.T) {
 // when no clipboard utility is available (PATH pointed at an empty dir), so the
 // content is never lost.
 func TestREPLCopyDegradesToPrint(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", testenv.Dir(t))
 	p := &replProvider{reply: "the important answer"}
 	deps, _ := newTestDeps(t, p)
 	var out bytes.Buffer

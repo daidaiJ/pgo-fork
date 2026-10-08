@@ -13,10 +13,11 @@ import (
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/testutil"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestBuildSlashRegistryLoadsCLIPrompts(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// file entry
 	filePath := filepath.Join(home, "single.md")
@@ -54,7 +55,7 @@ func TestBuildSlashRegistryLoadsCLIPrompts(t *testing.T) {
 }
 
 func TestBuildSlashRegistryNoPromptTemplatesDisables(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// A global prompt that should NOT load under --no-prompt-templates.
 	testutil.WritePrompt(t, home, "prompts", "review.md", "Review: $ARGUMENTS")
@@ -82,7 +83,7 @@ func TestBuildSlashRegistryNoPromptTemplatesDisables(t *testing.T) {
 }
 
 func TestBuildSlashRegistryGlobalOverridesCLI(t *testing.T) {
-	home := t.TempDir()
+	home := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", home)
 	// global prompt (TierGlobal) under ~/.pigo/prompts.
 	testutil.WritePrompt(t, home, "prompts", "dup.md", "FROM GLOBAL")

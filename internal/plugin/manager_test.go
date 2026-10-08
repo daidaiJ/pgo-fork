@@ -10,11 +10,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestDiscoverMissingDir checks a missing directory yields an empty manager.
 func TestDiscoverMissingDir(t *testing.T) {
-	m, err := Discover(filepath.Join(t.TempDir(), "nope"), nil, nil)
+	m, err := Discover(filepath.Join(testenv.Dir(t), "nope"), nil, nil)
 	if err != nil {
 		t.Fatalf("Discover missing dir: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestDiscoverSkipsNonExecutable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix executable-bit semantics not applicable on windows")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func TestDiscoverLoadsAndIsolatesBad(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script plugins are unix-only in this test")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 
 	// Good plugin: compiled from echoPluginSrc, placed inside the discovery dir.
 	good := buildTestPlugin(t, "aaa-echo", echoPluginSrc)
@@ -114,7 +116,7 @@ func TestManagerCommandsAggregatesInLoadOrder(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script/compiled plugins are unix-only in this test")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 
 	// Two command plugins. Load order is by filename, so "a-cmd" loads before
 	// "b-cmd"; within each plugin the manifest declares greet then bye.

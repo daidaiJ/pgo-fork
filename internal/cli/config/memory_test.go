@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // boolPtr / floatPtr are test helpers for the pointer-valued MemoryConfig fields.
@@ -75,7 +77,7 @@ func TestParseThresholdFraction(t *testing.T) {
 		{"0%", 0, false},   // out of range (must be >0)
 		{"120%", 0, false}, // out of range (>100%)
 		{"-10%", 0, false},
-		{"80", 0, false},  // missing %
+		{"80", 0, false}, // missing %
 		{"abc%", 0, false},
 	}
 	for _, c := range cases {
@@ -152,7 +154,7 @@ func TestParseMaxContext_Invalid(t *testing.T) {
 }
 
 func TestLoadFileConfig_MemoryTables(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	content := `
 [memory]
 enabled = false
@@ -202,7 +204,7 @@ max_context = "300K"
 }
 
 func TestLoadFileConfig_ReservedString(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(testenv.Dir(t), "config.toml")
 	if err := os.WriteFile(path, []byte("[checkpoint]\nreserved = \"10%\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // writePolicySkill drops a minimal valid skill into dir so LoadSkills has
@@ -27,7 +28,7 @@ func writePolicySkill(t *testing.T, dir, name, description string) {
 func setupToolNames(t *testing.T, policy ToolPolicy) []string {
 	t.Helper()
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir()) // isolate plugin/skill discovery
+	t.Setenv("PIGO_HOME", testenv.Dir(t)) // isolate plugin/skill discovery
 	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, policy)
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
@@ -99,7 +100,7 @@ func TestSetupEnvUnconstrainedIsUnchanged(t *testing.T) {
 // silently ignores the boundary.
 func TestSetupEnvRejectsUnknownToolName(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	_, err := SetupEnv("openrouter/free", "", "", "", "", false, true, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, NewToolPolicy([]string{"raed"}, nil))
 	if err == nil {
 		t.Fatal("SetupEnv = nil error, want a failure for the misspelled tool name")
@@ -143,8 +144,8 @@ func TestChildToolSetInheritsPolicy(t *testing.T) {
 // happen before the system prompt is built.
 func TestSetupEnvSkillsGatedOnFilteredReadTool(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
-	skillsDir := t.TempDir()
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
+	skillsDir := testenv.Dir(t)
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writePolicySkill(t, skillsDir, "weather", "get the weather")
 
@@ -193,7 +194,7 @@ func captureStderr(t *testing.T, fn func()) string {
 // believe a boundary is in force when none is.
 func TestSetupEnvNoToolsWithPolicyWarns(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 
 	var env Env
 	var err error

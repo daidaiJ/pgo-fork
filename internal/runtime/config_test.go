@@ -11,6 +11,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/hooks"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // ptr is a helper for building pointer-valued config-layer fields in tests.
@@ -90,7 +91,7 @@ func TestResolveConfigInvalidValues(t *testing.T) {
 // TestLoadConfigLayerMissingAndMalformed verifies a missing file is not an error
 // (nil layer) while a malformed file is.
 func TestLoadConfigLayerMissingAndMalformed(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 
 	// Missing file → nil, nil.
 	layer, err := LoadConfigLayer(filepath.Join(dir, "nope.json"))
@@ -212,7 +213,7 @@ func TestResolveConfigHooksNilWhenAbsent(t *testing.T) {
 // TestLoadConfigLayerHooks verifies a layer's hooks decode from JSON, including
 // per-hook timeout and matcher fields.
 func TestLoadConfigLayerHooks(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	path := filepath.Join(dir, "config.json")
 	body := `{
 		"model": "x/y",

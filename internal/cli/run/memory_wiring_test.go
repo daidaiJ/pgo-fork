@@ -12,6 +12,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/memory"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // TestOpenMemoryStoreDisabled verifies memory.enabled=false yields (nil, nil):
@@ -30,7 +31,7 @@ func TestOpenMemoryStoreDisabled(t *testing.T) {
 // TestMemoryDirHonorsPIGOHome verifies MemoryDir roots the store at
 // $PIGO_HOME/memory when the override is set.
 func TestMemoryDirHonorsPIGOHome(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	t.Setenv("PIGO_HOME", dir)
 	if got, want := MemoryDir(), filepath.Join(dir, "memory"); got != want {
 		t.Errorf("MemoryDir() = %q, want %q", got, want)
@@ -40,7 +41,7 @@ func TestMemoryDirHonorsPIGOHome(t *testing.T) {
 // TestMemoryRootFromToolsPresent verifies the root is resolved through the
 // memory_search tool's Store.Root() when one is wired into the tool set.
 func TestMemoryRootFromToolsPresent(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	store, err := memory.Open(filepath.Join(root, "index.db"), root, "")
 	if err != nil {
 		t.Fatalf("memory.Open: %v", err)
@@ -69,7 +70,7 @@ func TestMemoryRootFromToolsAbsent(t *testing.T) {
 // non-empty registry from a memory_search tool alone, and stays nil when no
 // provider-bearing tool is present.
 func TestTodoRemindersRegistersMemoryProvider(t *testing.T) {
-	root := t.TempDir()
+	root := testenv.Dir(t)
 	store, err := memory.Open(filepath.Join(root, "index.db"), root, "")
 	if err != nil {
 		t.Fatalf("memory.Open: %v", err)

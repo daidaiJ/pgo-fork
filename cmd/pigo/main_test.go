@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/testenv"
 	"github.com/smallnest/pigo/internal/testgate"
 
 	"github.com/smallnest/pigo/internal/cli/config"
@@ -27,7 +28,7 @@ import (
 // that succeeds (exit 0) and prints the empty-store message, using an isolated
 // PIGO_HOME so it never touches the real session store.
 func TestDispatchListSessionsEmpty(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	var out, errOut bytes.Buffer
 	code := dispatch(context.Background(), cliOptions{listSessions: true}, &out, &errOut)
 	if code != 0 {
@@ -42,7 +43,7 @@ func TestDispatchListSessionsEmpty(t *testing.T) {
 // error (exit 1) that says there is nothing to continue, rather than starting a
 // blank REPL.
 func TestDispatchContinueNoSessions(t *testing.T) {
-	t.Setenv("PIGO_HOME", t.TempDir())
+	t.Setenv("PIGO_HOME", testenv.Dir(t))
 	// Ensure a non-terminal path is not taken before the continue guard: continue
 	// resolves the id first and errors when the store is empty.
 	var out, errOut bytes.Buffer
@@ -122,7 +123,7 @@ func TestCwdChdirRootsEnv(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(orig) })
 
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Chdir: %v", err)
 	}

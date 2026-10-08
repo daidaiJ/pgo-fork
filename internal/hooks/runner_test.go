@@ -9,13 +9,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 func TestRunnerRunStdinAndEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sh -c not available on windows")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	outFile := filepath.Join(dir, "captured.json")
 	envFile := filepath.Join(dir, "env.txt")
 
@@ -50,7 +52,7 @@ func TestRunnerExitCodes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sh -c not available on windows")
 	}
-	dir := t.TempDir()
+	dir := testenv.Dir(t)
 	r := &Runner{ProjectDir: dir}
 	ctx := context.Background()
 
@@ -100,7 +102,7 @@ func TestRunnerTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sh -c not available on windows")
 	}
-	r := &Runner{ProjectDir: t.TempDir()}
+	r := &Runner{ProjectDir: testenv.Dir(t)}
 	start := time.Now()
 	_, err := r.Run(context.Background(), HookConfig{Command: "sleep 5", Timeout: ptr(1)}, HookInput{})
 	if err == nil || !strings.Contains(err.Error(), "timed out") {

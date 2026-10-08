@@ -7,6 +7,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/hooks"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // sessionDispatcher builds a Dispatcher for a single SessionStart matcher.
@@ -15,7 +16,7 @@ func sessionDispatcher(t *testing.T, cmd string) *hooks.Dispatcher {
 	set := hooks.HookSet{
 		"SessionStart": {{Matcher: "*", Hooks: []hooks.HookConfig{{Command: cmd}}}},
 	}
-	d := hooks.NewDispatcher(set, t.TempDir(), nil)
+	d := hooks.NewDispatcher(set, testenv.Dir(t), nil)
 	if d == nil {
 		t.Fatal("expected non-nil dispatcher")
 	}
