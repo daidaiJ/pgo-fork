@@ -118,6 +118,106 @@ type ShadowedEntry struct {
 // String renders a shadowed entry as "name (tier)" for log lines.
 func (e ShadowedEntry) String() string { return fmt.Sprintf("%s (%s)", e.Name, e.Tier) }
 
+// Projection declares the loop-owned interactive face the front-ends project
+// for a command (T7.7 §4.4: the TUI opens its panel from the declaration, not
+// from a per-name intercept list). The set is closed data: a front-end switches
+// on it to build its projection of the face (grok: the client matches typed
+// command results to open modals), while the REPL/headless projectors degrade a
+// face they cannot project to the explicit unavailability notice ResolveOutcome
+// returns. Zero value ProjNone: a text/argument command that resolves through
+// its contract (Parse→Executor, Action, Run or Expand).
+type Projection int
+
+const (
+	// ProjNone declares no loop face: the command resolves through its
+	// executable contract (Parse/Action/Run/Expand).
+	ProjNone Projection = iota
+	// ProjQuit terminates the front-end loop (/exit, /quit).
+	ProjQuit
+	// ProjModelMenu is the bare-submit model chain dropdown (/model).
+	ProjModelMenu
+	// ProjThinkMenu is the bare-submit effort dropdown (/think, /effect).
+	ProjThinkMenu
+	// ProjSkillsPanel is the bare-submit skills toggle panel (/skills).
+	ProjSkillsPanel
+	// ProjMCPPanel is the bare-submit MCP server/tool panel (/mcp).
+	ProjMCPPanel
+	// ProjSessionsPicker opens the session picker (/sessions, /resume).
+	ProjSessionsPicker
+	// ProjContextPanel toggles the context-usage overlay (/context).
+	ProjContextPanel
+	// ProjRename renames the session title (/rename).
+	ProjRename
+	// ProjRebuild reconstructs the context off the UI loop (/rebuild).
+	ProjRebuild
+	// ProjCompact compacts the conversation off the UI loop (/compact).
+	ProjCompact
+	// ProjRemoteControl starts/stops the LAN mirror (/remote-control).
+	ProjRemoteControl
+	// ProjRewind lists/restores conversation rewind points (/rewind).
+	ProjRewind
+	// ProjREPLFace marks a command whose loop face lives in the REPL only
+	// (fork/clone/tree/export/import/copy/goal/btw/dream): the TUI and
+	// headless surfaces reject it explicitly until a panel lands.
+	ProjREPLFace
+)
+
+func (p Projection) String() string {
+	switch p {
+	case ProjQuit:
+		return "quit"
+	case ProjModelMenu:
+		return "model menu"
+	case ProjThinkMenu:
+		return "effort menu"
+	case ProjSkillsPanel:
+		return "skills panel"
+	case ProjMCPPanel:
+		return "mcp panel"
+	case ProjSessionsPicker:
+		return "sessions picker"
+	case ProjContextPanel:
+		return "context panel"
+	case ProjRename:
+		return "rename"
+	case ProjRebuild:
+		return "rebuild"
+	case ProjCompact:
+		return "compact"
+	case ProjRemoteControl:
+		return "remote control"
+	case ProjRewind:
+		return "rewind"
+	case ProjREPLFace:
+		return "REPL face"
+	default:
+		return "none"
+	}
+}
+
+// faceNotice is the phrase a front-end's unavailability notice uses for a
+// declared command it cannot project (T7.7 §6: execution or explicit
+// rejection, never a silent no-op).
+func faceNotice(p Projection) string {
+	switch p {
+	case ProjQuit:
+		return "loop command"
+	case ProjREPLFace:
+		return "REPL-face command — run pigo --no-tui"
+	case ProjNone:
+		return "declared without an executable face"
+	default:
+		return "TUI-face command"
+	}
+}
+
+// UnavailableNotice renders the explicit rejection a front-end shows when it
+// cannot project the command's declared face (T7.7 §6). ResolveOutcome and the
+// front-end projectors share it so the wording has one source.
+func (p Projection) UnavailableNotice(name string) string {
+	return fmt.Sprintf("(%s unavailable: %s)", name, faceNotice(p))
+}
+
 // SlashCommand is a resolved command: its name (without the leading "/"), a
 // short description for the command palette, and its source. A command is one
 // of three kinds, distinguished by which callback is set:
@@ -157,12 +257,13 @@ type SlashCommand struct {
 	// AudienceHumanOnly: fail-closed, a command stays human-only unless it
 	// explicitly opts in.
 	Audience Audience
-	// Interactive marks commands whose primary face is an interactive panel
-	// or dropdown the TUI opens on a bare submit (T7.3: "提交命令 → 面板").
-	// The parameter forms stay on Parse as the same command's non-interactive
-	// projection (user-ratified); the REPL projects the text form instead of
-	// faking the interaction.
-	Interactive bool
+	// Projection declares the loop-owned interactive face the front-ends
+	// project on submit (T7.7 §4.4). Zero value ProjNone: a text/argument
+	// command that resolves through its contract — the parameter forms stay
+	// on Parse as the same command's non-interactive projection (user
+	// ratified); a declared face the calling front-end cannot project degrades
+	// to the explicit unavailability notice ResolveOutcome returns.
+	Projection Projection
 	// Offered reports whether the command applies in the given loop state
 	// (T7.7 §4.2 applicability predicate). Nil means always offered; the
 	// menu, /help and dispatch share this one judgment (grok: "advertising
@@ -443,7 +544,11 @@ func (r *SlashRegistry) Resolve(input string) (prompt string, handled bool, err 
 // Kind:SlashAction, Message:<status>} — no prompt to run. For a known hybrid
 // (Run) command it RUNS the side effect and returns {Handled:true,
 // Kind:SlashPrompt, Message:<status>, Prompt:<text>} — the caller shows Message
-// then runs Prompt when non-empty. An unknown "/name" yields an error.
+// then runs Prompt when non-empty. A Parse command returns {Handled:true,
+// Kind:SlashIntent, Intent:<typed>} for the caller's Executor. A declared
+// command with no executable face (its Projection face lives in another
+// front-end) returns {Handled:true, Kind:SlashAction, Message:<unavailability
+// notice>} — never a silent no-op. An unknown "/name" yields an error.
 func (r *SlashRegistry) ResolveOutcome(input string) (SlashOutcome, error) {
 	trimmed := strings.TrimLeft(input, " \t")
 	if !strings.HasPrefix(trimmed, "/") {
@@ -479,6 +584,14 @@ func (r *SlashRegistry) ResolveOutcome(input string) (SlashOutcome, error) {
 		// surface first; the caller shows Message then runs Prompt if non-empty.
 		message, prompt := cmd.Run(args)
 		return SlashOutcome{Handled: true, Kind: SlashPrompt, Message: message, Prompt: prompt}, nil
+	}
+	if cmd.Expand == nil {
+		// A declaration with no executable face (T7.7 §6): identity-only
+		// entries whose loop face another front-end owns resolve to an
+		// explicit unavailability outcome, never a silent no-op.
+		return SlashOutcome{Handled: true, Kind: SlashAction,
+			Message: cmd.Projection.UnavailableNotice(cmd.Name),
+		}, nil
 	}
 	return SlashOutcome{Handled: true, Kind: SlashPrompt, Prompt: cmd.Expand(args)}, nil
 }

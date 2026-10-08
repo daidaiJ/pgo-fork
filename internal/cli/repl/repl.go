@@ -289,10 +289,12 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 
 	// The slash executor (T7.7): the registry resolves a typed intent; this
 	// executor runs it against the loop's own state. The hooks are the loop
-	// projections the former /status, /session and /compact intercepts
-	// performed: the full status.RunStatus report through the Host, the
-	// shared /session summary, and the blocking manual compaction with its
-	// persist-after ordering.
+	// projections the former /status, /session, /compact, /memory and
+	// /rebuild intercepts performed: the full status.RunStatus report through
+	// the Host, the shared /session summary, the blocking manual compaction /
+	// rebuild with their persist-after ordering, and the memory report. The
+	// report-printing hooks write straight to the tee'd out and return "" —
+	// the outcome message stays empty so nothing prints twice.
 	deps.exec = &prompts.Executor{
 		Live:    deps.live,
 		Creds:   deps.creds,
@@ -312,6 +314,16 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			msg := cli.RunManualCompact(&deps.agentCtx.Messages, deps.persisted, deps.live, deps.creds)
 			cli.PersistTurn(out, &deps)
 			return msg
+		},
+		Memory: func() string {
+			memstatus.RunMemory(out, deps.memstore, deps.memoryRoot, deps.header.ID,
+				deps.agentCtx.Messages, deps.live.ContextWindow)
+			return ""
+		},
+		Rebuild: func() string {
+			runManualRebuild(out, deps)
+			cli.PersistTurn(out, &deps)
+			return ""
 		},
 	}
 
@@ -475,18 +487,6 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		if line == "/exit" || line == "/quit" {
 			return nil
 		}
-		if line == "/rebuild" {
-			// /rebuild is intercepted here for the same reason as /compact: it
-			// reconstructs the whole message list (checkpoint summary + retained
-			// tail) and mutates the shared context, which a slash Action closure
-			// cannot do. It reloads a persisted checkpoint when present, else falls
-			// back to summarizing compaction. Like /compact, the T3.3 marker model
-			// means the rebuild only INSERTS a marker — the plain tail append below
-			// carries it into the tree.
-			runManualRebuild(out, deps)
-			cli.PersistTurn(out, &deps)
-			continue
-		}
 		if line == "/clone" || line == "/fork" || strings.HasPrefix(line, "/fork ") {
 			// /fork and /clone are intercepted here (like /compact) because they
 			// switch the active session — replacing the header and the shared
@@ -532,15 +532,6 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			// intercepted here (not a slash Action) because it must read the live
 			// message list, which an Action closure cannot reach.
 			runCopy(out, &deps)
-			continue
-		}
-		if line == "/memory" || strings.HasPrefix(line, "/memory ") {
-			// /memory prints the persistent-memory + infinite-context report.
-			// Like /status it needs live state (the memory store, memory root,
-			// session id, and messages) that a string→string Action closure
-			// cannot reach, so it is intercepted here.
-			memstatus.RunMemory(out, deps.memstore, deps.memoryRoot, deps.header.ID,
-				deps.agentCtx.Messages, deps.live.ContextWindow)
 			continue
 		}
 		if line == "/dream" || strings.HasPrefix(line, "/dream ") {

@@ -62,14 +62,14 @@ func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 		Name:         "skills",
 		ArgumentHint: "[list|disable|enable|info|reload]",
 		Description:  "list skills or toggle one: /skills disable <name> (writes config; next-session effect)",
-		Interactive:  true,
+		Projection:   runtime.ProjSkillsPanel,
 		Parse:        parseSkills,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "mcp",
 		ArgumentHint: "[enable|disable <server> | tool enable|disable <server> <tool> | reload <server>]",
 		Description:  "MCP server and per-tool switches, connection state and schema reload",
-		Interactive:  true,
+		Projection:   runtime.ProjMCPPanel,
 		Parse:        parseMCP,
 	})
 }

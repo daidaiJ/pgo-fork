@@ -38,9 +38,17 @@ type Executor struct {
 	// Session renders the /session summary. Nil → unavailable notice.
 	Session func() string
 	// Compact runs a manual compaction with loop ownership (REPL: blocking
-	// stream + PersistTurn; the TUI keeps its async projection until slice 2
-	// folds the intercept list). Nil → unavailable notice.
+	// stream + PersistTurn; the TUI projects the ProjCompact face off the tea
+	// loop instead). Nil → unavailable notice.
 	Compact func(userContext string) string
+	// Memory renders the /memory report over the front-end's memory state
+	// (both interactive front-ends share memstatus.RunMemory). Nil →
+	// unavailable notice.
+	Memory func() string
+	// Rebuild runs a manual context rebuild with loop ownership (REPL:
+	// blocking runManualRebuild core + PersistTurn; the TUI projects the
+	// ProjRebuild face off the tea loop instead). Nil → unavailable notice.
+	Rebuild func() string
 }
 
 // Execute runs one parsed intent and returns the outcome to project.
@@ -149,6 +157,16 @@ func (x *Executor) execute(it runtime.Intent) string {
 			return "(compact unavailable: no active session)"
 		}
 		return x.Compact(it.UserContext)
+	case runtime.IntentMemoryShow:
+		if x.Memory == nil {
+			return "(memory unavailable: no memory state in this front-end)"
+		}
+		return x.Memory()
+	case runtime.IntentRebuild:
+		if x.Rebuild == nil {
+			return "(rebuild unavailable: no active session)"
+		}
+		return x.Rebuild()
 	default:
 		return fmt.Sprintf("unknown intent %s", it.Kind)
 	}

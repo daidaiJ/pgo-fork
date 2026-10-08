@@ -86,6 +86,12 @@ const (
 	IntentSessionShow
 	// IntentCompact compacts the conversation now — /compact.
 	IntentCompact
+	// IntentMemoryShow renders the persistent-memory + infinite-context
+	// report — /memory.
+	IntentMemoryShow
+	// IntentRebuild reconstructs the conversation context from the session's
+	// persisted checkpoint (falling back to summarizing compaction) — /rebuild.
+	IntentRebuild
 )
 
 func (k IntentKind) String() string {
@@ -124,6 +130,10 @@ func (k IntentKind) String() string {
 		return "session-show"
 	case IntentCompact:
 		return "compact"
+	case IntentMemoryShow:
+		return "memory-show"
+	case IntentRebuild:
+		return "rebuild"
 	default:
 		return "unknown"
 	}

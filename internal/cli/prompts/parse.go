@@ -142,3 +142,22 @@ func parseCompact(args string) (runtime.Intent, error) {
 	}
 	return runtime.Intent{Kind: runtime.IntentCompact}, nil
 }
+
+// parseMemory refuses arguments — the memory report renders the live state and
+// takes none (the former intercept silently ignored them; T7.7: explicit
+// rejection instead).
+func parseMemory(args string) (runtime.Intent, error) {
+	if strings.TrimSpace(args) != "" {
+		return runtime.Intent{}, fmt.Errorf("memory: takes no arguments")
+	}
+	return runtime.Intent{Kind: runtime.IntentMemoryShow}, nil
+}
+
+// parseRebuild refuses arguments — the rebuild works from the persisted
+// checkpoint and takes none.
+func parseRebuild(args string) (runtime.Intent, error) {
+	if strings.TrimSpace(args) != "" {
+		return runtime.Intent{}, fmt.Errorf("rebuild: takes no arguments")
+	}
+	return runtime.Intent{Kind: runtime.IntentRebuild}, nil
+}

@@ -1109,14 +1109,36 @@ func (m Model) submitSlashSelected() (tea.Model, tea.Cmd) {
 // executor builds the slash Executor (T7.7) against the model's current
 // bindings: the surface deps + creds the registry was assembled with (the
 // session-less constructor keeps its own; withSession rebinds to the
-// session's) and the status/session renderers over the live session. The
-// intercepts stay TUI-owned for now (/compact's async projection among
-// them — slice 2 folds the list), so no Compact hook is wired.
+// session's) and the status/session/memory renderers over the live session.
+// The loop-owned projections (/compact, /rebuild) are declared Projection
+// faces the TUI keeps off the tea loop (slice 2), so no Compact/Rebuild hook
+// is wired — the REPL's blocking hooks cover the registry path there.
 func (m Model) executor() *prompts.Executor {
 	ex := &prompts.Executor{
 		Live:    m.live,
 		Creds:   m.slashCreds,
 		Surface: m.slashDeps,
+	}
+	// /memory renders from live memory state the way the former intercept did:
+	// the report degrades to an empty store without a session (the hook is
+	// unconditional, so the TUI face never reports the executor unavailable).
+	ex.Memory = func() string {
+		var buf bytes.Buffer
+		var store *memory.Store
+		var memoryRoot, sessionID string
+		var msgs agentcore.MessageList
+		window := 0
+		if m.live != nil {
+			window = m.live.ContextWindow
+		}
+		if s := m.session; s != nil {
+			store = s.memstore
+			memoryRoot = s.memoryRoot
+			sessionID = s.header.ID
+			msgs = s.agentCtx.Messages
+		}
+		memstatus.RunMemory(&buf, store, memoryRoot, sessionID, msgs, window)
+		return strings.TrimRight(buf.String(), "\n")
 	}
 	if s := m.session; s != nil {
 		ex.Status = func() string {
@@ -1134,256 +1156,78 @@ func (m Model) executor() *prompts.Executor {
 }
 
 // runSlash resolves a slash-command line against the shared registry and folds
-// its outcome into the transcript, mirroring the REPL's dispatch: the invocation
-// is echoed as a user block; an action command's status (e.g. /help, /model)
-// renders as a system block; a prompt/skill command's expanded text starts a
-// run; a hybrid (plugin) command shows its notifications then runs its prompt.
-// An unknown command surfaces the resolver error as a system block.
+// its outcome into the transcript. The command's declared Projection face
+// drives the dispatch (T7.7 slice 2): each face the TUI projects has exactly
+// one projection site in the switch below — there is no per-name intercept
+// list. Argument forms and faces the TUI does not project fall through to
+// registry resolution: a Parse command runs through the intent Executor, an
+// action command's status renders as a system block, a prompt/skill command's
+// expanded text starts a run, a hybrid (plugin) command shows its notifications
+// then runs its prompt, and a declared command with no executable face on this
+// path surfaces the explicit unavailability notice.
 func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
-	// /exit and /quit terminate the TUI, mirroring the REPL loop which intercepts
-	// them before slash resolution. They register only as no-op /help builtins, so
-	// without this the registry would resolve them to an empty action.
-	if line == "/exit" || line == "/quit" {
-		m.shutdownRemote()
-		m.quitting = true
-		return m, tea.Quit
-	}
-	// Bare "/model" / "/think" / "/effect" drop into their interactive
-	// dropdowns instead of the registry's text echo (T7.3 user redesign: a
-	// submitted command opens its panel; the argument forms keep the registry
-	// path). Typing the trailing space opens the same popup while composing.
-	if trimmed := strings.TrimSpace(line); trimmed == "/model" || trimmed == "/think" || trimmed == "/effect" {
-		if trimmed != "/model" {
-			trimmed = "/think" // /effect is an alias; one popup grammar
-		}
-		m.input.SetValue(trimmed + " ")
-		m.syncMenus()
-		m.relayout()
-		return m, nil
-	}
-	// /memory is intercepted before registry resolution (like /rebuild): it
-	// prints the persistent-memory + infinite-context report, reading the live
-	// memory store, memory root, session id, and messages that a slash Action
-	// closure (string→string) cannot reach.
-	if line == "/memory" || strings.HasPrefix(line, "/memory ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		var buf bytes.Buffer
-		var store *memory.Store
-		var memoryRoot, sessionID string
-		var msgs agentcore.MessageList
-		window := m.live.ContextWindow
-		if m.session != nil {
-			store = m.session.memstore
-			memoryRoot = m.session.memoryRoot
-			sessionID = m.session.header.ID
-			msgs = m.session.agentCtx.Messages
-		}
-		memstatus.RunMemory(&buf, store, memoryRoot, sessionID, msgs, window)
-		m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
-		m.relayout()
-		return m, nil
-	}
-	// /status and /session (T6.9 G-4 → T7.7) resolve through the registry: the
-	// intent executor's Status/Session hooks render the shared reports, so the
-	// TUI and the REPL project the same renderers (the intercepts are gone).
-	// /rebuild is intercepted before registry resolution (like /exit): it
-	// reconstructs the shared context from a persisted checkpoint (or falls back
-	// to compaction) and replaces the message list in place — work a slash Action
-	// closure cannot do. It reuses the compacting-indicator: the spinner is armed
-	// and pinned to "Preparing conversation context…" while the rebuild runs off
-	// the tea loop, and rebuildDoneMsg clears it and reports the result.
-	if line == "/rebuild" {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		if m.session == nil {
-			m.transcript.addSystem("(rebuild unavailable: no active session)")
-			m.relayout()
-			return m, nil
-		}
-		m.spinner.begin(time.Now())
-		m.spinner.pin("Preparing conversation context")
-		m.running = true
-		m.relayout()
-		return m, tea.Batch(m.session.rebuildCmd(), m.tickSpinner())
-	}
-	// /compact is intercepted before registry resolution (like /rebuild): the
-	// summarization stream must run off the tea loop and insert the marker
-	// into the live context — loop-owned work the intent executor cannot do
-	// synchronously (T7.7: the intent is still declared and parsed by the
-	// shared contract; this is the TUI's async projection, and compactDoneMsg
-	// folds the result into the transcript).
-	if line == "/compact" {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		switch {
-		case m.session == nil:
-			m.transcript.addSystem("(compact unavailable: no active session)")
-		case m.running:
-			m.transcript.addSystem("(compact: a run is in progress — compact once it finishes)")
-		default:
-			m.spinner.begin(time.Now())
-			m.spinner.pin("Compacting conversation")
-			m.running = true
-			m.relayout()
-			return m, tea.Batch(m.session.compactCmd(), m.tickSpinner())
-		}
-		m.relayout()
-		return m, nil
-	}
-	// /sessions (grok /resume alias included) is intercepted before registry
-	// resolution (like /context): it opens the session-picker overlay (T7.3
-	// S8, grok picker alignment), which owns panel state and the resume/delete
-	// actions a slash Action closure cannot reach.
-	if line == "/sessions" || strings.HasPrefix(line, "/sessions ") ||
-		line == "/resume" || strings.HasPrefix(line, "/resume ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		switch {
-		case m.session == nil:
-			m.transcript.addSystem("(sessions unavailable: no active session)")
-		case m.running:
-			m.transcript.addSystem("(sessions: a run is in progress — open the picker once it finishes)")
-		default:
-			entries, note := gatherSessions(m.session.store, m.session.header.ID)
-			m.sessionsP = sessionsPanel{
-				open:    true,
-				entries: entries,
-				note:    note,
-			}
-		}
-		m.relayout()
-		return m, nil
-	}
-	// /rename is intercepted before registry resolution (like /sessions): it
-	// renames the live session's display title (T7.3 S2) and persists the
-	// header through Store.SetTitle — header mutation a slash Action closure
-	// cannot reach. The terminal title follows on the next frame: View composes
-	// tea.View.WindowTitle from the session header (see termtitle.go).
-	if line == "/rename" || strings.HasPrefix(line, "/rename ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		if m.session == nil {
-			m.transcript.addSystem("(rename unavailable: no active session)")
-			m.relayout()
-			return m, nil
-		}
-		m.transcript.addSystem(renameMessage(m.session, strings.TrimPrefix(line, "/rename")))
-		m.relayout()
-		return m, nil
-	}
-	// /skills and /mcp (bare) open the interactive panels (T7.3 user
-	// redesign): grok opens its ExtensionsModal on these commands, so the TUI
-	// opens a panel instead of echoing the arg-action text. The parameter
-	// forms stay on the registry action as the power-user path.
-	if line == "/skills" || line == "/skills " || line == "/mcp" || line == "/mcp " {
-		cmdName := strings.TrimPrefix(strings.TrimSpace(line), "/")
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		switch {
-		case m.session == nil:
-			m.transcript.addSystem("(" + cmdName + " unavailable: no active session)")
-		case m.running:
-			m.transcript.addSystem("(" + cmdName + ": a run is in progress — open the panel once it finishes)")
-		default:
-			if cmdName == "skills" {
-				rows, note := gatherSkillRows(m.session)
-				m.skillsP = listPanel{open: true, title: "技能", hint: "↑↓ 选择 · Enter 启用/禁用 · Esc 关闭", rows: rows, note: note}
-			} else {
-				rows, note := gatherMCPRows(m.session)
-				m.mcpP = listPanel{open: true, title: "MCP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
-			}
-		}
-		m.relayout()
-		return m, nil
-	}
-	// /context is intercepted before registry resolution (like /memory): it
-	// toggles the context-usage overlay panel (grok context panel alignment),
-	// reading the live session's telemetry/tool/skill state that a slash Action
-	// closure cannot reach.
-	if line == "/context" || strings.HasPrefix(line, "/context ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		m.ctxPanel.toggle()
-		m.relayout()
-		return m, nil
-	}
-	// /remote-control is intercepted before registry resolution (like /rebuild):
-	// it starts/stops the LAN mirror server, which owns state (server, bridge,
-	// listener Cmd) a string→string slash Action cannot hold.
-	if line == "/remote-control" || strings.HasPrefix(line, "/remote-control ") {
-		return m.runRemoteControl(line)
-	}
-	// /rewind is intercepted before registry resolution (like /rebuild): with no
-	// argument it lists the tree-derived restore points; with "/rewind <n>" it
-	// moves the active conversation leaf back before the selected turn and
-	// refills the input with that turn's prompt (T3.1 G1/G2/G4). The TUI keeps
-	// no file-snapshot journal, so rewind here is conversation-only.
-	if line == "/rewind" || strings.HasPrefix(line, "/rewind ") {
-		m.transcript.addUser(line)
-		m.input.Clear()
-		m.closeMenus()
-		if m.session == nil {
-			m.transcript.addSystem("(rewind unavailable: no active session)")
-			m.relayout()
-			return m, nil
-		}
-		points, err := cli.DeriveRewindPoints(m.session.store, m.session.header.ID, m.session.curLeaf, nil)
-		if err != nil {
-			m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", err))
-			m.relayout()
-			return m, nil
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			var buf bytes.Buffer
-			cli.PrintRewindPoints(&buf, points)
-			m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
-			m.relayout()
-			return m, nil
-		}
-		n, convErr := strconv.Atoi(fields[1])
-		if convErr != nil || n < 1 || n > len(points) {
-			m.transcript.addSystem(fmt.Sprintf("invalid selection %q — run /rewind to list points (1..%d)", fields[1], len(points)))
-			m.relayout()
-			return m, nil
-		}
-		p := points[n-1]
-		var msgs agentcore.MessageList
-		if p.LeafID != "" {
-			loaded, found, loadErr := cli.LoadLeafPath(m.session.store, m.session.header.ID, p.LeafID)
-			if loadErr != nil {
-				m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", loadErr))
+	if name, ok := slashCommandName(line); ok {
+		if cmd, found := m.slash.Lookup(name); found {
+			switch cmd.Projection {
+			case runtime.ProjQuit:
+				m.shutdownRemote()
+				m.quitting = true
+				return m, tea.Quit
+			case runtime.ProjModelMenu, runtime.ProjThinkMenu:
+				// The bare form opens the dropdown; the argument forms are
+				// the same command's non-interactive projection and resolve
+				// through the registry. Typing the trailing space opens the
+				// same popup while composing.
+				if strings.TrimSpace(line) != "/"+name {
+					break
+				}
+				buffer := "/model "
+				if cmd.Projection == runtime.ProjThinkMenu {
+					buffer = "/think " // /effect is an alias; one popup grammar
+				}
+				m.input.SetValue(buffer)
+				m.syncMenus()
+				m.relayout()
+				return m, nil
+			case runtime.ProjSkillsPanel:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the parameter form is the text projection (Parse)
+				}
+				return m.openSkillsPanel(line)
+			case runtime.ProjMCPPanel:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the parameter form is the text projection (Parse)
+				}
+				return m.openMCPPanel(line)
+			case runtime.ProjSessionsPicker:
+				return m.openSessionsPicker(line)
+			case runtime.ProjRename:
+				return m.renameSession(line)
+			case runtime.ProjRebuild:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the argument form resolves (and is refused) on Parse
+				}
+				return m.rebuildContext(line)
+			case runtime.ProjCompact:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the argument form resolves (and is refused) on Parse
+				}
+				return m.compactNow(line)
+			case runtime.ProjContextPanel:
+				return m.toggleContextPanel(line)
+			case runtime.ProjRemoteControl:
+				return m.runRemoteControl(line)
+			case runtime.ProjRewind:
+				return m.rewindConversation(line)
+			case runtime.ProjREPLFace:
+				// The loop face lives in the REPL (--no-tui) — the TUI
+				// rejects explicitly (T7.7 §6: never a silent no-op).
+				m.beginSlashInput(line)
+				m.transcript.addSystem(cmd.Projection.UnavailableNotice(name))
 				m.relayout()
 				return m, nil
 			}
-			if !found {
-				m.transcript.addSystem("pigo: restore point's conversation node is no longer in the tree; conversation left unchanged")
-				m.relayout()
-				return m, nil
-			}
-			msgs = loaded
 		}
-		m.session.agentCtx.Messages = msgs
-		m.session.curLeaf = p.LeafID
-		m.session.persisted = len(msgs)
-		note := fmt.Sprintf("rewound to before point %d — the prompt is back in the input line", n)
-		if p.Lossy {
-			note += "\nnote: this point predates a compaction; context was rebuilt from the summary"
-		}
-		m.transcript.addSystem(note)
-		if p.Prompt != "" {
-			m.input.SetValue(p.Prompt)
-		}
-		m.relayout()
-		return m, nil
 	}
 	m.transcript.addUser(line)
 	m.input.Clear()
@@ -1418,6 +1262,219 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.startPrompt(outcome.Prompt)
+}
+
+// slashCommandName extracts the command name (without the leading "/") from a
+// slash-command line: "/name" or "/name args…". ok is false for non-slash
+// input.
+func slashCommandName(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", false
+	}
+	rest := trimmed[1:]
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		return rest[:i], true
+	}
+	return rest, true
+}
+
+// beginSlashInput is the shared preamble of every projection that owns the
+// line: echo it into the transcript, clear the composer, shut the popups.
+func (m *Model) beginSlashInput(line string) {
+	m.transcript.addUser(line)
+	m.input.Clear()
+	m.closeMenus()
+}
+
+// openSessionsPicker projects the ProjSessionsPicker face (T7.3 S8, grok
+// picker alignment): the overlay owns panel state and the resume/delete
+// actions, so the projection opens it from the declaration. Degraded to an
+// explicit notice without a session or mid-run.
+func (m Model) openSessionsPicker(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(sessions unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(sessions: a run is in progress — open the picker once it finishes)")
+	default:
+		entries, note := gatherSessions(m.session.store, m.session.header.ID)
+		m.sessionsP = sessionsPanel{
+			open:    true,
+			entries: entries,
+			note:    note,
+		}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// renameSession projects the ProjRename face (T7.3 S2): it renames the live
+// session's display title and persists the header through Store.SetTitle —
+// header mutation the intent executor cannot reach. The terminal title follows
+// on the next frame: View composes tea.View.WindowTitle from the session
+// header (see termtitle.go).
+func (m Model) renameSession(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	if m.session == nil {
+		m.transcript.addSystem("(rename unavailable: no active session)")
+		m.relayout()
+		return m, nil
+	}
+	m.transcript.addSystem(renameMessage(m.session, strings.TrimPrefix(line, "/rename")))
+	m.relayout()
+	return m, nil
+}
+
+// rebuildContext projects the ProjRebuild face: it reconstructs the shared
+// context from a persisted checkpoint (or falls back to compaction) and
+// replaces the message list in place — loop-owned work the intent executor
+// cannot do synchronously. It reuses the compacting-indicator: the spinner is
+// armed and pinned to "Preparing conversation context…" while the rebuild runs
+// off the tea loop, and rebuildDoneMsg clears it and reports the result.
+func (m Model) rebuildContext(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	if m.session == nil {
+		m.transcript.addSystem("(rebuild unavailable: no active session)")
+		m.relayout()
+		return m, nil
+	}
+	m.spinner.begin(time.Now())
+	m.spinner.pin("Preparing conversation context")
+	m.running = true
+	m.relayout()
+	return m, tea.Batch(m.session.rebuildCmd(), m.tickSpinner())
+}
+
+// compactNow projects the ProjCompact face (T7.7 slice 1's async projection,
+// now declaration-driven): the summarization stream runs off the tea loop and
+// inserts the marker into the live context — work the intent executor cannot
+// do synchronously; compactDoneMsg folds the result into the transcript.
+func (m Model) compactNow(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(compact unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(compact: a run is in progress — compact once it finishes)")
+	default:
+		m.spinner.begin(time.Now())
+		m.spinner.pin("Compacting conversation")
+		m.running = true
+		m.relayout()
+		return m, tea.Batch(m.session.compactCmd(), m.tickSpinner())
+	}
+	m.relayout()
+	return m, nil
+}
+
+// toggleContextPanel projects the ProjContextPanel face (grok context panel
+// alignment): it toggles the context-usage overlay, which reads the live
+// session's telemetry/tool/skill state a text projection cannot carry.
+func (m Model) toggleContextPanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	m.ctxPanel.toggle()
+	m.relayout()
+	return m, nil
+}
+
+// openSkillsPanel projects the ProjSkillsPanel face (T7.3 interactive
+// redesign, grok ExtensionsModal Skills-tab alignment): the panel is modal
+// state, so the TUI opens it instead of echoing the arg-action text.
+func (m Model) openSkillsPanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(skills unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(skills: a run is in progress — open the panel once it finishes)")
+	default:
+		rows, note := gatherSkillRows(m.session)
+		m.skillsP = listPanel{open: true, title: "技能", hint: "↑↓ 选择 · Enter 启用/禁用 · Esc 关闭", rows: rows, note: note}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// openMCPPanel projects the ProjMCPPanel face (T7.3, grok ExtensionsModal
+// MCP-tab alignment): the two-level server/tool panel is modal state.
+func (m Model) openMCPPanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(mcp unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(mcp: a run is in progress — open the panel once it finishes)")
+	default:
+		rows, note := gatherMCPRows(m.session)
+		m.mcpP = listPanel{open: true, title: "MCP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// rewindConversation projects the ProjRewind face (T3.1 G1/G2/G4): with no
+// argument it lists the tree-derived restore points; with "/rewind <n>" it
+// moves the active conversation leaf back before the selected turn and refills
+// the input with that turn's prompt. The TUI keeps no file-snapshot journal,
+// so rewind here is conversation-only.
+func (m Model) rewindConversation(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	if m.session == nil {
+		m.transcript.addSystem("(rewind unavailable: no active session)")
+		m.relayout()
+		return m, nil
+	}
+	points, err := cli.DeriveRewindPoints(m.session.store, m.session.header.ID, m.session.curLeaf, nil)
+	if err != nil {
+		m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", err))
+		m.relayout()
+		return m, nil
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		var buf bytes.Buffer
+		cli.PrintRewindPoints(&buf, points)
+		m.transcript.addSystem(strings.TrimRight(buf.String(), "\n"))
+		m.relayout()
+		return m, nil
+	}
+	n, convErr := strconv.Atoi(fields[1])
+	if convErr != nil || n < 1 || n > len(points) {
+		m.transcript.addSystem(fmt.Sprintf("invalid selection %q — run /rewind to list points (1..%d)", fields[1], len(points)))
+		m.relayout()
+		return m, nil
+	}
+	p := points[n-1]
+	var msgs agentcore.MessageList
+	if p.LeafID != "" {
+		loaded, found, loadErr := cli.LoadLeafPath(m.session.store, m.session.header.ID, p.LeafID)
+		if loadErr != nil {
+			m.transcript.addSystem(fmt.Sprintf("pigo: cannot read session tree: %v", loadErr))
+			m.relayout()
+			return m, nil
+		}
+		if !found {
+			m.transcript.addSystem("pigo: restore point's conversation node is no longer in the tree; conversation left unchanged")
+			m.relayout()
+			return m, nil
+		}
+		msgs = loaded
+	}
+	m.session.agentCtx.Messages = msgs
+	m.session.curLeaf = p.LeafID
+	m.session.persisted = len(msgs)
+	note := fmt.Sprintf("rewound to before point %d — the prompt is back in the input line", n)
+	if p.Lossy {
+		note += "\nnote: this point predates a compaction; context was rebuilt from the summary"
+	}
+	m.transcript.addSystem(note)
+	if p.Prompt != "" {
+		m.input.SetValue(p.Prompt)
+	}
+	m.relayout()
+	return m, nil
 }
 
 // recordHistory appends an submitted input to the browse history (skipping a

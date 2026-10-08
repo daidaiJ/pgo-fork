@@ -348,20 +348,22 @@ func formatNotifications(notes []plugin.CommandNotification) string {
 }
 
 // RegisterLiveCommands installs the contract commands (T7.7): /model
-// /models /think /effect /status /session /compact declare identity plus a
-// pure Parse (parse.go); their Execute faces live in the front-end Executor
-// (executor.go). /help stays an Action closure — it renders the registry
-// itself. live and creds remain the wiring seam the front-ends pass; the
-// Executor carries them to the Execute face.
+// /models /think /effect /status /session /compact /memory /rebuild declare
+// identity plus a pure Parse (parse.go); their Execute faces live in the
+// front-end Executor (executor.go). /help stays an Action closure — it renders
+// the registry itself. The remaining built-ins are loop-face declarations:
+// identity plus a Projection (T7.7 slice 2), no Action closure. live and creds
+// remain the wiring seam the front-ends pass; the Executor carries them to the
+// Execute face.
 func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, creds *provider.CredentialStore) {
 	// T7.7 contract command: Parse is pure (parse.go); the Execute face — the
-	// former closure body — lives in Executor.modelSwitch. Interactive marks
-	// the bare-submit dropdown projection the TUI opens.
+	// former closure body — lives in Executor.modelSwitch. Projection marks
+	// the bare-submit dropdown the TUI opens.
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "model",
 		Description:  "view or switch the active model: /model [model-id] [effort] (see /models for presets)",
 		ArgumentHint: "[model-id] [effort]",
-		Interactive:  true,
+		Projection:   runtime.ProjModelMenu,
 		Parse:        parseModel,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
@@ -371,20 +373,20 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 	})
 	// T7.7 contract commands: /think and its /effect alias share one Parse
 	// (parse.go); the Execute face — the former thinkAction body — lives in
-	// Executor.execute. Interactive marks the bare-submit dropdown the TUI
+	// Executor.execute. Projection marks the bare-submit dropdown the TUI
 	// opens for both names.
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "think",
 		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
 		Description:  "view or switch the reasoning-effort level; takes effect on the next turn",
-		Interactive:  true,
+		Projection:   runtime.ProjThinkMenu,
 		Parse:        parseThink,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "effect",
 		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
 		Description:  "alias of /think: view or switch the reasoning-effort level",
-		Interactive:  true,
+		Projection:   runtime.ProjThinkMenu,
 		Parse:        parseThink,
 	})
 	// T7.7 contract commands: /status /session /compact were an intercept or
@@ -404,7 +406,24 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "compact",
 		Description: "summarize and compact the conversation context now",
+		Projection:  runtime.ProjCompact,
 		Parse:       parseCompact,
+	})
+	// T7.7 slice 2 contract commands: /memory and /rebuild were REPL+TUI
+	// intercepts — Parse here, Execute in the front-end's Executor (Memory/
+	// Rebuild hooks). /rebuild also declares the TUI's off-the-loop projection
+	// (ProjRebuild); /memory needs none — both front-ends render the report
+	// through the hook.
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "memory",
+		Description: "show the persistent-memory + infinite-context report",
+		Parse:       parseMemory,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "rebuild",
+		Description: "reconstruct the conversation context from the persisted checkpoint",
+		Projection:  runtime.ProjRebuild,
+		Parse:       parseRebuild,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "help",
@@ -429,33 +448,41 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			return b.String()
 		},
 	})
-	// /exit, /quit, /fork, /clone, /tree, /rewind, /export, /import, /copy,
-	// /goal, /btw, /dream and /remote-control are intercepted by the REPL loop
-	// before slash resolution (they must return from the loop, run an agent
-	// stream, or read/swap the active session/leaf — none of which an Action
-	// closure can do). They are registered here only so /help lists them; their
-	// Action is never actually reached. /compact and /session left this table
-	// in T7.7 slice 1 — they are contract commands now (Parse + Executor).
-	for _, c := range []struct{ name, desc string }{
-		{"exit", "exit the REPL"},
-		{"quit", "exit the REPL"},
-		{"fork", "branch from a historical message into a new session: /fork [n]"},
-		{"clone", "duplicate the current session into an independent branch"},
-		{"tree", "show the session branch tree; switch active branch: /tree [n]"},
-		{"rewind", "roll files and the conversation back to before an earlier turn: /rewind [n]"},
-		{"export", "export the session to a file: /export [path.jsonl|path.html]"},
-		{"import", "import a JSONL export as a new session: /import <path.jsonl>"},
-		{"copy", "copy the most recent assistant reply to the clipboard"},
-		{"goal", "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear"},
-		{"btw", "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)"},
-		{"dream", "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing"},
-		{"remote-control", "mirror this session to a phone/browser on your LAN: /remote-control [stop|status]"},
+	// Loop-face declarations (T7.7 slice 2): the former stub table, now
+	// identity + Projection with no Action closure. /help and the completion
+	// menu render from these declarations; a front-end that cannot project a
+	// face gets the explicit unavailability notice from ResolveOutcome —
+	// never the old silent stub no-op.
+	//
+	//   - exit/quit terminate the front-end loop (both interactive faces).
+	//   - sessions/resume/rename/context carry TUI faces; the REPL resolves
+	//     them to the TUI-face notice until its own projections land
+	//     (slice 3). remote-control/rewind carry TUI faces too, and the REPL
+	//     loop still intercepts them ahead of resolution with its own
+	//     implementations.
+	//   - The REPL-face commands (fork … dream) execute in the REPL loop
+	//     only; the TUI rejects them explicitly (pinned by the TUI's phantom
+	//     rejection test).
+	for _, c := range []runtime.SlashCommand{
+		{Name: "exit", Description: "exit pigo", Projection: runtime.ProjQuit},
+		{Name: "quit", Description: "exit pigo", Projection: runtime.ProjQuit},
+		{Name: "sessions", Description: "open the session picker: browse, resume or delete sessions", Projection: runtime.ProjSessionsPicker},
+		{Name: "resume", Description: "alias of /sessions: open the session picker", Projection: runtime.ProjSessionsPicker},
+		{Name: "rename", Description: "rename the session's display title (terminal title follows)", ArgumentHint: "<title|--auto>", Projection: runtime.ProjRename},
+		{Name: "context", Description: "toggle the context-usage overlay panel", Projection: runtime.ProjContextPanel},
+		{Name: "remote-control", Description: "mirror this session to a phone/browser on your LAN: /remote-control [stop|status]", Projection: runtime.ProjRemoteControl},
+		{Name: "rewind", Description: "roll files and the conversation back to before an earlier turn: /rewind [n]", Projection: runtime.ProjRewind},
+		{Name: "fork", Description: "branch from a historical message into a new session: /fork [n]", Projection: runtime.ProjREPLFace},
+		{Name: "clone", Description: "duplicate the current session into an independent branch", Projection: runtime.ProjREPLFace},
+		{Name: "tree", Description: "show the session branch tree; switch active branch: /tree [n]", Projection: runtime.ProjREPLFace},
+		{Name: "export", Description: "export the session to a file: /export [path.jsonl|path.html]", Projection: runtime.ProjREPLFace},
+		{Name: "import", Description: "import a JSONL export as a new session: /import <path.jsonl>", Projection: runtime.ProjREPLFace},
+		{Name: "copy", Description: "copy the most recent assistant reply to the clipboard", Projection: runtime.ProjREPLFace},
+		{Name: "goal", Description: "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear", Projection: runtime.ProjREPLFace},
+		{Name: "btw", Description: "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)", Projection: runtime.ProjREPLFace},
+		{Name: "dream", Description: "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing", Projection: runtime.ProjREPLFace},
 	} {
-		reg.AddBuiltin(runtime.SlashCommand{
-			Name:        c.name,
-			Description: c.desc,
-			Action:      func(string) string { return "" },
-		})
+		reg.AddBuiltin(c)
 	}
 }
 

@@ -1,20 +1,14 @@
 package tui
 
-// Regression pin for the phantom slash commands (T7.7, spec
-// wiki/port/slash-command-surface.md §4.7): the shared registry advertises 14
-// REPL-intercepted built-ins as stubs whose Action returns "" (internal/cli/
-// prompts/registry.go, "registered here only so /help lists them"). The TUI
-// intercepts five of those names (/exit /quit /session /remote-control
-// /rewind); the remaining nine fall through runSlash's intercept chain to
-// registry resolution and silently do nothing: the line is echoed, the input
-// clears, and neither a status message nor a run follows. These tests pin the
-// defect exactly so the T7.7 contract refactor replaces it with execution or
-// an explicit rejection without the advertised surface regressing unnoticed —
-// flip the assertions when the phantom commands gain behavior.
-//
-// /compact left this table in T7.7 slice 1: it is a contract command now
-// (Parse + Executor) whose TUI projection executes for real — pinned by
-// TestCompactCommandExecutes below.
+// Regression pin for the REPL-face slash commands (T7.7, spec
+// wiki/port/slash-command-surface.md): these commands execute in the REPL loop
+// (internal/cli/repl) and declare no TUI face — after slice 2 they are
+// identity + ProjREPLFace declarations, and the TUI rejects them explicitly
+// (the transcript echoes the line and shows the unavailability notice) instead
+// of the former silent no-op (the stub registrations are gone). /compact left
+// this table in slice 1 and /memory /rebuild are contract commands now — both
+// execute for real, pinned by TestCompactCommandExecutes below and the
+// declaration-dispatch tests in slash_declaration_test.go.
 
 import (
 	"strings"
@@ -23,11 +17,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// phantomLines is one representative invocation per advertised-but-inert TUI
-// command, in the form a user would type. replDoes notes what the REPL does
-// for the same line — the interception the TUI is missing. Derived from the
-// stub table in prompts/registry.go against the full fall-through of
-// runSlash (model.go).
+// phantomLines is one representative invocation per REPL-face command, in the
+// form a user would type. replDoes notes what the REPL does for the same line —
+// the face the TUI does not project. Derived from the declaration table in
+// prompts/registry.go against runSlash's ProjREPLFace projection.
 var phantomLines = []struct{ line, replDoes string }{
 	{"/fork 2", "branch a new session from historical message 2"},
 	{"/clone", "duplicate the current session at its current leaf"},
@@ -49,10 +42,11 @@ func phantomNames() []string {
 	return names
 }
 
-// TestPhantomCommandsAdvertised verifies the inert commands still reach the
-// user: the completion menu lists all of them and /help prints every name.
-// When the stub registrations are deleted (T7.7 slice 2) this test flips to
-// assert the declared surface that replaces them.
+// TestPhantomCommandsAdvertised verifies the REPL-face commands stay listed:
+// the completion menu shows all of them and /help prints every name. They are
+// declaration entries now (slice 2 replaced the stub registrations), so the
+// advertised surface is unchanged; what changed is the dispatch — see
+// TestPhantomCommandsRejectExplicitly.
 func TestPhantomCommandsAdvertised(t *testing.T) {
 	m := typeInto(t, NewModel(Options{}), "/").(Model)
 	if !m.menu.active {
@@ -71,17 +65,15 @@ func TestPhantomCommandsAdvertised(t *testing.T) {
 	}
 }
 
-// TestPhantomCommandsDispatchSilently pins the defect itself: submitting one
-// of the nine commands echoes the line and clears the input but produces no
-// status message, no run, and no command — a silent no-op where the REPL does
-// real work. T7.7 replaces this with execution or an explicit rejection; flip
-// the assertions then.
-func TestPhantomCommandsDispatchSilently(t *testing.T) {
+// TestPhantomCommandsRejectExplicitly pins the slice-2 flip: submitting one of
+// the REPL-face commands echoes the line and shows the declared unavailability
+// notice — no silent no-op, no run (T7.7 §6: execution or explicit rejection).
+func TestPhantomCommandsRejectExplicitly(t *testing.T) {
 	for _, p := range phantomLines {
 		got, cmd := NewModel(Options{}).runSlash(p.line)
 		gm := got.(Model)
 		if cmd != nil {
-			t.Errorf("%s: dispatch returned a command; silent no-op should return nil (REPL: %s)", p.line, p.replDoes)
+			t.Errorf("%s: dispatch returned a command; the rejection should return nil (REPL: %s)", p.line, p.replDoes)
 		}
 		if gm.running {
 			t.Errorf("%s: dispatch must not start a run (REPL: %s)", p.line, p.replDoes)
@@ -90,8 +82,9 @@ func TestPhantomCommandsDispatchSilently(t *testing.T) {
 			t.Errorf("%s: input should be cleared after submit", p.line)
 		}
 		blocks := blockTexts(gm.transcript)
-		if len(blocks) != 1 || blocks[0] != p.line {
-			t.Errorf("%s: transcript should hold only the echoed line, got %q (REPL: %s)", p.line, blocks, p.replDoes)
+		want := "(" + strings.Fields(p.line)[0][1:] + " unavailable: REPL-face command — run pigo --no-tui)"
+		if len(blocks) != 2 || blocks[1] != want {
+			t.Errorf("%s: transcript should hold the echo + %q, got %q (REPL: %s)", p.line, want, blocks, p.replDoes)
 		}
 	}
 }
@@ -148,12 +141,13 @@ func TestCompactCommandExecutes(t *testing.T) {
 	}
 }
 
-// TestInterceptedStubsStayReachable pins the other side of the same stub
-// table: /session and /rewind degrade to an explicit no-session notice
-// instead of the registry's empty Action, and /exit /quit quit (pinned by
-// TestSlashExitQuits). /session left the intercept list in T7.7 slice 1 — the
-// intent executor's Session hook renders the same notice through the registry
-// path now, which is exactly what this pin guards.
+// TestInterceptedStubsStayReachable pins the reachability side of the same
+// fold: /session and /rewind degrade to an explicit no-session notice instead
+// of a silent dispatch, and /exit /quit quit (pinned by TestSlashExitQuits).
+// /session left the intercept list in T7.7 slice 1 — the intent executor's
+// Session hook renders the same notice through the registry path; /rewind now
+// dispatches through its declared ProjRewind face (slice 2), which this pin
+// guards.
 func TestInterceptedStubsStayReachable(t *testing.T) {
 	for _, line := range []string{"/session", "/rewind"} {
 		got, _ := NewModel(Options{}).runSlash(line)

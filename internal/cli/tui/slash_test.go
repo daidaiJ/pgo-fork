@@ -197,8 +197,9 @@ func TestSlashPromptCommandStartsRun(t *testing.T) {
 }
 
 // TestSlashExitQuits verifies that /exit and /quit typed in the TUI input box
-// terminate the program (tea.Quit + quitting flag), mirroring the REPL loop
-// which intercepts them before slash resolution.
+// terminate the program (tea.Quit + quitting flag) through the commands'
+// declared ProjQuit face, mirroring the REPL loop which returns from its loop
+// on the same names.
 func TestSlashExitQuits(t *testing.T) {
 	for _, cmd := range []string{"/exit", "/quit"} {
 		got, teaCmd := NewModel(Options{}).runSlash(cmd)
