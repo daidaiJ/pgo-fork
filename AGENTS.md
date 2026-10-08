@@ -3,37 +3,126 @@
 > 本文件是 fork 仓库的 agent 常驻上下文：只保留 handoff 摘要指针，详细知识全部
 > 在 wiki（渐进式披露，L0 入口见 `wiki/README.md`）。
 
+## 🔄 Handoff 摘要
+
+### 原型专题文档批（rpiv-mono / pi-dynamic-workflow / dynamic-workflow 形态设计）— done（wiki 侧，无代码改动）
+
+- **当前状态：** 按用户点名（`juicesharp/rpiv-mono` 的 packages +
+  `pi-dynamic-workflow` 社区插件）新增 **2 篇原型深读 + 1 篇专题设计文档**，
+  并登记进 prototype/README、cross-prototype-selection、implementation-plan
+  待议段；**无代码改动**，工作区仍为 T7.3 四批未提交状态；本地 pigo.exe
+  已按当前工作区重建（GOTMPDIR 原生路径形态，19.8s，`--version` 冒烟过）
+- **关键证据：** 新增 [wiki/prototype/rpiv-mono.md](wiki/prototype/rpiv-mono.md)
+  （A 级，Pi 插件集 15 包：Pi 扩展 API 面 + 声明式流水线引擎 rpiv-workflow
+  的 JSONL 行型/单一 fold/循环族/判官面板/端口抽象与真并行 lane + 编排层
+  rpiv-pi + 卫星包速查）、[wiki/prototype/pi-dynamic-workflow.md](wiki/prototype/pi-dynamic-workflow.md)
+  （A 级，Pi 社区动态工作流三仓并列：Michaelliv 上游 / milanglacier 同名字仓 /
+  QuintinShaw 最全仓；命名歧义已在文档头登记；7 项四家收敛 + 单家特化表）、
+  [wiki/port/dynamic-workflow-shape.md](wiki/port/dynamic-workflow-shape.md)
+  （**待议**专题设计：四参照形态坐标 + **grok 引擎首次取证**
+  `crates/codegen/xai-workflow/`（Rhai 脚本 / MAX_HOST_CALLS=10000 /
+  context edit 只改可见面 + 参与请求哈希链 / PauseKind 五分类 / stub host
+  干跑校验 / 会话内 4 活跃 run）+ Go 侧三候选（建议 C = 声明式外层 +
+  受限表达式 + 逃生舱）+ 落点与五切片分期 + 4 条待拍板问题）
+- **详情指针：** [`wiki/port/handoff.md`](wiki/port/handoff.md) 2026-10-08 卡
+  + [`.handoff/handoff.md`](.handoff/handoff.md) §3 批次⑤；参照 clone 在
+  `D:\CODE\ai\{rpiv-mono, pi-dynamic-workflows-michaelliv,
+  pi-dynamic-workflow-milanglacier, pi-dynamic-workflows-quintinshaw}`（不进库）
+
+### T7.3 交互式 slash 改造四批 — 已提交（TUI 真机验收待用户）
+
+- **当前状态：** T7.3 交互式改造 v1 + 实测修复批完成（用户三条点名：
+  /model 列表来源 = config `[models."<id>"]` 档案 / /skills 行 = 名称
+  +截断描述 / /mcp 两级 server+tool 可看可切，定稿 = tui-slash-ux.md
+  §11），**已按三段提交到本地 dev**：`3509800`（testenv 迁移 + 两处 skill
+  测试的 XDG 隔离）/ `0936716`（交互式 slash 面，四批合一）/ 同批 docs
+  指针段；**不推远端**。42 包 0 FAIL；`pigo.exe` 与 `bin/pigo.exe` 均已
+  重建（22:13，哈希一致——此前 `bin/` 那份停在 10-07 13:56，即上轮
+  「实测跑的是旧二进制」的来源）
+- **关键证据：** /model 链式（list→effort 子列表，裸提交直进）+ 档案
+  face（下拉/启动 applyModelProfile/切换 switchToProfile，grok
+  [model."<id>"] 对齐）+ registry `/model <id> [effort]`（REPL 同享）+
+  /think//effect 下拉 + /skills 面板（clipDesc 行型）+ /mcp 两级面板
+  （Status.Tools + Space 启停 + Enter 展开）+ /resume 别名 + slash 菜单
+  [skill] 来源标记 + /session 待并入 /status tab；改动面 = tui 7 文件
+  + listpanel.go 新 + prompts 2 文件 + config models.go 新 + mcp.go +
+  cmd/pigo + repl 测试 XDG 隔离
+- **验收标准：** 真机对表 grok（档案下拉/切换手感 / 链式手感 / 面板
+  toggle / mcp 两级启停 / 来源标记 / /resume）+ 上三批；**验收清单 =
+  [`.handoff/handoff.md`](.handoff/handoff.md) §2.2**（前置：config 里先加
+  `[models."<id>"]` 档案，否则 `/model` 只见 preset 兜底面）
+- **同日用户裁定：** 本批复现了「slash 交互为了迁就无头模式而设计」的
+  **反模式**（每个交互命令都带一条参数式旁路）→ 立项 **T7.7 多面命令契约
+  重构**（登记 = [design-principles.md](wiki/port/design-principles.md) **R12**
+  + [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
+  [implementation-plan.md](wiki/port/implementation-plan.md) T7.7）
+- **详情指针：** [`.handoff/handoff.md`](.handoff/handoff.md)
+  —— **`/.handoff/` 自 2026-10-08 起只保留这一个文件**：§1 现场核对 / §2 收口
+  计划（验收清单 + 三段提交草案）/ §3 历史批次速查（thinking+S1+S8、S2、交互式
+  改造、修复批、原型文档批）/ §3.5 已拍板口径 / §4 待拍板清单 / §5 环境事实
+
+### 未验证事项
+- [ ] **本批（2026-10-08）：dynamic-workflow 载体路线待拍板**（形态设计
+      §8 四条问题：候选 A 嵌入脚本 / B 纯声明式 / C 声明式外层 + 受限表达式
+      + 逃生舱〔建议〕；脚本引擎与 code mode 合并选型；排期；是否要
+      "显式请求才起工作流"硬路由）
+- [ ] **优化池 O1 待拍板（2026-10-08 用户点名）**：状态行统计口径对齐 grok
+      默认配置 + 统计状态落**会话**作单一真相（供 /usage //stats 复用）+
+      **计入 subagent 开销**；登记 =
+      [implementation-plan.md](wiki/port/implementation-plan.md) 优化池 O1 +
+      [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §12（S3/S4 接口影响）
+- [ ] 两篇新深读文档附录的「未抽验行号清单」（subagent 转述部分）按需复核
+- [ ] /model 档案下拉 + 链式 + /think 下拉真机手感（档案切换跨网关 /
+      两段 Enter / Esc / 删字弹回）
+- [ ] /skills //mcp 面板真机（行型截断 / mcp Enter 展开 + Space server/
+      tool 启停写 config + note 回显）
+- [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
+- [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
+- [ ] **T7.7 多面命令契约重构待开工（2026-10-08 用户拍板独立立项）**：现状 =
+      registry 15 个假注册（只为 `/help` 列出）+ 三面各自拦截（REPL 17 名 /
+      TUI 14 名）+ 7 个同名命令两份实现 + **TUI 里 7 个幻影命令静默无操作**
+      （`/compact` `/copy` `/export` `/import` `/fork` `/tree` `/goal`）；
+      修法 = `Interaction` 描述符 + 各面投影（TUI 面板/下拉、REPL 候选列表、
+      headless 明确报错）；登记 = R12 + tui-slash-ux §13 + implementation-plan T7.7
+
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**第 6 期第五批：T6.10 TUI 语义级别渲染对齐 grok，实作落地
-  （2026-10-07，代码入 dev 待推）**——契约 C1–C5（display_mode 统一折叠 /
-  轮次归属+历史轮 dim / 块级渲染缓存 / 布局区域序 / blockMeta 时间戳）+
-  S1–S14（页眉、用户背景带、单行菱形工具行+卡牌退役展开态、thinking
-  ◇/◆、运行状态行、圆角输入框+model·审批标签、usage 行、键位行）+
-  **/context 上下文面板**（用户补图驱动：面板语义 + 菱形网格 + 分解行 +
-  Tab 会话信息；Dashboard 其余 tab 留待）+ **欢迎页重刷**（banner 对表
-  grok views/welcome：灰调 logo + 版本徽章/副标题 + 点引导菜单行 + tip）。
-  42 包 0 FAIL。规格 =
-  [tui-render-semantics.md](wiki/port/tui-render-semantics.md)（§10 偏差
-  D-1~D-10，§10.12 = 打磨批）；真彩终端截图回归待用户实测核验。
-  T6.10 主批 `1378131` + banner 重刷 `2c21725` + 打磨批 `cac34bb`（cache
-  0%/think %/todo 渲染器/去 ATX/grok 提示语法/banner 居中）+ 指针 `c3f9bbb`。
-  **2026-10-07 晚追加：现场三缺陷批 `6787775`**（42 包全绿）——
-  A Thought 下空白带（供应商纯空白文本，transcript 三层防御 + renderAll
-  跳空块）、B header 上下文读数首帧不显示（withSession 播种 + turnEndMsg
-  每轮刷新）、C **TUI bash 权限静默拒绝**（TUI 从不 EstablishTrust，
-  `--approve` 没进引擎 trustedFn → 无持久化信任时连只读 `git log` 都被
-  unpaired-remote ask 通道 fail-closed 且文案误导"用户拒绝"；最小修复 =
-  trustedFn 纳入 opts.Approve）。C 的设计级待拍板（本地审批面板 / 拒绝
-  文案诚实化 / bash per-command 只读快路径）= D-C1~D-C3，登记在
-  [tui-blank-header-fixes.md](wiki/port/tui-blank-header-fixes.md) §5.4。
-  **2026-10-07 晚交互批 `e404a3e`**：①鼠标点击折叠/展开——renderAll 行→块
-  命中表（hits），点块首行（折叠菱形行/◆ footer/展开卡标题）即切换该块，
-  Ctrl+O/Ctrl+T 状态机抽为 toggleBlock 共用；正文行仍是文本选择区，
-  /context 面板打开时跳过。②todo 展开卡对齐 grok 任务列表：`Tasks · n/m
-  done` + ▸进行中/✓完成(绿+灰退)/◇待办，替换 generic 卡（旧路径 JSON
-  dump+checkbox 重复）。规格 = [tui-mouse-fold-todo.md](wiki/port/tui-mouse-fold-todo.md)
-  （偏差 B-1 todo 第二态无视觉差、B-2 点击仅块首行）。42 包 0 FAIL。
+- **当前阶段**：**2026-10-08 深夜：T7.3 四批收口（三段提交到本地 dev）+ 立项
+  T7.7 多面命令契约重构**——`3509800`（testenv 迁移 + 两处 skill 测试 XDG
+  隔离）/ `0936716`（T7.3 交互式 slash 面，四批合一）/ docs 指针段；**TUI
+  真机验收仍待用户**（清单 = [`.handoff/handoff.md`](.handoff/handoff.md) §2.2，
+  前置 = config 先加 `[models."<id>"]` 档案）；同批用户裁定「slash 交互迁就
+  无头模式」= 反模式 → 立项 T7.7（登记 = R12 + tui-slash-ux §13 +
+  implementation-plan T7.7）；**`.handoff/` 自本日起只保留
+  [handoff.md](.handoff/handoff.md) 一件**（历史批次卡已整合在其 §3）。
+  上一阶段：
+  **2026-10-08：原型专题文档补充批（rpiv-mono + pi-dynamic-workflow
+  两族深读 + dynamic-workflow 形态设计；wiki 侧无代码改动）**——参照从 2 家
+  扩到 4 家（新增 rpiv-workflow 声明式引擎 + Pi 社区 JS-in-vm 三仓），
+  四家收敛点（7 项四家齐备 + 3 项三家）与互斥登记定稿于
+  [dynamic-workflow-shape.md](wiki/port/dynamic-workflow-shape.md)，
+  A 表新增专行；**载体路线与排期待拍板**。同日追加**优化池 O1**
+  （用户点名：状态行统计口径对齐 grok 默认配置 + 统计状态落会话作单一
+  真相 + 计入 subagent 开销）登记于 implementation-plan 优化池 + 对
+  S3/S4 的接口影响 = [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §12。
+  再上一阶段照旧未收口：
+  **2026-10-07 深夜 4：T7.3 交互式改造 + 实测修复批（未提交）**——
+  交互式 v1 之上，用户真机验收三条点名（"model 来源应取配置里的 model
+  id"；"skills 应显示 skill name 加一部分描述"；"mcp 需要 server 和
+  tool 级别都能查看、启用禁用，对标 grok mcps"）落地修复批：
+  config `[models."<id>"]` 档案面（下拉 face of record + 启动解析 +
+  按档案重建 provider/凭据/窗口/effort，preset/fetch 降级兜底）+
+  /skills 行型截断 + /mcp 两级（Status.Tools / MCPToolRows /
+  ToggleMCPTool / Enter 展开收起 / Space 启停）。定稿与偏差 =
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §11。**工作区累计四批
+  未提交**：①thinking 纠偏（§10.9）+ S1 /model + S8 /sessions（§8）；
+  ②S2 /rename + 终端标题（§9）；③交互式改造（§10）；④修复批（§11）。
+  **用户上轮实测跑的是旧二进制**（本地 pigo.exe 已重建深夜 4，用户常
+  用二进制位置待确认）。上批全貌 = 归档
+  [handoff-archive.md](wiki/port/handoff-archive.md) 2026-10-07 条。
+  （交互式 v1 全貌与拍板项 = 同文件 §10；**遗留缺陷：FileConfigPath 走
+  XDG 不认 PIGO_HOME**——LoadSkills 过滤读宿主 config，config 路径统一
+  待办。）
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
   tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
   仍未拍板**（清单 =
@@ -46,20 +135,34 @@
   待拍板**；④**T7.2 供应商自定义请求头 + opencode go 兼容头**（取证 +
   设计候选 A/B/C/D 已齐 =
   [provider-headers.md](wiki/port/provider-headers.md)，落地排期待拍板）；
-  ⑤**T7.3 slash 小功能批 + T7.4 主题系统已立项（后续会话实作）**——
-  /model /rename+终端标题 /usage /stats /context /memory /recap /sessions
-  交互设计 + 原型配色吸收，grok/qwen 双参照调研 + S1-S9 定稿 =
-  [tui-slash-ux.md](wiki/port/tui-slash-ux.md)，切片排期待拍板；
-  **2026-10-07 晚用户实测点名：现状 /sessions /model 的显示与 slash 交互
-  和 grok 完全不同——验收以 grok 实机交互逐条对表，S1+/sessions 件提
-  本批最前**；⑥T7.5 grok 实用功能移植批已立项（全量普查 =
+  ⑤**T7.3 slash 小功能批：S1/S8/S2/交互式改造/修复批 均已落地（交互式 =
+  深夜 3"提交命令 → 交互面板"范式；修复批 = 深夜 4，model 档案来源/
+  skills 行型/mcp 两级），**已按三段提交（`3509800` / `0936716` / docs 段），
+  真机验收待用户**——
+  其余切片（S3/S4 /status 增强〔含 /session tab〕、S5 /context
+  增强、S7 /recap、S6 /memory 面板、S9 MRU）与 T7.4 主题系统排期待拍板，定稿 =
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md)；⑥T7.5 grok 实用功能移植批已立项（全量普查 =
   [grok-command-inventory.md](wiki/port/grok-command-inventory.md)，
   P1 清单待排期）；⑦farewell 彩蛋已落地（🐼 Code together, cola
   together 退出行）+ header 右段让位滚动条列已修（42 包 0 FAIL）；
   ⑧**T7.6 审批模式三态批已立项（plan / ask / 全部允许的显示 + 切换
   途径，用户点名现状缺失）**——对接 T5.2 trusted/ask seam，**强依赖
   D-C1 本地审批面板**，建议合并设计，登记 =
-  [implementation-plan.md](wiki/port/implementation-plan.md) 第 7 期。
+  [implementation-plan.md](wiki/port/implementation-plan.md) 第 7 期；
+  ⑨**dynamic-workflow 编排器形态设计已出（2026-10-08 待议推进）**——
+  四参照（grok Rhai 脚本 / zcode TS 脚本 + 编译器 / rpiv 声明式图 /
+  pi 族 JS-in-vm）收敛 10 项机制（7 项四家齐备 + 3 项三家），Go 侧三候选与最小内核五切片见
+  [dynamic-workflow-shape.md](wiki/port/dynamic-workflow-shape.md)，
+  **载体路线（建议候选 C）与排期待拍板**；本件与 code mode 共用脚本
+  引擎选型，落点建议新叶子包 `internal/workflow` + 复用
+  `runtime.SubAgentSpec` 派发本体；
+  ⑩**T7.7 多面命令契约重构已立项（2026-10-08 用户裁定「slash 交互迁就无头
+  模式」= 反模式）**——`SlashCommand` 增 `Interaction` 描述符（无参/选择
+  数据源/面板/需 loop 所有权）+ 删 15 个假注册 + TUI 面板由声明驱动 +
+  REPL 文本投影 + headless 明确报错 + 7 个幻影命令先钉回归测试；登记 =
+  [design-principles.md](wiki/port/design-principles.md) **R12** +
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
+  [implementation-plan.md](wiki/port/implementation-plan.md) T7.7。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
@@ -74,10 +177,14 @@
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
   （六期任务表，状态每期收口回填；第 1 期已清空）。
 - **施工纪律**：[wiki/port/design-principles.md](wiki/port/design-principles.md)
-  （R1–R11，R11=多参照实现择优：能融合则融合、不能融合取相对最优并在规格
-  登记互斥原因；附录已登记 7 个 Windows 测试差异族 + `internal/testgate`
+  （R1–R12，R11=多参照实现择优：能融合则融合、不能融合取相对最优并在规格
+  登记互斥原因；R12=交互形态是命令的第一身份、非交互面只做降级投影；附录已
+  登记 7 个 Windows 测试差异族 + `internal/testgate`
   门控机制，
-  本机全量测试基线 = 门控后全绿）。
+  本机全量测试基线 = 门控后全绿）。**TempDir 清理假报警已断根（2026-10-07；
+  2026-10-08 提交 `3509800`）**：`internal/testenv`（`testenv.Main`/`testenv.Dir(t)`）
+  推广 session 私有根模式，31 包新增 TestMain、335 处 `t.TempDir()` 替换，清理
+  best-effort——新测试一律用 `testenv.Dir(t)` 而非 `t.TempDir()`。
 - **T1.1 规格**：[wiki/port/startup-exit-probes.md](wiki/port/startup-exit-probes.md)
   （span 名以 §2.2 埋点表为唯一权威，已含实现偏差登记）。
 
@@ -88,5 +195,8 @@
 - Windows 开发机：`go build` 间歇被卡巴斯基锁 `%TEMP%`，构建统一加
   `GOTMPDIR=<repo>/.gtmp`（R9）——**只用于 go build**：go test 不受卡巴
   斯基影响，加了反而让 `t.TempDir()` 走 GOTMPDIR 产出混合斜杠路径打破
-  trust 测试；全量测试后台跑、输出落文件（R6）。
+  trust 测试；全量测试后台跑、输出落文件（R6）。**`GOTMPDIR` 必须传原生
+  Windows 路径形态**（`GOTMPDIR='D:\CODE\ai\pgo-fork\.gtmp'`）；传
+  `/d/CODE/...` 这种 MSYS 形态会被 Go 拒绝（`creating work dir:
+  GetFileAttributesEx ...: The system cannot find the path specified`）。
 - dev 分支本地开发，推送/PR 策略待用户拍板。

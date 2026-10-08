@@ -67,3 +67,4 @@ book/images/*.pdf
 # local build scratch (R9: GOTMPDIR) + codegraph local index
 /.gtmp/
 /.codegraph/
+/.handoff/
