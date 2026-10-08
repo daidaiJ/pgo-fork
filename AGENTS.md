@@ -53,9 +53,15 @@
   `[models."<id>"]` 档案，否则 `/model` 只见 preset 兜底面）
 - **同日用户裁定：** 本批复现了「slash 交互为了迁就无头模式而设计」的
   **反模式**（每个交互命令都带一条参数式旁路）→ 立项 **T7.7 多面命令契约
-  重构**（登记 = [design-principles.md](wiki/port/design-principles.md) **R12**
-  + [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
-  [implementation-plan.md](wiki/port/implementation-plan.md) T7.7）
+  重构**；并点名"交互设计 grok build proxy 这边明显更正确"，故**规格定稿 =
+  [slash-command-surface.md](wiki/port/slash-command-surface.md)**（grok 双目录
+  取证〔agent 侧 `BUILTIN_COMMANDS` 能力门/受众门/纯 `resolve`→类型化
+  `BuiltinAction`；client 侧 74 个命令对象 `SlashCommand` 四族方法 +
+  `CommandResult` 类型化 + `PassThrough` 组合〕→ pigo 融合为「单份声明目录 +
+  TUI/REPL/headless 三投影器」+ 四切片 + 验收 + 偏差登记）。登记 =
+  [design-principles.md](wiki/port/design-principles.md) **R12** +
+  [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13（§13.5 grok 参照裁定）+
+  [implementation-plan.md](wiki/port/implementation-plan.md) T7.7
 - **详情指针：** [`.handoff/handoff.md`](.handoff/handoff.md)
   —— **`/.handoff/` 自 2026-10-08 起只保留这一个文件**：§1 现场核对 / §2 收口
   计划（验收清单 + 三段提交草案）/ §3 历史批次速查（thinking+S1+S8、S2、交互式
@@ -82,8 +88,11 @@
       registry 15 个假注册（只为 `/help` 列出）+ 三面各自拦截（REPL 17 名 /
       TUI 14 名）+ 7 个同名命令两份实现 + **TUI 里 7 个幻影命令静默无操作**
       （`/compact` `/copy` `/export` `/import` `/fork` `/tree` `/goal`）；
-      修法 = `Interaction` 描述符 + 各面投影（TUI 面板/下拉、REPL 候选列表、
-      headless 明确报错）；登记 = R12 + tui-slash-ux §13 + implementation-plan T7.7
+      目标形态照 grok（用户裁定"grok 这边明显更正确"）：
+      **规格定稿 = [slash-command-surface.md](wiki/port/slash-command-surface.md)**
+      （单份声明目录 + 类型化 `Intent`/`Execute` + TUI/REPL/headless 三投影器 +
+      四切片 + 验收；偏差登记含"为何不照抄 ACP 双目录"）；
+      登记 = R12 + tui-slash-ux §13.5 + implementation-plan T7.7
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
@@ -157,9 +166,13 @@
   引擎选型，落点建议新叶子包 `internal/workflow` + 复用
   `runtime.SubAgentSpec` 派发本体；
   ⑩**T7.7 多面命令契约重构已立项（2026-10-08 用户裁定「slash 交互迁就无头
-  模式」= 反模式）**——`SlashCommand` 增 `Interaction` 描述符（无参/选择
-  数据源/面板/需 loop 所有权）+ 删 15 个假注册 + TUI 面板由声明驱动 +
-  REPL 文本投影 + headless 明确报错 + 7 个幻影命令先钉回归测试；登记 =
+  模式」= 反模式，"交互设计 grok build proxy 这边明显更正确"）**——
+  **规格定稿 = [slash-command-surface.md](wiki/port/slash-command-surface.md)**：
+  目标形态 = **单份声明目录**（身份/别名/用法/参数形态/来源/适用性谓词/受众门
+  全声明，目录序即菜单序）+ **纯 `Parse` → 类型化 `Intent`** + 执行层
+  `Execute(loop, Intent)` + **TUI/REPL/headless 三投影器**；删 15 个假注册、
+  收编 TUI 14 条拦截清单、headless 对需交互命令明确报错、先给 7 个幻影命令钉
+  回归测试；四切片与验收见该文 §5/§6。登记 =
   [design-principles.md](wiki/port/design-principles.md) **R12** +
   [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
   [implementation-plan.md](wiki/port/implementation-plan.md) T7.7。
