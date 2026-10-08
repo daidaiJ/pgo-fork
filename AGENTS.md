@@ -29,6 +29,26 @@
   `D:\CODE\ai\{rpiv-mono, pi-dynamic-workflows-michaelliv,
   pi-dynamic-workflow-milanglacier, pi-dynamic-workflows-quintinshaw}`（不进库）
 
+### T7.7 命令面契约重构切片 1 — 已提交（下一步 = 切片 2）
+
+- **当前状态：** 切片 1 落地 = `35edcd2`（2026-10-09，19 文件 +1113/−603，
+  本地 dev 不推）；42 包 0 FAIL（`.gtmp/s1-test2.log`）；两份二进制已刷
+  （**第二份 = `cp`，用户指正**，哈希一致）。
+- **关键证据：** 声明面（`runtime.SlashCommand` 扩 Aliases/Audience〔零值
+  fail-closed〕/Interactive/Offered/Parse）+ `Intent` 17 类封闭集
+  （`internal/runtime/slashintent.go`，纯数据可序列化——server 拆分接缝）+
+  `ResolveOutcome` 返 `SlashIntent`（registry 不再就地执行）+ prompts
+  `Executor`（Status/Session/Compact 钩子，nil = 明确不可用）；9 个注册转
+  契约命令（/model /models /think /effect /skills /mcp /status /session
+  /compact）、假注册 15→13；`cli.RunManualCompact` + `cli.WriteSessionSummary`
+  双份合一；REPL 删 /compact //session 拦截、TUI 删 /status //session 拦截 +
+  **/compact 转正**（异步 compactCmd + compactDoneMsg，幻影 10→9）；
+  `RegisterSurfaceCommands` 改 *SurfaceDeps（值副本令 executor 的 registry
+  同步静默跳过——同步测试抓出）。
+- **详情指针：** 规格 + 偏差 = [slash-command-surface.md](wiki/port/slash-command-surface.md)
+  §7 切片 1 段；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
+  T7.7 ⑦；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09。
+
 ### T7.3 交互式 slash 改造四批 — 已提交（TUI 真机验收待用户）
 
 - **当前状态：** T7.3 交互式改造 v1 + 实测修复批完成（用户三条点名：
@@ -84,7 +104,8 @@
       tool 启停写 config + note 回显）
 - [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
 - [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
-- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；第一步幻影回归测试已钉）**：现状 =
+- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；切片 1 已落地 = `35edcd2`，
+      2026-10-09；下一步 = 切片 2 删 13 假注册 + TUI 拦截清单收编）**：现状 =
       registry 15 个假注册（只为 `/help` 列出）+ 三面各自拦截（REPL 17 名 /
       TUI 17 名）+ 7 个同名命令两份实现 + **TUI 里 10 个幻影命令静默无操作**
       （`/compact` `/copy` `/export` `/import` `/fork` `/clone` `/tree` `/goal`
@@ -97,7 +118,14 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-08 深夜：T7.3 四批收口（三段提交到本地 dev）+ T7.7 立项
+- **当前阶段**：**2026-10-09：T7.7 命令面契约重构切片 1 落地（`35edcd2`，19 文件
+  +1113/−603，本地 dev 未推）**——声明面 + `Intent` 17 类封闭集（纯数据可序列化）
+  + `ResolveOutcome` 返 `SlashIntent` + prompts `Executor`；9 注册转契约命令、
+  假注册 15→13、`RunManualCompact`/`WriteSessionSummary` 双份合一、REPL 删
+  /compact //session 拦截、TUI 删 /status //session 拦截 + **/compact 转正**
+  （幻影 10→9）；42 包 0 FAIL；二进制两份重建（第二份 = cp，用户指正）。
+  偏差 = slash-command-surface.md §7 切片 1 段。上一阶段：
+  **2026-10-08 深夜：T7.3 四批收口（三段提交到本地 dev）+ T7.7 立项
   并落第一步（幻影命令回归测试已钉 = `fe5079e`，幻影实为 10 个、TUI 拦截实为
   17 名，旧口径 7/14 已在 wiki 与本文件修正；docs 段 = `920a838`）**——`3509800`（testenv 迁移 + 两处 skill 测试 XDG
   隔离）/ `0936716`（T7.3 交互式 slash 面，四批合一）/ docs 指针段；**TUI
@@ -175,6 +203,7 @@
   `Execute(loop, Intent)` + **TUI/REPL/headless 三投影器**；删 15 个假注册、
   收编 TUI 17 条拦截清单、headless 对需交互命令明确报错；**幻影命令回归测试已钉
   （2026-10-08 深夜，10 个幻影 + 被拦截 5 名可达性，`phantom_slash_test.go`）**；
+  **切片 1 已落地（2026-10-09 `35edcd2`，幻影 10→9，见「当前阶段」）**；
   四切片与验收见该文 §5/§6。登记 =
   [design-principles.md](wiki/port/design-principles.md) **R12** +
   [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
