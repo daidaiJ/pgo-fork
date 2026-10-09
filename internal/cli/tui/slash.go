@@ -199,17 +199,10 @@ func (mn slashMenu) view(width int) string {
 	var b strings.Builder
 	for i := start; i < end; i++ {
 		c := mn.filtered[i]
-		line := "/" + c.Name
-		// Non-builtin rows carry a source tag so a skill command is visually
-		// distinct from a builtin (T7.3 user feedback: 来源可辨); builtins —
-		// the untagged majority — stay clean.
-		if tag := sourceTag(c.Source); tag != "" {
-			line += "  [" + tag + "]"
-		}
-		if c.Description != "" {
-			line += "  " + c.Description
-		}
-		line = TruncateToWidth(line, rowWidth)
+		// One row renderer for /help, the completion surfaces and this menu
+		// (name + argument hint + source badge + description), truncated to
+		// the row width so it never wraps.
+		line := TruncateToWidth(prompts.FormatCommandLine(c), rowWidth)
 		if i == mn.selected {
 			b.WriteString(mn.theme.Accent.Render("› " + line))
 		} else {
@@ -238,19 +231,4 @@ func (mn slashMenu) window() (int, int) {
 		start = n - maxMenuRows
 	}
 	return start, start + maxMenuRows
-}
-
-// sourceTag renders the autocomplete type marker for a non-builtin command
-// source ("" for builtins, which are the untagged majority).
-func sourceTag(s runtime.SlashCommandSource) string {
-	switch s {
-	case runtime.SourceSkill:
-		return "skill"
-	case runtime.SourcePlugin:
-		return "plugin"
-	case runtime.SourceUser:
-		return "template"
-	default:
-		return ""
-	}
 }

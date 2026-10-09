@@ -484,94 +484,82 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			}
 			continue
 		}
-		if line == "/exit" || line == "/quit" {
-			return nil
-		}
-		if line == "/clone" || line == "/fork" || strings.HasPrefix(line, "/fork ") {
-			// /fork and /clone are intercepted here (like /compact) because they
-			// switch the active session — replacing the header and the shared
-			// context in place — which a slash Action closure (pure string→string)
-			// cannot do. runForkClone saves the current session, forks it, and
-			// swaps deps.header / deps.agentCtx to the new branch on success.
-			runForkClone(out, &deps, line)
-			continue
-		}
-		if line == "/tree" || strings.HasPrefix(line, "/tree ") {
-			// /tree is intercepted here (like /fork) because "/tree <n>" moves the
-			// active leaf and rebuilds the shared context in place — mutating
-			// per-run state a slash Action closure cannot reach. With no argument
-			// it just prints the tree.
-			runTree(out, &deps, line)
-			continue
-		}
-		if line == "/rewind" || strings.HasPrefix(line, "/rewind ") {
-			// /rewind is intercepted here (like /tree) because "/rewind <n>" restores
-			// files on disk AND moves the active leaf, rebuilding the shared context in
-			// place — per-run state a slash Action closure cannot reach. With no
-			// argument it lists the restore points.
-			runRewind(out, &deps, line)
-			continue
-		}
-		if line == "/export" || strings.HasPrefix(line, "/export ") {
-			// /export writes the current session to a file. It is intercepted here
-			// (not a slash Action) because it must first persist the live turn so the
-			// export reflects unsaved messages. The exact-or-space-prefix guard keeps
-			// "/exporter" from being mistaken for "/export".
-			runExport(out, &deps, line)
-			continue
-		}
-		if line == "/import" || strings.HasPrefix(line, "/import ") {
-			// /import loads a JSONL export as a fresh session and switches to it,
-			// swapping deps.header / deps.agentCtx in place — which a slash Action
-			// closure cannot do. The guard keeps "/important" from matching.
-			runImport(out, &deps, line)
-			continue
-		}
-		if line == "/copy" {
-			// /copy writes the most recent assistant text to the clipboard. It is
-			// intercepted here (not a slash Action) because it must read the live
-			// message list, which an Action closure cannot reach.
-			runCopy(out, &deps)
-			continue
-		}
-		if line == "/dream" || strings.HasPrefix(line, "/dream ") {
-			// /dream is intercepted here (like /memory/status) because it spawns the
-			// process-isolated consolidation subprocess (pigo --dream) and renders the
-			// returned Report against live state (deps.cwd / deps.memoryRoot) — work a
-			// string→string Action closure cannot do. It never mutates the shared
-			// context, so no session re-save/leaf reset is needed. The
-			// exact-or-space-prefix guard keeps "/dreamer" from matching, and
-			// "/dream --dry-run" runs the same analysis without writing.
-			runDream(out, deps, line)
-			continue
-		}
-		if line == "/goal" || strings.HasPrefix(line, "/goal ") {
-			// /goal is intercepted here (like /compact) because it must run one or
-			// more agent streams and mutate the shared context/goal state — none of
-			// which a slash Action closure (string→string) can do. It drives the
-			// autonomous goal loop, reusing the same SIGINT cancel plumbing as a
-			// normal turn via setCancel.
-			goal.RunGoal(setCancel, out, &deps, line)
-			continue
-		}
-		if line == "/btw" || strings.HasPrefix(line, "/btw ") {
-			// /btw is intercepted here (like /goal) because it must run an agent
-			// stream against a COPY of the main context and must NOT mutate or
-			// persist the main conversation — none of which a slash Action closure
-			// can express. The exact-or-space-prefix guard keeps "/btweak" from
-			// being mistaken for "/btw". It reuses the same SIGINT cancel plumbing
-			// as a normal turn via setCancel.
-			btw.RunBtw(setCancel, out, &deps, editor, line)
-			continue
-		}
-		if line == "/remote-control" || strings.HasPrefix(line, "/remote-control ") {
-			// /remote-control is intercepted here (not a slash Action) because it
-			// starts/stops the in-process server and toggles deps.remote / the
-			// output tee in place — per-session state a pure string→string Action
-			// closure cannot reach (#443). The exact-or-space-prefix guard keeps a
-			// longer command from being mistaken for it.
-			runRemoteControl(out, &deps, line)
-			continue
+		// Slash dispatch (T7.7 slice 3): the resolved command's declared
+		// Projection decides which loop operation runs — there is no per-name
+		// intercept chain. The REPL-owned faces below mutate per-run state a
+		// pure Action closure cannot reach (session swap, leaf move, clipboard,
+		// autonomous loop), so their implementations live in this package and
+		// each face has exactly one projection site. A TUI-face picker/overlay
+		// the REPL cannot run degrades to a candidate list plus a usage hint;
+		// every other declaration (a Parse command, /help, a prompt template, a
+		// plugin command) falls through to registry resolution below.
+		if name, _, ok := runtime.SplitInvocation(line); ok {
+			if cmd, found := deps.slash.Lookup(name); found {
+				switch cmd.Projection {
+				case runtime.ProjQuit:
+					return nil
+				case runtime.ProjFork, runtime.ProjClone:
+					// Both switch the active session in place (replacing the
+					// header and the shared context), which a slash Action
+					// closure cannot do. runForkClone saves the current session,
+					// forks it, and swaps deps.header / deps.agentCtx on success.
+					runForkClone(out, &deps, line)
+					continue
+				case runtime.ProjTree:
+					// "/tree <n>" moves the active leaf and rebuilds the shared
+					// context in place; with no argument it prints the tree.
+					runTree(out, &deps, line)
+					continue
+				case runtime.ProjRewind:
+					// "/rewind <n>" restores files on disk, moves the active
+					// leaf and rebuilds the shared context; bare style lists the
+					// restore points.
+					runRewind(out, &deps, line)
+					continue
+				case runtime.ProjExport:
+					// /export first persists the live turn so the export
+					// reflects unsaved messages.
+					runExport(out, &deps, line)
+					continue
+				case runtime.ProjImport:
+					// /import swaps deps.header / deps.agentCtx to the imported
+					// session in place.
+					runImport(out, &deps, line)
+					continue
+				case runtime.ProjCopy:
+					// /copy reads the live message list for the last assistant
+					// text, which an Action closure cannot reach.
+					runCopy(out, &deps)
+					continue
+				case runtime.ProjDream:
+					// /dream spawns the process-isolated consolidation
+					// subprocess and renders its Report against live state.
+					runDream(out, deps, line)
+					continue
+				case runtime.ProjGoal:
+					// /goal runs one or more agent streams and mutates the
+					// shared context/goal state, reusing the same SIGINT cancel
+					// plumbing as a normal turn.
+					goal.RunGoal(setCancel, out, &deps, line)
+					continue
+				case runtime.ProjBtw:
+					// /btw runs an agent stream against a COPY of the main
+					// context and must not persist the main conversation.
+					btw.RunBtw(setCancel, out, &deps, editor, line)
+					continue
+				case runtime.ProjRemoteControl:
+					// /remote-control starts/stops the in-process server and
+					// toggles deps.remote / the output tee in place.
+					runRemoteControl(out, &deps, line)
+					continue
+				case runtime.ProjSessionsPicker, runtime.ProjRename, runtime.ProjContextPanel:
+					// TUI-face pickers/overlays the REPL cannot run: project a
+					// candidate list plus a usage hint (spec §4.5) instead of a
+					// fake picker or a bare notice.
+					projectTextFace(out, &deps, cmd)
+					continue
+				}
+			}
 		}
 
 		// Resolve slash-commands: an action command runs and prints its message

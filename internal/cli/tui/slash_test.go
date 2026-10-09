@@ -215,3 +215,23 @@ func TestSlashExitQuits(t *testing.T) {
 		}
 	}
 }
+
+// TestSlashMenuRowsUseSharedRenderer pins the row layout to the one shared
+// renderer (T7.7 slice 3): the TUI menu, /help and the REPL completion hint all
+// render name + argument hint + source badge + description, so a skill row
+// carries the visible "[skill]" badge (T7.3 user feedback: 来源可辨) and a
+// builtin row stays untagged.
+func TestSlashMenuRowsUseSharedRenderer(t *testing.T) {
+	mn := newSlashMenu(DefaultTheme())
+	mn.active = true
+	mn.filtered = []runtime.SlashCommand{
+		{Name: "model", ArgumentHint: "[model-id]", Description: "switch the model"},
+		{Name: "graph", Description: "build a task graph", Source: runtime.SourceSkill},
+	}
+	got := stripANSI(mn.view(120))
+	for _, want := range []string{"/model [model-id] - switch the model", "/graph  [skill] - build a task graph"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("menu row missing %q:\n%s", want, got)
+		}
+	}
+}

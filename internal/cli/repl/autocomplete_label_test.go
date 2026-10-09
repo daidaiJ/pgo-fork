@@ -20,6 +20,7 @@ func TestFormatSlashAutocompleteLabel(t *testing.T) {
 		want string
 	}{
 		{"hint+desc", runtime.SlashCommand{Name: "review", ArgumentHint: "<PR-URL>", Description: "Review PRs"}, "review <PR-URL> - Review PRs"},
+		{"skill badge", runtime.SlashCommand{Name: "review", ArgumentHint: "<PR-URL>", Description: "Review PRs", Source: runtime.SourceSkill}, "review <PR-URL>  [skill] - Review PRs"},
 		{"desc only", runtime.SlashCommand{Name: "review", Description: "Review PRs"}, "review - Review PRs"},
 		{"hint only", runtime.SlashCommand{Name: "wr", ArgumentHint: "[instructions]"}, "wr [instructions]"},
 		{"neither", runtime.SlashCommand{Name: "model"}, "model"},
@@ -32,14 +33,15 @@ func TestFormatSlashAutocompleteLabel(t *testing.T) {
 }
 
 // TestFormatSlashAutocompleteLabelDescriptionFallback verifies the description
-// fallback from #334 (first non-empty body line) flows through to the label.
+// fallback from #334 (first non-empty body line) flows through to the label;
+// the command is a user template, so it carries the shared source badge.
 func TestFormatSlashAutocompleteLabelDescriptionFallback(t *testing.T) {
 	cmd, err := runtime.ParseUserCommand("bare", []byte("First line is the desc\nbody"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := formatSlashAutocompleteLabel(cmd); got != "bare - First line is the desc" {
-		t.Errorf("fallback label = %q, want \"bare - First line is the desc\"", got)
+	if got := formatSlashAutocompleteLabel(cmd); got != "bare  [template] - First line is the desc" {
+		t.Errorf("fallback label = %q, want \"bare  [template] - First line is the desc\"", got)
 	}
 }
 

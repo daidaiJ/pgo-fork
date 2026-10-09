@@ -60,6 +60,40 @@ func (s SlashCommandSource) String() string {
 	}
 }
 
+// Badge is the short source marker every candidate surface shows next to a
+// non-builtin command ("[skill]", "[plugin]", "[template]" in the TUI menu,
+// the /help list and the REPL completion hint). Builtins — the untagged
+// majority — return "". One source means the three surfaces cannot drift
+// (T7.7 §6: /help, the completion menu and the panels list the same rows).
+func (s SlashCommandSource) Badge() string {
+	switch s {
+	case SourceSkill:
+		return "skill"
+	case SourcePlugin:
+		return "plugin"
+	case SourceUser:
+		return "template"
+	default:
+		return ""
+	}
+}
+
+// SplitInvocation splits a raw input line into a slash-command name (without
+// the leading "/") and its trimmed argument text. ok is false when the line is
+// not a slash invocation. Both front-ends and the headless guard resolve the
+// name through this one splitter, so "is this /name?" has a single answer.
+func SplitInvocation(line string) (name, args string, ok bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", "", false
+	}
+	rest := trimmed[1:]
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		return rest[:i], strings.TrimSpace(rest[i+1:]), true
+	}
+	return rest, "", true
+}
+
 // Tier is the priority tier of a command, used to resolve same-name conflicts
 // across sources (mirrors pi prompt-templates discovery priority). Higher tiers
 // win; the loser is recorded in Shadowed. Within the same tier the last-added
@@ -156,10 +190,29 @@ const (
 	ProjRemoteControl
 	// ProjRewind lists/restores conversation rewind points (/rewind).
 	ProjRewind
-	// ProjREPLFace marks a command whose loop face lives in the REPL only
-	// (fork/clone/tree/export/import/copy/goal/btw/dream): the TUI and
-	// headless surfaces reject it explicitly until a panel lands.
-	ProjREPLFace
+	// The remaining faces live in the REPL loop only (the TUI and headless
+	// reject them explicitly until a panel lands). They are declared per
+	// command, not as one "REPL face", so the REPL dispatches each from the
+	// declaration with one projection site per face — no per-name chain.
+	//
+	// ProjFork branches a new session from a historical message (/fork).
+	ProjFork
+	// ProjClone duplicates the current session at its leaf (/clone).
+	ProjClone
+	// ProjTree prints the branch tree or switches the active branch (/tree).
+	ProjTree
+	// ProjExport writes the session transcript to a file (/export).
+	ProjExport
+	// ProjImport loads a JSONL export as a new session (/import).
+	ProjImport
+	// ProjCopy copies the last assistant reply to the clipboard (/copy).
+	ProjCopy
+	// ProjGoal drives the autonomous goal loop (/goal).
+	ProjGoal
+	// ProjBtw asks a side question in a hidden peek session (/btw).
+	ProjBtw
+	// ProjDream runs memory consolidation (/dream).
+	ProjDream
 )
 
 func (p Projection) String() string {
@@ -188,10 +241,38 @@ func (p Projection) String() string {
 		return "remote control"
 	case ProjRewind:
 		return "rewind"
-	case ProjREPLFace:
-		return "REPL face"
+	case ProjFork:
+		return "fork"
+	case ProjClone:
+		return "clone"
+	case ProjTree:
+		return "tree"
+	case ProjExport:
+		return "export"
+	case ProjImport:
+		return "import"
+	case ProjCopy:
+		return "copy"
+	case ProjGoal:
+		return "goal"
+	case ProjBtw:
+		return "btw"
+	case ProjDream:
+		return "dream"
 	default:
 		return "none"
+	}
+}
+
+// REPLOnly reports whether the projection's loop face lives in the REPL loop
+// (pigo --no-tui). A front-end that cannot run that loop rejects the command
+// explicitly; the REPL dispatches each of these faces from the declaration.
+func (p Projection) REPLOnly() bool {
+	switch p {
+	case ProjFork, ProjClone, ProjTree, ProjExport, ProjImport, ProjCopy, ProjGoal, ProjBtw, ProjDream:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -199,12 +280,12 @@ func (p Projection) String() string {
 // declared command it cannot project (T7.7 §6: execution or explicit
 // rejection, never a silent no-op).
 func faceNotice(p Projection) string {
-	switch p {
-	case ProjQuit:
+	switch {
+	case p == ProjQuit:
 		return "loop command"
-	case ProjREPLFace:
+	case p.REPLOnly():
 		return "REPL-face command — run pigo --no-tui"
-	case ProjNone:
+	case p == ProjNone:
 		return "declared without an executable face"
 	default:
 		return "TUI-face command"

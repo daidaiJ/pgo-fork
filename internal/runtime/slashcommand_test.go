@@ -180,3 +180,64 @@ func TestParseUserCommandArgumentHintAndDescriptionFallback(t *testing.T) {
 		t.Errorf("argument-hint should be empty, got %q", neither.ArgumentHint)
 	}
 }
+
+// TestSplitInvocation pins the single splitter the REPL, the TUI and the
+// headless guard share: the name is the token after "/" up to the first
+// whitespace, args are the trimmed remainder, and a non-slash line reports
+// ok=false.
+func TestSplitInvocation(t *testing.T) {
+	cases := []struct {
+		in         string
+		name, args string
+		ok         bool
+	}{
+		{"/model", "model", "", true},
+		{"/model gpt-5 high", "model", "gpt-5 high", true},
+		{"  /skills   disable   weather  ", "skills", "disable   weather", true},
+		{"/", "", "", true},
+		{"hello", "", "", false},
+		{"/modeler", "modeler", "", true},
+	}
+	for _, c := range cases {
+		name, args, ok := SplitInvocation(c.in)
+		if name != c.name || args != c.args || ok != c.ok {
+			t.Errorf("SplitInvocation(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				c.in, name, args, ok, c.name, c.args, c.ok)
+		}
+	}
+}
+
+// TestSourceBadge pins the shared source vocabulary: builtins are untagged and
+// the three non-builtin sources map to skill/plugin/template.
+func TestSourceBadge(t *testing.T) {
+	cases := map[SlashCommandSource]string{
+		SourceBuiltin: "",
+		SourceSkill:   "skill",
+		SourcePlugin:  "plugin",
+		SourceUser:    "template",
+	}
+	for src, want := range cases {
+		if got := src.Badge(); got != want {
+			t.Errorf("%v.Badge() = %q, want %q", src, got, want)
+		}
+	}
+}
+
+// TestProjectionREPLOnly pins which declared faces live in the REPL loop: the
+// nine per-command REPL faces are REPL-only, everything else is projectable by
+// the TUI (or is ProjNone).
+func TestProjectionREPLOnly(t *testing.T) {
+	for _, p := range []Projection{ProjFork, ProjClone, ProjTree, ProjExport, ProjImport, ProjCopy, ProjGoal, ProjBtw, ProjDream} {
+		if !p.REPLOnly() {
+			t.Errorf("%v.REPLOnly() = false, want true", p)
+		}
+		if got := p.UnavailableNotice("x"); got != `(x unavailable: REPL-face command — run pigo --no-tui)` {
+			t.Errorf("%v notice = %q", p, got)
+		}
+	}
+	for _, p := range []Projection{ProjNone, ProjQuit, ProjModelMenu, ProjSessionsPicker, ProjRename, ProjRewind} {
+		if p.REPLOnly() {
+			t.Errorf("%v.REPLOnly() = true, want false", p)
+		}
+	}
+}

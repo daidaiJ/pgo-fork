@@ -2,8 +2,9 @@ package tui
 
 // Regression pin for the REPL-face slash commands (T7.7, spec
 // wiki/port/slash-command-surface.md): these commands execute in the REPL loop
-// (internal/cli/repl) and declare no TUI face — after slice 2 they are
-// identity + ProjREPLFace declarations, and the TUI rejects them explicitly
+// (internal/cli/repl) and declare no TUI face — they are identity + a
+// per-command REPL Projection (ProjFork … ProjDream), and the TUI rejects
+// them explicitly
 // (the transcript echoes the line and shows the unavailability notice) instead
 // of the former silent no-op (the stub registrations are gone). /compact left
 // this table in slice 1 and /memory /rebuild are contract commands now — both
@@ -20,7 +21,7 @@ import (
 // phantomLines is one representative invocation per REPL-face command, in the
 // form a user would type. replDoes notes what the REPL does for the same line —
 // the face the TUI does not project. Derived from the declaration table in
-// prompts/registry.go against runSlash's ProjREPLFace projection.
+// prompts/registry.go against runSlash's REPL-only projection check.
 var phantomLines = []struct{ line, replDoes string }{
 	{"/fork 2", "branch a new session from historical message 2"},
 	{"/clone", "duplicate the current session at its current leaf"},

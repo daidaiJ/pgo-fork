@@ -310,14 +310,19 @@ func (e *replLineEditor) remember(line string) {
 }
 
 // formatSlashAutocompleteLabel renders a slash command for the Tab-completion
-// hint as "name <argument-hint> - description" (mirrors pi's autocomplete). The
-// argument-hint is shown verbatim (frontmatter supplies its own <angle>/
-// [square] brackets); it and the description are omitted when absent, so a
-// bare command renders as just its name.
+// hint as "name <argument-hint>  [source] - description" (mirrors pi's
+// autocomplete). The argument-hint is shown verbatim (frontmatter supplies its
+// own <angle>/[square] brackets) and the source badge is the shared one from
+// runtime (T7.3 user feedback: 来源可辨 — builtins stay untagged); hint, badge
+// and description are omitted when absent, so a bare command renders as just
+// its name.
 func formatSlashAutocompleteLabel(cmd runtime.SlashCommand) string {
 	label := cmd.Name
 	if cmd.ArgumentHint != "" {
 		label += " " + cmd.ArgumentHint
+	}
+	if tag := cmd.Source.Badge(); tag != "" {
+		label += "  [" + tag + "]"
 	}
 	if cmd.Description != "" {
 		label += " - " + cmd.Description

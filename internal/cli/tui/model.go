@@ -1168,6 +1168,14 @@ func (m Model) executor() *prompts.Executor {
 func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 	if name, ok := slashCommandName(line); ok {
 		if cmd, found := m.slash.Lookup(name); found {
+			if cmd.Projection.REPLOnly() {
+				// The loop face lives in the REPL (--no-tui) — the TUI
+				// rejects explicitly (T7.7 §6: never a silent no-op).
+				m.beginSlashInput(line)
+				m.transcript.addSystem(cmd.Projection.UnavailableNotice(name))
+				m.relayout()
+				return m, nil
+			}
 			switch cmd.Projection {
 			case runtime.ProjQuit:
 				m.shutdownRemote()
@@ -1219,13 +1227,6 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 				return m.runRemoteControl(line)
 			case runtime.ProjRewind:
 				return m.rewindConversation(line)
-			case runtime.ProjREPLFace:
-				// The loop face lives in the REPL (--no-tui) — the TUI
-				// rejects explicitly (T7.7 §6: never a silent no-op).
-				m.beginSlashInput(line)
-				m.transcript.addSystem(cmd.Projection.UnavailableNotice(name))
-				m.relayout()
-				return m, nil
 			}
 		}
 	}
@@ -1266,17 +1267,11 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 
 // slashCommandName extracts the command name (without the leading "/") from a
 // slash-command line: "/name" or "/name args…". ok is false for non-slash
-// input.
+// input. It shares runtime.SplitInvocation with the REPL and the headless
+// guard, so all three surfaces agree on what "/name" means.
 func slashCommandName(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "/") {
-		return "", false
-	}
-	rest := trimmed[1:]
-	if i := strings.IndexAny(rest, " \t"); i >= 0 {
-		return rest[:i], true
-	}
-	return rest, true
+	name, _, ok := runtime.SplitInvocation(line)
+	return name, ok
 }
 
 // beginSlashInput is the shared preamble of every projection that owns the

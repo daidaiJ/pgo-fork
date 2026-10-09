@@ -433,16 +433,10 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			var b strings.Builder
 			b.WriteString(ui.Colorize(color, ui.Bold, "available commands:"))
 			for _, c := range reg.List() {
+				name := "/" + c.Name
+				rest := strings.TrimPrefix(FormatCommandLine(c), name)
 				b.WriteString("\n  ")
-				b.WriteString(ui.Colorize(color, ui.Cyan, "/"+c.Name))
-				rest := ""
-				if c.ArgumentHint != "" {
-					rest += " " + c.ArgumentHint
-				}
-				if c.Description != "" {
-					rest += " - " + c.Description
-				}
-				rest += " (source: " + c.Tier.String() + ")"
+				b.WriteString(ui.Colorize(color, ui.Cyan, name))
 				b.WriteString(ui.Colorize(color, ui.Dim, rest))
 			}
 			return b.String()
@@ -455,14 +449,14 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 	// never the old silent stub no-op.
 	//
 	//   - exit/quit terminate the front-end loop (both interactive faces).
-	//   - sessions/resume/rename/context carry TUI faces; the REPL resolves
-	//     them to the TUI-face notice until its own projections land
-	//     (slice 3). remote-control/rewind carry TUI faces too, and the REPL
-	//     loop still intercepts them ahead of resolution with its own
-	//     implementations.
-	//   - The REPL-face commands (fork … dream) execute in the REPL loop
-	//     only; the TUI rejects them explicitly (pinned by the TUI's phantom
-	//     rejection test).
+	//   - remote-control/rewind execute in the REPL loop; the TUI projects
+	//     them onto its own panels.
+	//   - fork … dream execute in the REPL loop only; every other front-end
+	//     rejects them explicitly (Projection.REPLOnly, pinned by the TUI's
+	//     phantom rejection test).
+	//   - sessions/resume/rename/context are TUI-face pickers/overlays; the
+	//     REPL projects them as a candidate list plus a usage hint (slice 3),
+	//     never as a fake picker.
 	for _, c := range []runtime.SlashCommand{
 		{Name: "exit", Description: "exit pigo", Projection: runtime.ProjQuit},
 		{Name: "quit", Description: "exit pigo", Projection: runtime.ProjQuit},
@@ -472,18 +466,49 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		{Name: "context", Description: "toggle the context-usage overlay panel", Projection: runtime.ProjContextPanel},
 		{Name: "remote-control", Description: "mirror this session to a phone/browser on your LAN: /remote-control [stop|status]", Projection: runtime.ProjRemoteControl},
 		{Name: "rewind", Description: "roll files and the conversation back to before an earlier turn: /rewind [n]", Projection: runtime.ProjRewind},
-		{Name: "fork", Description: "branch from a historical message into a new session: /fork [n]", Projection: runtime.ProjREPLFace},
-		{Name: "clone", Description: "duplicate the current session into an independent branch", Projection: runtime.ProjREPLFace},
-		{Name: "tree", Description: "show the session branch tree; switch active branch: /tree [n]", Projection: runtime.ProjREPLFace},
-		{Name: "export", Description: "export the session to a file: /export [path.jsonl|path.html]", Projection: runtime.ProjREPLFace},
-		{Name: "import", Description: "import a JSONL export as a new session: /import <path.jsonl>", Projection: runtime.ProjREPLFace},
-		{Name: "copy", Description: "copy the most recent assistant reply to the clipboard", Projection: runtime.ProjREPLFace},
-		{Name: "goal", Description: "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear", Projection: runtime.ProjREPLFace},
-		{Name: "btw", Description: "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)", Projection: runtime.ProjREPLFace},
-		{Name: "dream", Description: "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing", Projection: runtime.ProjREPLFace},
+		{Name: "fork", Description: "branch from a historical message into a new session: /fork [n]", Projection: runtime.ProjFork},
+		{Name: "clone", Description: "duplicate the current session into an independent branch", Projection: runtime.ProjClone},
+		{Name: "tree", Description: "show the session branch tree; switch active branch: /tree [n]", Projection: runtime.ProjTree},
+		{Name: "export", Description: "export the session to a file: /export [path.jsonl|path.html]", Projection: runtime.ProjExport},
+		{Name: "import", Description: "import a JSONL export as a new session: /import <path.jsonl>", Projection: runtime.ProjImport},
+		{Name: "copy", Description: "copy the most recent assistant reply to the clipboard", Projection: runtime.ProjCopy},
+		{Name: "goal", Description: "run autonomously toward a goal: /goal [--tokens N] <objective> | pause | resume | clear", Projection: runtime.ProjGoal},
+		{Name: "btw", Description: "ask a quick side question without touching the main conversation: /btw <question> (kept in a hidden peek session; bare /btw reopens the last one)", Projection: runtime.ProjBtw},
+		{Name: "dream", Description: "consolidate memory now (dedupe, merge, prune, distill); /dream --dry-run previews without writing", Projection: runtime.ProjDream},
 	} {
 		reg.AddBuiltin(c)
 	}
+}
+
+// BuiltinCatalog returns a registry holding only the built-in declarations —
+// the live, config-surface and loop-face entries — with zero-valued wiring. It
+// is the identity face a caller needs to answer "is this /name a built-in?"
+// without assembling a live session (the headless print-mode slash guard).
+func BuiltinCatalog() *runtime.SlashRegistry {
+	reg := runtime.NewSlashRegistry()
+	RegisterLiveCommands(reg, &cli.LiveConfig{}, nil)
+	RegisterSurfaceCommands(reg, &SurfaceDeps{})
+	return reg
+}
+
+// FormatCommandLine renders one catalog row for /help, the completion surfaces
+// and the TUI menu: "/name <argument-hint>", the source badge for a non-builtin
+// (builtins — the untagged majority — stay clean), then " - description". The
+// badge sits ahead of the description so it survives the menu's width
+// truncation. It is the single renderer behind all three candidate surfaces, so
+// they cannot drift (T7.7 §6).
+func FormatCommandLine(c runtime.SlashCommand) string {
+	line := "/" + c.Name
+	if c.ArgumentHint != "" {
+		line += " " + c.ArgumentHint
+	}
+	if tag := c.Source.Badge(); tag != "" {
+		line += "  [" + tag + "]"
+	}
+	if c.Description != "" {
+		line += " - " + c.Description
+	}
+	return line
 }
 
 // validThinkingLevel reports whether s is one of the known reasoning-effort

@@ -17,6 +17,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/compaction"
@@ -59,6 +60,15 @@ type RunParams struct {
 // messages ahead of the new prompt.
 func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	env := p.Env
+	// Built-in slash commands need a loop (-p has none): a picker or a
+	// loop-owned command cannot be projected, and the former behavior sent the
+	// literal text to the model as a prompt (T7.7 §4.6). Refuse explicitly
+	// before the plugin path, so a built-in still wins a same-name collision
+	// exactly as it does in the registry.
+	if msg := refuseBuiltinSlash(p.Prompt); msg != "" {
+		fmt.Fprintf(errOut, "pigo: %s\n", msg)
+		return 2
+	}
 	// Best-effort plugin slash-command support in headless mode: if the prompt is
 	// a "/cmd ..." naming a plugin command, invoke it, print its notifications to
 	// errOut, and use the returned prompt for this run (appending the raw args if
@@ -202,6 +212,35 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// builtinSlashCatalog is the identity catalog the print-mode slash guard
+// resolves against: the built-in declarations only (the live, config-surface
+// and loop-face entries), with no live wiring. User prompt templates, skills
+// and plugin commands are not built-ins and stay on the prompt path.
+var builtinSlashCatalog = prompts.BuiltinCatalog()
+
+// refuseBuiltinSlash returns the explicit refusal for a print-mode prompt that
+// names a built-in slash command, or "" when the prompt should run as a normal
+// turn (plain text, an unknown "/name", a prompt template, a skill command, or
+// a plugin command). -p has no loop: an interactive face has nothing to project
+// and a loop-owned command has no state to act on, so executing neither and
+// sending the literal text to the model ("/status" as a prompt) is the defect
+// this closes (T7.7 §4.6 — execution or an explicit message, never a silently
+// misread prompt).
+func refuseBuiltinSlash(prompt string) string {
+	name, _, ok := runtime.SplitInvocation(prompt)
+	if !ok {
+		return ""
+	}
+	cmd, found := builtinSlashCatalog.Lookup(name)
+	if !found {
+		return ""
+	}
+	if cmd.Projection != runtime.ProjNone {
+		return fmt.Sprintf("/%s needs an interactive terminal (run pigo for the TUI or pigo --no-tui for the REPL); -p runs one prompt and does not dispatch built-in slash commands", name)
+	}
+	return fmt.Sprintf("/%s is a built-in slash command; -p runs one prompt and does not dispatch built-ins (run pigo --no-tui for the REPL)", name)
 }
 
 // resolveHeadlessPluginCommand gives the headless / print path best-effort
