@@ -29,6 +29,26 @@
   `D:\CODE\ai\{rpiv-mono, pi-dynamic-workflows-michaelliv,
   pi-dynamic-workflow-milanglacier, pi-dynamic-workflows-quintinshaw}`（不进库）
 
+### T7.8 请求转储：失败 provider 请求自动落盘 + `/dump` 命令 — 已落地并推送
+
+- **当前状态：** 实作 = **`e55fc51`**（2026-10-09；新增 `internal/reqdump` 包 +
+  transport 三处捕获 + `agentLoop` 发布 session id + `/dump` 契约命令；按用户指示
+  推送 origin/dev）；43 包 0 FAIL（`.gtmp/dump-test2.log`）；两份二进制已刷
+  （第二份 = `cp`，sha256 一致）；真机（本地假端点 200/500）核验通过。
+- **关键证据：** 连接期失败（传输错误 / 429·503·529 重试耗尽 / 4xx·5xx）旁路捕获
+  原始请求（`GetBody` 读回）+ 原始响应，凭据按形状脱敏（header/查询参数名含
+  key/token/secret/auth/cookie… → `<redacted>`），落盘
+  `$PIGO_DUMP_DIR` → `$PIGO_HOME/dumps` → `~/.pigo/dumps` 下的
+  `<session id>-<时间戳>/dump.json`（目录 0700 / 文件 0600 / 单体 256 KiB 截断标记）；
+  **有 session 在飞时失败即自动落盘**；`/dump` 写/复用（同根不造重复目录）并打印
+  路径，本进程无记录时指磁盘上该 session 最新 dump；session id 单漏斗 =
+  `runtime.agentLoop`（首版误挂 `StartRun`，headless 绕过，真机抓出后修正）；
+  测试 = reqdump 单测 + provider 捕获/自动落盘 + prompts `/dump` 四例 + headless
+  拒绝钉 + 目录清单钉 29→30。**登记不做**：流式开始后的失败不可复原、不落盘。
+- **详情指针：** 规格 = [wiki/port/reqdump.md](wiki/port/reqdump.md)；任务 =
+  [implementation-plan.md](wiki/port/implementation-plan.md) **T7.8**；卡 =
+  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09 深夜 2。
+
 ### T7.7 命令面契约重构切片 3 — 已提交（下一步 = 切片 4）
 
 - **当前状态：** 切片 3 落地 = **`3a36a02`**（2026-10-09 深夜，17 文件〔新增 4 /
@@ -109,6 +129,9 @@
 - [ ] /skills //mcp 面板真机（行型截断 / mcp Enter 展开 + Space server/
       tool 启停写 config + note 回显）
 - [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
+- [ ] **T7.8 `/dump` 的 TUI 面**（打成系统块 + 路径可读）；自动落盘与 `/dump`
+      已在 REPL/headless 真机核验；**流式开始后的失败不落盘**为登记口径
+      （原始响应不可复原），流式失败只照原样上报
 - [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
 - [ ] **T7.7 多面命令契约重构（2026-10-08 立项；切片 1 = `35edcd2`、切片 2 =
       `4bb2321`、切片 3 = `3a36a02`〔均 2026-10-09，本地 dev 未推〕；下一步 =
@@ -129,7 +152,14 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-09 深夜：T7.7 切片 3 落地（`3a36a02`，17 文件
+- **当前阶段**：**2026-10-09：T7.8 请求转储落地（`e55fc51`，已推 origin/dev）**——
+  连接期失败（传输错误 / 429·503·529 重试耗尽 / 4xx·5xx）旁路捕获原始请求 + 响应，
+  凭据按形状脱敏，落盘 `<dump 根>/<session id>-<时间戳>/dump.json` 并在有 session
+  在飞时自动落盘；`/dump` 写/复用并打印路径（无记录时指磁盘最新 dump）；
+  `agentLoop` 发布 session id 作单漏斗（headless 首版漏掉，真机抓出）；
+  43 包 0 FAIL（`.gtmp/dump-test2.log`）；规格 = wiki/port/reqdump.md，任务 = T7.8。
+  上一阶段：
+  **2026-10-09 深夜：T7.7 切片 3 落地（`3a36a02`，17 文件
   〔新增 4 / 删 1〕，本地 dev 未推）**——
   单一 `ProjREPLFace` 拆为 9 个面值（`ProjFork`…`ProjDream`）+ `REPLOnly()`；
   **REPL 13 名 if 链删除**（按 Projection 单 switch，每面一个投影点；切分单源
@@ -266,4 +296,5 @@
   Windows 路径形态**（`GOTMPDIR='D:\CODE\ai\pgo-fork\.gtmp'`）；传
   `/d/CODE/...` 这种 MSYS 形态会被 Go 拒绝（`creating work dir:
   GetFileAttributesEx ...: The system cannot find the path specified`）。
-- dev 分支本地开发，推送/PR 策略待用户拍板。
+- dev 分支本地开发，**2026-10-09 起按用户指示推送 `origin/dev`**（daidaiJ/pgo-fork
+  fork 仓；上游 PR / 同步策略仍待拍板）。
