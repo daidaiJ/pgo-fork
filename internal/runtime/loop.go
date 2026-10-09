@@ -30,6 +30,7 @@ import (
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/compaction"
 	"github.com/smallnest/pigo/internal/provider"
+	"github.com/smallnest/pigo/internal/reqdump"
 	"github.com/smallnest/pigo/internal/tooldecl"
 )
 
@@ -172,6 +173,11 @@ type LoopEventStream = agentcore.EventStream[agentcore.AgentEvent, []agentcore.A
 // EventStream; a producer goroutine drives the loop and closes the stream when
 // the run ends.
 func agentLoop(ctx context.Context, agentCtx *agentcore.AgentContext, cfg RunConfig) *LoopEventStream {
+	// Publish the run's session id to the dump recorder (reqdump) before any
+	// provider call: a connect-time request failure is dumped under the session
+	// that made it. This is the single funnel — StartRun (the out-of-package
+	// entry) and RunHeadless both pass through here.
+	reqdump.SetSession(cfg.SessionID)
 	stream := agentcore.NewEventStream[agentcore.AgentEvent, []agentcore.AgentMessage](cfg.EventBuffer)
 	go runLoop(ctx, agentCtx, cfg, stream)
 	return stream

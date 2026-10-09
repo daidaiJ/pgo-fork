@@ -425,6 +425,17 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		Projection:  runtime.ProjRebuild,
 		Parse:       parseRebuild,
 	})
+	// /dump is a diagnostic: it writes the most recent failed provider request
+	// (raw request + response, credentials redacted) to
+	// <dump dir>/<session id>-<timestamp>/dump.json so another agent can
+	// diagnose the failure. The record is captured by the transport on every
+	// connect-time failure and dumped automatically; the command re-writes it
+	// on demand and prints the path.
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "dump",
+		Description: "write the last failed provider request (raw request + response) to the dump directory",
+		Parse:       parseDump,
+	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "help",
 		Description: "list available slash commands",

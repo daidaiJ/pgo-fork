@@ -27,6 +27,7 @@ func TestRefuseBuiltinSlash(t *testing.T) {
 		{"/fork 2", "needs an interactive terminal"},
 		{"/help", "is a built-in slash command"},
 		{"/status", "is a built-in slash command"},
+		{"/dump", "is a built-in slash command"},
 		{"hello world", ""},
 		{"/nope", ""},
 		{"/review this PR", ""},

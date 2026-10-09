@@ -92,6 +92,9 @@ const (
 	// IntentRebuild reconstructs the conversation context from the session's
 	// persisted checkpoint (falling back to summarizing compaction) — /rebuild.
 	IntentRebuild
+	// IntentDump writes the most recent failed provider request (raw request +
+	// response) to the dump directory — /dump.
+	IntentDump
 )
 
 func (k IntentKind) String() string {
@@ -134,6 +137,8 @@ func (k IntentKind) String() string {
 		return "memory-show"
 	case IntentRebuild:
 		return "rebuild"
+	case IntentDump:
+		return "dump"
 	default:
 		return "unknown"
 	}

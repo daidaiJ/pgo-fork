@@ -1119,6 +1119,14 @@ func (m Model) executor() *prompts.Executor {
 		Creds:   m.slashCreds,
 		Surface: m.slashDeps,
 	}
+	// /dump names its directory after the session in flight; the model is
+	// copied per update, so read it from the session bound to this copy.
+	ex.DumpSession = func() string {
+		if m.session == nil {
+			return ""
+		}
+		return m.session.header.ID
+	}
 	// /memory renders from live memory state the way the former intercept did:
 	// the report degrades to an empty store without a session (the hook is
 	// unconditional, so the TUI face never reports the executor unavailable).

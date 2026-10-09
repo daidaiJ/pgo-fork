@@ -8,13 +8,16 @@
 package prompts
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/provider"
+	"github.com/smallnest/pigo/internal/reqdump"
 	"github.com/smallnest/pigo/internal/runtime"
 )
 
@@ -49,6 +52,11 @@ type Executor struct {
 	// blocking runManualRebuild core + PersistTurn; the TUI projects the
 	// ProjRebuild face off the tea loop instead). Nil → unavailable notice.
 	Rebuild func() string
+	// DumpSession reports the front-end's active session id at call time, used
+	// to name a /dump directory (<session id>-<timestamp>). Nil (or "") falls
+	// back to the recorder's in-flight session, published by the run loop, and
+	// then to "unknown-session".
+	DumpSession func() string
 }
 
 // Execute runs one parsed intent and returns the outcome to project.
@@ -167,9 +175,43 @@ func (x *Executor) execute(it runtime.Intent) string {
 			return "(rebuild unavailable: no active session)"
 		}
 		return x.Rebuild()
+	case runtime.IntentDump:
+		return x.dumpLastFailure()
 	default:
 		return fmt.Sprintf("unknown intent %s", it.Kind)
 	}
+}
+
+// dumpLastFailure writes the most recent failed provider request to the dump
+// directory and reports the path. Both interactive front-ends share it — the
+// dump is front-end independent (the recorder holds the record, the run loop
+// publishes the session id) — so there is no per-face hook. A failure the
+// automatic dump already wrote is reported at its own path; with nothing
+// recorded in this process the newest dump on disk for the session is named
+// instead, so a resumed process can still find the earlier failure.
+func (x *Executor) dumpLastFailure() string {
+	session := ""
+	if x.DumpSession != nil {
+		session = x.DumpSession()
+	}
+	if session == "" {
+		session = reqdump.Session()
+	}
+	root, err := reqdump.DefaultDir()
+	if err != nil {
+		return fmt.Sprintf("dump: %v", err)
+	}
+	path, err := reqdump.Write(root, session, time.Now())
+	if errors.Is(err, reqdump.ErrNoRecord) {
+		if latest, lerr := reqdump.Latest(root, session); lerr == nil && latest != "" {
+			return fmt.Sprintf("nothing failed in this run; latest dump on disk: %s", latest)
+		}
+		return "dump: no failed provider request recorded yet (only a request that fails before streaming starts is captured)"
+	}
+	if err != nil {
+		return fmt.Sprintf("dump: %v", err)
+	}
+	return fmt.Sprintf("dumped the last failed provider request to %s", path)
 }
 
 // modelSwitch applies /model <id> [effort]: a config profile ([models."<id>"],

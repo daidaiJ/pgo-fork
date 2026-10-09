@@ -299,6 +299,10 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		Live:    deps.live,
 		Creds:   deps.creds,
 		Surface: deps.surface,
+		// The session id is read at call time: /fork and /import swap
+		// deps.header, so a value captured here would name the dump after the
+		// session the user left.
+		DumpSession: func() string { return deps.header.ID },
 		Status: func() string {
 			var b bytes.Buffer
 			status.RunStatus(&b, &deps)

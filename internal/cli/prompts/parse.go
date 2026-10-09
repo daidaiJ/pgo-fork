@@ -161,3 +161,12 @@ func parseRebuild(args string) (runtime.Intent, error) {
 	}
 	return runtime.Intent{Kind: runtime.IntentRebuild}, nil
 }
+
+// parseDump refuses arguments — the dump writes the last failed provider
+// request, and there is nothing to select by argument.
+func parseDump(args string) (runtime.Intent, error) {
+	if strings.TrimSpace(args) != "" {
+		return runtime.Intent{}, fmt.Errorf("dump: takes no arguments")
+	}
+	return runtime.Intent{Kind: runtime.IntentDump}, nil
+}

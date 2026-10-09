@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/reqdump"
 )
 
 // StreamEvent is the transport-level alias for AssistantMessageEvent. Decoders
@@ -134,6 +135,7 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 		if err != nil {
 			lastErr = classifyTransportError(err)
 			if !isRetryableNetErr(err) || attempt == maxRetries {
+				recordFailure(req, nil, nil, lastErr)
 				return nil, lastErr
 			}
 			if !sleepBackoff(ctx, attempt, 0) {
@@ -144,13 +146,14 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 		if resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusServiceUnavailable ||
 			resp.StatusCode == statusTooManyRequestsCF {
-			wait := retryAfter(resp.Header)
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 			resp.Body.Close()
 			lastErr = fmt.Errorf("transport: upstream %d", resp.StatusCode)
 			if attempt == maxRetries {
+				recordFailure(req, resp, body, lastErr)
 				return nil, lastErr
 			}
-			if !sleepBackoff(ctx, attempt, wait) {
+			if !sleepBackoff(ctx, attempt, retryAfter(resp.Header)) {
 				return nil, ctx.Err()
 			}
 			continue
@@ -158,11 +161,34 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 		if resp.StatusCode >= 400 {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 			resp.Body.Close()
-			return nil, fmt.Errorf("transport: upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			lastErr = fmt.Errorf("transport: upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			recordFailure(req, resp, body, lastErr)
+			return nil, lastErr
 		}
 		return resp, nil
 	}
 	return nil, lastErr
+}
+
+// recordFailure hands a failed connect-time request to the dump recorder
+// (reqdump), which keeps it in memory and writes it to the dump directory when
+// a session is in flight. Best-effort by construction: it never alters the
+// returned error or the retry decision, and the recorder swallows write errors
+// so a diagnostic can never mask the provider failure being reported.
+func recordFailure(req *http.Request, resp *http.Response, body []byte, err error) {
+	if req == nil || err == nil {
+		return
+	}
+	rec := reqdump.Record{
+		RecordedAt: time.Now(),
+		Error:      err.Error(),
+		Request:    reqdump.CaptureRequest(req),
+	}
+	if resp != nil {
+		r := reqdump.CaptureResponse(resp, body)
+		rec.Response = &r
+	}
+	reqdump.RecordFailure(rec)
 }
 
 // pump drives the SSE read loop with dual watchdogs, decoding payloads and
