@@ -5,6 +5,37 @@
 
 ## 🔄 Handoff 摘要
 
+### T8.2 LSP 支持批 1（internal/lsp 内核 + overlay 编辑回灌 + /lsp + 配置分层）— 已落地待提交
+
+- **当前状态：** 2026-10-10 深夜 2 落地（feat + docs 两段提交后推送
+  origin/dev）；43 包 0 FAIL（`.gtmp/t82-final.log`）；两份二进制已刷
+  （第二份 = cp，sha256 一致）；**真机 gopls v0.23.0 核验过**：overlay 注入
+  编译错误 → publishDiagnostics 3.1s（含冷启动）、definition 命中
+  `manager.go:94:19`、symbols 32 顶层；管道真机：headless `-p /lsp` exit 2
+  拒绝、REPL 降级 listing 双态、`/lsp enable` trust 门拒绝→信任后写盘。
+  本批中段用户两点点名已落：**用途 = 加速检索 + 语法检查**；**对标
+  opencode + grok**（六项收敛/八项分叉登记，编辑结果内联诊断本轮补齐）。
+- **关键证据：** ①`internal/lsp` 叶子包（Content-Length 帧 JSON-RPC +
+  initialize 握手 + overlay docs + publishDiagnostics 收集 + 四查询 +
+  UTF-16 换算；gopls 默认 `-remote=auto serve` daemon 复用 + flag-error
+  降级重试 + Windows URI）。②overlay 工作流 = edit/write 工具缝注入
+  （`InjectLSPOverlay`），写盘即全量推送（版本单调 + mailbox 保序）+
+  **编辑结果内联诊断**（error 级 cap 10、1.5s 编辑预算；grok drain 注入 /
+  opencode edit.ts 同构）。③5 工具族默认 deferred（与 declaration_mode
+  解耦）；`/lsp` 声明命令（ProjLSPPanel，TUI 两级面板照 /mcp；REPL 文本
+  listing；headless 拒绝）。④配置分层 = 全局 `[lsp]`（默认 off + idle +
+  `[lsp.gopls]` command/args/tools）< 项目层 `./.pigo/config.json`
+  `{"lsp":{"enabled":…}}`（**trust 门**，写 fail-closed）< `PIGO_LSP`；
+  解析单源 `run.ResolveLSPSettings`。⑤**对标**：grok（多 server 路由 /
+  watched_files 代理 / pull / restart 监视 / 500ms drain）vs opencode
+  （单工具 9 操作 / 5s 等待 / gopls 自动安装）→ 批 2 B1–B5 登记。
+  **本轮默认拍板四条**：全局默认 off / rename 缓入 / 面板启停写项目层 /
+  非 Go 仓不预热。
+- **详情指针：** 规格 + 对标表 = [wiki/port/lsp-support.md](wiki/port/lsp-support.md)
+  （本轮权威）；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
+  T8.2 + [plan/phase-8.md](wiki/port/plan/phase-8.md)（期改 ✅2·⏳1）；
+  卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（深夜 2）。
+
 ### 实施计划分册拆分 + 期级整体状态标记（索引 + plan/ 分册）— done（wiki 侧，无代码改动）
 
 - **当前状态：** 2026-10-10 深夜完成（用户点名三连：按分期拆分 + 状态不清 +
@@ -169,6 +200,9 @@
   改造、修复批、原型文档批）/ §3.5 已拍板口径 / §4 待拍板清单 / §5 环境事实
 
 ### 未验证事项
+- [ ] **T8.2 TUI /lsp 面板真机手感**（server 行状态/诊断计数 + Enter 展开
+      工具行 + Space 启停写项目层；前置 = `[lsp] enabled = true` 或项目层
+      开 + 目录受信）；批 2 改进切片 B1–B5 待排期（lsp-support.md §7）
 - [ ] **本批（2026-10-08）：dynamic-workflow 载体路线待拍板**（形态设计
       §8 四条问题：候选 A 嵌入脚本 / B 纯声明式 / C 声明式外层 + 受限表达式
       + 逃生舱〔建议〕；脚本引擎与 code mode 合并选型；排期；是否要
@@ -200,7 +234,12 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-10 晚：T8.1 供应商配置统一批落地**——config 归一
+- **当前阶段**：**2026-10-10 深夜 2：T8.2 LSP 支持批 1 落地**——
+  internal/lsp 内核 + overlay 编辑回灌（编辑结果内联诊断）+ /lsp 面板 +
+  配置分层 trust 门 + 5 工具默认 deferred；对标 opencode + grok 收口
+  （规格 = wiki/port/lsp-support.md，任务 = implementation-plan T8.2）。
+  上一阶段：
+  **2026-10-10 晚：T8.1 供应商配置统一批落地**——config 归一
   `~/.pigo`（双轨缺陷收口：legacy XDG 只读回退 + 一次性迁移副本）+
   `[provider."<id>"]` 连接节 + 档案逐字段继承（凭据整组 opt-out，grok 对齐）+
   供应商/模型两级代理（`ProxyClient` fail-fast + `setHTTPClient` 注入缝 +
