@@ -798,13 +798,25 @@ func TestSubagentResumeBudget(t *testing.T) {
 
 	t.Run("nothing distillable fails closed", func(t *testing.T) {
 		tool := newTool(summary)
-		// One oversized message: no cut point exists, so Compact returns nil and
-		// the resume must be refused with guidance rather than silently coming
-		// over-window.
+		// A single oversized message has no cut point, so Compact yields nothing
+		// and the resume must be refused with guidance rather than silently
+		// coming over-window.
+		msgs := agentcore.MessageList{userMsg(bigText(100000))}
+		cfg := RunConfig{LoopConfig: LoopConfig{Model: "child", Stream: provider.StreamFnFromProvider(&fauxProvider{name: "child", turns: []fauxTurn{textTurn(summary)}})}}
+		_, err := tool.applyResumeBudget(context.Background(), msgs, cfg, 20000, "new prompt")
+		if err == nil || !strings.Contains(err.Error(), "nothing distillable") {
+			t.Fatalf("applyResumeBudget error = %v, want a fail-closed refusal", err)
+		}
+	})
+
+	t.Run("no summarization stream fails closed", func(t *testing.T) {
+		tool := newTool(summary)
+		// A run config with no stream cannot distill: refuse rather than call a
+		// nil stream or send an over-window request.
 		msgs := agentcore.MessageList{userMsg(bigText(100000))}
 		_, err := tool.applyResumeBudget(context.Background(), msgs, RunConfig{}, 20000, "new prompt")
-		if err == nil || !strings.Contains(err.Error(), "refused") {
-			t.Fatalf("applyResumeBudget error = %v, want a fail-closed refusal", err)
+		if err == nil || !strings.Contains(err.Error(), "no summarization model") {
+			t.Fatalf("applyResumeBudget error = %v, want a no-stream refusal", err)
 		}
 	})
 
