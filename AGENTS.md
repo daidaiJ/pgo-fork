@@ -36,6 +36,23 @@
   T8.2 + [plan/phase-8.md](wiki/port/plan/phase-8.md)（期改 ✅2·⏳1）；
   卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（深夜 2）。
 
+### T8.4 /shell 切换 + 默认 shell 运行时后端配置 — 已立项（2026-10-11 用户点名，登记待排期）
+
+- **当前状态：** 立项登记（无代码改动）。参照 = grok
+  `xai-grok-config/src/shell.rs`（config `[shell] backend` > `GROK_SHELL`
+  env > 自动探测；Windows 级联 pwsh 优先——MSYS 路径转换吃 `/` flag；
+  **grok 无 /shell 命令面**，pigo 增量 = T7.7 契约声明命令）。pigo 现状 =
+  `BashTool.Shell` 字段存在但无接线（含显式 Shell 恒 `-c` 的形态坑），
+  Windows 探测级联 bash→powershell→cmd（与 grok 相反）。
+- **要做草案 + 待拍板五条**：config `[shell]` 表 + `PIGO_SHELL` 覆盖链 /
+  装配注入 + flag 形态坑修复 / `/shell` 声明命令（新 Projection，面板照
+  /mcp//lsp）/ shellguard 兼容口径——待拍板 = Windows 级联是否改 pwsh
+  优先（涉模型 bash 语法教学）、切换生效时机、项目层是否允许（trust 门）、
+  shellguard 覆盖、工具名 bash 保持或别名。
+- **详情指针：** [plan/phase-8.md](wiki/port/plan/phase-8.md) T8.4 +
+  [implementation-plan.md](wiki/port/implementation-plan.md) 第 8 期行
+  （✅2 · ⏳2 / 4）。
+
 ### 实施计划分册拆分 + 期级整体状态标记（索引 + plan/ 分册）— done（wiki 侧，无代码改动）
 
 - **当前状态：** 2026-10-10 深夜完成（用户点名三连：按分期拆分 + 状态不清 +
