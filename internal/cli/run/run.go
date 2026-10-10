@@ -95,6 +95,12 @@ type Env struct {
 	// defer). Drivers pass it into run.NewConfig so the loop mounts the
 	// declaration machinery; search_tools is already in Tools when non-nil.
 	ToolPlan *tooldecl.Plan
+
+	// Subagents persists settled task sub-agent transcripts (T7.1), or nil when
+	// tools are disabled. Front-ends bind their session id onto it once the
+	// session exists (BindSession), which scopes each child transcript to that
+	// session; without a bind the resume face stays inert.
+	Subagents *runtime.SubagentStore
 }
 
 // SetupEnv resolves the provider for model/baseURL, builds the tool set rooted
@@ -165,6 +171,9 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 	// credential override. Both stay nil under --no-tools.
 	var sem chan struct{}
 	var childCreds *provider.CredentialStore
+	// subStore persists settled sub-agent transcripts beside the session files
+	// (T7.1). It stays nil under --no-tools (no task tool = no sub-agents).
+	var subStore *runtime.SubagentStore
 	// Wire the generic task tool (US-002, #454) unless tools are disabled. It
 	// dispatches general-purpose sub-agents that reuse the resolved provider
 	// stream/model. Each spawn gets a fresh child RunConfig whose registry is the
@@ -178,7 +187,11 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 		// or --api-key (not an env var), leaving every sub-agent unauthenticated.
 		childCreds = provider.NewCredentialStore(nil)
 		childCreds.SetOverride(resolvedName, apiKey)
-		factory := func() runtime.RunConfig {
+		// buildChildCfg assembles one child run configuration: the builtins minus
+		// "task" (the nesting guard), the sub-agent declaration plan, and the
+		// runaway guard. The parent's provider triple is the pin target recorded
+		// with a settled transcript so a later resume can re-resolve it.
+		buildChildCfg := func(childModel, childProvider string, childProv provider.Provider, getKey func(context.Context, string) string, window int) runtime.RunConfig {
 			childTools := ChildToolSet(cwd, policy)
 			// Sub-agent deferred declaration (T4.1, spec §3.4): opt-in via
 			// [tools] subagent_defer. The child's plan is the parent plan
@@ -187,10 +200,14 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 			childPlan, childTools := childToolDeclaration(childTools, toolPlan, toolsCfg)
 			return runtime.RunConfig{
 				LoopConfig: runtime.LoopConfig{
-					Model:     model,
-					Provider:  resolvedName,
-					Stream:    provider.StreamFnFromProvider(prov),
-					GetAPIKey: childCreds.GetAPIKey,
+					Model:     childModel,
+					Provider:  childProvider,
+					Stream:    provider.StreamFnFromProvider(childProv),
+					GetAPIKey: getKey,
+					// The child loop keeps no window of its own (unchanged
+					// behavior); the window below is only the pin target's budget
+					// for the resume policy.
+					ContextWindow: window,
 				},
 				Batch:           agenttool.BatchConfig{ToolExecutorConfig: agenttool.ToolExecutorConfig{Registry: ToolRegistry(childTools)}},
 				ToolDeclaration: childPlan,
@@ -199,7 +216,35 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 				Reminders: WithRunawayGuard(nil),
 			}
 		}
-		tools = append(tools, runtime.NewTaskTool(factory, sem))
+		factory := func() runtime.RunConfig {
+			return buildChildCfg(model, resolvedName, prov, childCreds.GetAPIKey, 0)
+		}
+		// The sub-agent transcript store (T7.1) lives beside the session files;
+		// a front-end binds its session id once the session exists, which is
+		// what scopes every child transcript to that session.
+		subStore = runtime.NewSubagentStore(sessionsDir())
+		newRunConfigFor := func(target runtime.SubAgentTarget) (runtime.RunConfig, error) {
+			pinnedProv, pinnedName, err := provider.ResolveProviderWithProxy(target.Model, target.BaseURL, target.Protocol, target.ProviderName, os.Getenv, target.Proxy)
+			if err != nil {
+				return runtime.RunConfig{}, err
+			}
+			// A fresh credential store resolves env/OAuth for the pinned
+			// provider. The parent's api-key override is re-applied only when the
+			// pin runs the same provider (the common "same provider, other model"
+			// resume); a config.toml-only key is not carried with the meta, so
+			// such a pin can surface a 401 through the normal envelope
+			// (registered observation).
+			pinnedCreds := provider.NewCredentialStore(nil)
+			if target.ProviderName == resolvedName {
+				pinnedCreds.SetOverride(target.ProviderName, apiKey)
+			}
+			return buildChildCfg(target.Model, pinnedName, pinnedProv, pinnedCreds.GetAPIKey, subagentContextWindow(pinnedProv, target.Model, maxCtx)), nil
+		}
+		tools = append(tools, runtime.NewTaskToolWithConfig(factory, sem, runtime.TaskToolConfig{
+			Store:           subStore,
+			Target:          subagentTarget(model, baseURL, protocol, resolvedName, proxy, prov, maxCtx),
+			NewRunConfigFor: newRunConfigFor,
+		}))
 	}
 	// Wire the session-local reminder scheduler (issue #565) unless tools are
 	// disabled: three schedule_* tools over one in-memory store, whose due
@@ -417,9 +462,62 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 		Bash:         BashToolFrom(tools),
 		Memory:       memStore,
 		Schedule:     sched,
+		Subagents:    subStore,
 		MaxContext:   maxCtx,
 		ToolPlan:     toolPlan,
 	}, nil
+}
+
+// sessionsDir resolves the directory session files live in —
+// <PIGO_HOME>/sessions, or ~/.pigo/sessions — mirroring
+// headless.SessionStore (which cannot be reused here: the headless package
+// imports this one, so this package must not import it back). The sub-agent
+// sidecar store shares this root, so keep the two resolutions in sync.
+func sessionsDir() string {
+	dir := os.Getenv("PIGO_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		dir = filepath.Join(home, ".pigo")
+	}
+	return filepath.Join(dir, "sessions")
+}
+
+// subagentTarget assembles the model pin recorded with a settled sub-agent
+// transcript (T7.1). ContextWindow is the effective window the resume budget
+// policy checks the replayed prefix against.
+func subagentTarget(model, baseURL, protocol, providerName, proxy string, prov provider.Provider, maxCtx config.MaxContext) runtime.SubAgentTarget {
+	return runtime.SubAgentTarget{
+		Model:         model,
+		BaseURL:       baseURL,
+		Protocol:      protocol,
+		ProviderName:  providerName,
+		Proxy:         proxy,
+		ContextWindow: subagentContextWindow(prov, model, maxCtx),
+	}
+}
+
+// subagentContextWindow resolves the effective context window for a sub-agent
+// pin, mirroring cli.ResolveContextWindow (this package cannot import the cli
+// package — cli imports run). Keep the two in sync: the model's catalog window,
+// else a conservative default, lowered by an explicit [compaction] max_context.
+func subagentContextWindow(prov provider.Provider, model string, maxCtx config.MaxContext) int {
+	const fallback = 128000 // cli.DefaultContextWindow
+	base := fallback
+	if prov != nil {
+		for _, m := range prov.Models() {
+			if m.ID == model && m.ContextWindow > 0 {
+				base = m.ContextWindow
+				break
+			}
+		}
+	}
+	if v := maxCtx.Resolve(base); v > 0 && v < base {
+		return v
+	}
+	return base
 }
 
 // mcpServerConfigs converts the file config's [[mcp.servers]] entries into the

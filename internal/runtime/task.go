@@ -27,8 +27,10 @@ const taskDescription = "Dispatch a general-purpose sub-agent to autonomously co
 	"The sub-agent runs its own agent loop with a fresh context and the standard tool set, then returns its final report. " +
 	"Provide a complete, self-contained prompt since the sub-agent shares none of this conversation's context. " +
 	"Multiple task calls in one message run in parallel. " +
+	"To continue work a previous sub-agent already started — a result whose envelope carried a resume_hint, or any earlier result's agent_id — " +
+	"re-dispatch with resume=\"<agent_id>\" and a prompt describing the remaining work: it replays that sub-agent's prior context instead of redoing it from scratch. " +
 	"If the result carries a \"[subagent result]\" envelope with status/stop_reason/next_step, the sub-agent did NOT complete " +
-	"normally: follow next_step (split into a smaller task, handle it yourself, or report to the user) instead of treating the body as the task's output."
+	"normally: follow next_step (resume it, split into a smaller task, handle it yourself, or report to the user) instead of treating the body as the task's output."
 
 // taskSystemPrompt seeds every generic sub-agent's context. It is intentionally
 // generic (the actual work arrives as the runtime prompt) and mirrors the
@@ -51,26 +53,55 @@ var taskSchema = json.RawMessage(`{
     "prompt": {
       "type": "string",
       "description": "The full task for the sub-agent to perform. It must be self-contained since the sub-agent runs with a fresh context and shares none of this conversation."
+    },
+    "resume": {
+      "type": "string",
+      "description": "Optional agent_id of a previously dispatched sub-agent from this session. When set, that sub-agent's prior context is replayed so the new prompt continues its work instead of restarting from scratch."
     }
   },
   "required": ["prompt"],
   "additionalProperties": false
 }`)
 
+// TaskToolConfig carries the generic task tool's resume wiring (T7.1). All
+// fields are optional: the zero value reproduces the pre-resume behavior
+// exactly (no transcript persistence, so a resume request fails closed).
+type TaskToolConfig struct {
+	// Store persists settled child transcripts; nil keeps the resume face off.
+	Store *SubagentStore
+	// Target is the provider/model triple the factory runs.
+	Target SubAgentTarget
+	// NewRunConfigFor re-resolves a provider for a resume whose source triple
+	// differs from Target (a cross-process resume after a model change).
+	NewRunConfigFor func(SubAgentTarget) (RunConfig, error)
+}
+
 // NewTaskTool builds the generic `task` sub-agent tool. factory produces a fresh
 // child RunConfig per spawn (reusing the parent's provider stream/model and a
 // child tool registry that must exclude `task` for the nesting guard); sem is a
 // shared buffered channel bounding concurrent task runs (nil disables limiting).
 // The child prompt comes from the call arguments at runtime, so a single generic
-// spec serves every delegated task.
+// spec serves every delegated task. This constructor keeps resume off; use
+// NewTaskToolWithConfig to wire transcript persistence and the model pin.
 func NewTaskTool(factory func() RunConfig, sem chan struct{}) *SubAgentTool {
+	return NewTaskToolWithConfig(factory, sem, TaskToolConfig{})
+}
+
+// NewTaskToolWithConfig is NewTaskTool plus the resume wiring (T7.1): the
+// transcript store, the factory's pin target, and the cross-model resolver.
+// resume is an argument of the existing task tool, so the declaration face
+// grows no direct token for it.
+func NewTaskToolWithConfig(factory func() RunConfig, sem chan struct{}, cfg TaskToolConfig) *SubAgentTool {
 	return NewSubAgentTool(SubAgentSpec{
-		Name:         "task",
-		Description:  taskDescription,
-		SystemPrompt: taskSystemPrompt,
-		Schema:       taskSchema,
-		NewRunConfig: factory,
-		Sem:          sem,
+		Name:            "task",
+		Description:     taskDescription,
+		SystemPrompt:    taskSystemPrompt,
+		Schema:          taskSchema,
+		NewRunConfig:    factory,
+		Sem:             sem,
+		Store:           cfg.Store,
+		Target:          cfg.Target,
+		NewRunConfigFor: cfg.NewRunConfigFor,
 	})
 }
 

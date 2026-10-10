@@ -132,6 +132,10 @@ type Options struct {
 	// Bash is the run's live bash tool (T8.4, run.Env.Bash); nil when tools
 	// are off or the policy removed it. It backs the /shell surface command.
 	Bash *agenttool.BashTool
+	// Subagents is the run's sub-agent transcript store (T7.1, run.Env.Subagents);
+	// nil when tools are off. Run binds the session id onto it so task children
+	// settle into this session's sidecar and can be resumed.
+	Subagents *runtime.SubagentStore
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -201,6 +205,11 @@ func Run(opts Options) error {
 			Cwd:          cwd,
 		}
 	}
+
+	// Bind the sub-agent transcript store to this session (T7.1): task children
+	// dispatched from here settle into <sessionsRoot>/<sessionID>.subagents/ and
+	// can be resumed. A nil store (or an unbound one) keeps the resume face off.
+	opts.Subagents.BindSession(header.ID)
 
 	// live holds the run configuration that a control command (e.g. /model) may
 	// mutate mid-session. streamRun reads it on each prompt so a model switch

@@ -39,7 +39,7 @@ func TestStopReasonOf(t *testing.T) {
 // TestBuildEnvelopeCompleted verifies the happy path keeps the verbatim-body
 // contract: status completed, no next_step, body untouched.
 func TestBuildEnvelopeCompleted(t *testing.T) {
-	env, body := buildEnvelope("ag-1", &agentcore.AssistantMessage{StopReason: agentcore.StopReasonEndTurn}, "final report\nline 2")
+	env, body := buildEnvelope("ag-1", &agentcore.AssistantMessage{StopReason: agentcore.StopReasonEndTurn}, "final report\nline 2", false)
 	if env.Status != SubAgentStatusCompleted || env.StopReason != "completed" || env.AgentID != "ag-1" {
 		t.Errorf("envelope = %+v", env)
 	}
@@ -55,7 +55,7 @@ func TestBuildEnvelopeCompleted(t *testing.T) {
 // code papered over with a placeholder: an end_turn child with no text is a
 // failure (no_final_message), not a success.
 func TestBuildEnvelopeEndTurnEmptyTextIsNoFinalMessage(t *testing.T) {
-	env, _ := buildEnvelope("ag-2", &agentcore.AssistantMessage{StopReason: agentcore.StopReasonEndTurn}, "  \n ")
+	env, _ := buildEnvelope("ag-2", &agentcore.AssistantMessage{StopReason: agentcore.StopReasonEndTurn}, "  \n ", false)
 	if env.Status != SubAgentStatusFailed || env.StopReason != "no_final_message" {
 		t.Errorf("envelope = %+v, want failed/no_final_message", env)
 	}
@@ -75,7 +75,7 @@ func TestNextStepFor(t *testing.T) {
 		"unknown-reason-xx": {"Re-dispatch"},
 	}
 	for reason, frags := range cases {
-		got := nextStepFor(reason)
+		got := nextStepFor(reason, "", false)
 		if got == "" {
 			t.Errorf("nextStepFor(%q) is empty", reason)
 			continue
@@ -86,7 +86,7 @@ func TestNextStepFor(t *testing.T) {
 			}
 		}
 	}
-	if got := nextStepFor("completed"); got != "" {
+	if got := nextStepFor("completed", "", false); got != "" {
 		t.Errorf("nextStepFor(completed) = %q, want empty", got)
 	}
 }

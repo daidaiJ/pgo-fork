@@ -91,6 +91,10 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return 1
 	}
+	// Bind the sub-agent transcript store to this session (T7.1) so a task
+	// dispatched from a headless run settles into this session's sidecar and can
+	// be resumed by a later run. A nil store keeps the resume face off.
+	env.Subagents.BindSession(hs.header.ID)
 	messages := append(priorMsgs, agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: promptContent})
 	agentCtx := &agentcore.AgentContext{
 		SystemPrompt: hs.header.SystemPrompt,

@@ -655,6 +655,11 @@ func (s *Store) Delete(id string) error {
 	}
 	_ = os.Remove(s.digestPath(id))
 	_ = os.Remove(s.leasePath(id))
+	// The sub-agent sidecar (<id>.subagents, T7.1) holds the session's
+	// resumable child transcripts; deleting the session takes them with it so
+	// a later session reusing the id cannot inherit them. The literal mirrors
+	// runtime.SubagentsSidecarSuffix — the packages do not import each other.
+	_ = os.RemoveAll(filepath.Join(s.dir, id+".subagents"))
 	return nil
 }
 

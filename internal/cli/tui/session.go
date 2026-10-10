@@ -224,6 +224,13 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		}
 	}
 
+	// Bind the sub-agent transcript store to this session (T7.1): task children
+	// dispatched from here settle into <sessionsRoot>/<sessionID>.subagents/ and
+	// can be resumed. A nil store (or an unbound one) keeps the resume face off.
+	// This is also the session-switch path, so a /sessions pick re-scopes the
+	// sidecar to the newly active session.
+	opts.Subagents.BindSession(header.ID)
+
 	live := &cli.LiveConfig{
 		Model:           opts.Model,
 		ProviderName:    opts.ProviderName,

@@ -29,8 +29,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/compaction"
 	"github.com/smallnest/pigo/internal/jsonrpc"
 	"github.com/smallnest/pigo/internal/provider"
 )
@@ -119,6 +122,22 @@ const SubAgentRPCMethod = "subagent/run"
 // subprocess with so it enters the sub-agent RPC server mode: "--subagent-rpc".
 const SubAgentRPCFlag = "--subagent-rpc"
 
+// SubAgentTarget identifies the provider/model triple a sub-agent run is pinned
+// to (T7.1 resume, ruling P2). It is recorded in the settled run's meta and
+// compared on resume: an identical triple rides the tool's normal factory (the
+// same-process case, where the factory's triple is invariant), while a
+// different one is re-resolved through NewRunConfigFor — a cross-process resume
+// where the resuming process runs another model. ContextWindow is the effective
+// window the resume budget policy checks against (0 = unknown, skip the check).
+type SubAgentTarget struct {
+	Model         string
+	BaseURL       string
+	Protocol      string
+	ProviderName  string
+	Proxy         string
+	ContextWindow int
+}
+
 // SubAgentSpec declares a spawnable sub-agent: its identity (surfaced to the
 // model as a tool), the system prompt and tools its child context runs with,
 // and a factory for the child's run configuration (provider stream, batch
@@ -168,15 +187,32 @@ type SubAgentSpec struct {
 	// blocks (queues) the acquire rather than erroring. nil disables limiting, so
 	// existing sub-agent specs run unbounded exactly as before.
 	Sem chan struct{}
+	// Store, when non-nil and bound to a session, persists each settled child's
+	// transcript and meta so a later dispatch can resume it (T7.1). nil (or an
+	// unbound store) keeps persistence off, and a resume request then fails
+	// closed rather than silently starting fresh.
+	Store *SubagentStore
+	// Target is the provider/model triple the tool's factory runs (the "current"
+	// triple). A resume whose source triple equals it rides the factory; a
+	// different one is re-resolved through NewRunConfigFor.
+	Target SubAgentTarget
+	// NewRunConfigFor builds a run configuration pinned to an explicit target.
+	// It is consulted only when a resume's source triple differs from Target
+	// (a cross-process resume after a model change); a nil resolver makes such a
+	// resume degrade to a fresh run (P2) rather than silently un-pinning.
+	NewRunConfigFor func(SubAgentTarget) (RunConfig, error)
 }
 
 // subAgentArgs is the JSON argument shape for a sub-agent tool call: a
 // free-form prompt describing the delegated task, plus an optional short
 // description used for status display (accepted by the generic task tool;
-// ignored by prompt-only specs).
+// ignored by prompt-only specs) and an optional resume handle.
 type subAgentArgs struct {
 	Prompt      string `json:"prompt"`
 	Description string `json:"description,omitempty"`
+	// Resume, when set, is the agent_id of a previously settled sub-agent in
+	// this session whose transcript is replayed as the new run's prefix (T7.1).
+	Resume string `json:"resume,omitempty"`
 }
 
 // subAgentSchema is the JSON Schema validating a sub-agent invocation.
@@ -266,13 +302,45 @@ func (t *SubAgentTool) Execute(ctx context.Context, id string, args json.RawMess
 		// forwarded here; a caller supplying a sink gets no deltas in this mode.
 		return t.executeProcess(ctx, id, a.Prompt)
 	}
-	return t.executeGoroutine(ctx, id, a.Prompt, a.Description, onUpdate)
+	return t.executeGoroutine(ctx, id, a, onUpdate)
+}
+
+// childPlan is the resolved input for one child run: the run configuration, the
+// context messages the child starts from (a fresh prompt, or a replayed prefix
+// plus the new prompt), and the resume/degrade bookkeeping the settle path
+// needs.
+type childPlan struct {
+	cfg      RunConfig
+	messages agentcore.MessageList
+	// target is the provider/model triple the child actually runs (the factory's
+	// target for a fresh run, the pinned source's for a resume).
+	target SubAgentTarget
+	// resumed is true when the messages continue a previous transcript.
+	resumed bool
+	// resumedFrom is the source agent id for a resumed run (lineage in meta).
+	resumedFrom string
+	// note, when non-empty, is prepended to the result: the resume could not be
+	// honored and a fresh run was substituted, with the reason.
+	note string
+}
+
+// resumeDecision is the outcome of resolving which run configuration drives a
+// resumed child.
+type resumeDecision struct {
+	cfg RunConfig
+	// target is the triple the child runs (the pinned source's).
+	target SubAgentTarget
+	// window is the effective context window for the resume budget (0 = unknown).
+	window int
+	// degradeReason, when non-empty, means the source could not be resolved and
+	// the resume must fall back to a fresh run on the process's own model (P2).
+	degradeReason string
 }
 
 // executeGoroutine runs the child agent loop in-process and returns its final
 // text. This is the default mode and the original sub-agent behavior.
 //
-// id is the parent tool call's id and description is the (optional) task
+// id is the parent tool call's id and a.Description is the (optional) task
 // description; both are threaded onto any SubAgentProgressEvent emitted for this
 // run so a consumer can key status by the parent task call. When the parent loop
 // injected a run-level progress emitter into ctx (WithProgressEmitter), the
@@ -280,7 +348,13 @@ func (t *SubAgentTool) Execute(ctx context.Context, id string, args json.RawMess
 // SubAgentProgressEvent and surfaced up the parent stream; when no emitter is
 // present (e.g. the tool is called directly in a unit test) progress reporting is
 // silently skipped.
-func (t *SubAgentTool) executeGoroutine(ctx context.Context, id, prompt, description string, onUpdate agentcore.ToolUpdateFunc) (agentcore.AgentToolResult, error) {
+//
+// When a.Resume is set and a transcript store is bound, the referenced settled
+// child's transcript is replayed as this run's prefix (T7.1): the prefix is
+// project-viewed (dangling calls repaired), side-effect results are replaced by
+// an "already executed" marker (T5.2), and the new prompt is appended as the
+// latest user turn. Every terminal outcome persists the transcript.
+func (t *SubAgentTool) executeGoroutine(ctx context.Context, id string, a subAgentArgs, onUpdate agentcore.ToolUpdateFunc) (agentcore.AgentToolResult, error) {
 	// Concurrency guard: when a shared semaphore is configured, acquire a slot
 	// before spawning the child and release it via defer so a panic or error
 	// still frees the slot. A full channel blocks (queues) the acquire; a
@@ -293,103 +367,81 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id, prompt, descrip
 			return agentcore.AgentToolResult{}, ctx.Err()
 		}
 	}
-	var runCfg RunConfig
-	if t.spec.NewRunConfigE != nil {
-		rc, ferr := t.spec.NewRunConfigE()
-		if ferr != nil {
-			// D-7: a spawn-time factory failure (e.g. a skill's frontmatter
-			// model that cannot resolve) is a normal envelope result, not a Go
-			// error — the parent model reads the cause and acts on next_step.
-			final := &agentcore.AssistantMessage{StopReason: agentcore.StopReasonError, ErrorMessage: ferr.Error()}
-			env, body := buildEnvelope(id, final, ferr.Error())
-			return agentcore.AgentToolResult{
-				Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
-				Details: env,
-			}, nil
-		}
-		runCfg = rc
-	} else {
-		runCfg = t.spec.NewRunConfig()
-	}
-	// Advertise the child's tools to the model. A spec may pin an explicit set
-	// (spec.Tools); otherwise fall back to the run config's registry — the tools
-	// the executor can actually run — so a factory that wires only the registry
-	// (like the generic task tool) still tells the child what it can call.
-	// Without this the model is handed an empty tool list, can only reply with
-	// text, and a delegated task that needs tools comes back empty.
-	tools := t.spec.Tools
-	if len(tools) == 0 && runCfg.Batch.ToolExecutorConfig.Registry != nil {
-		tools = runCfg.Batch.ToolExecutorConfig.Registry.List()
-	}
-	childCtx := &agentcore.AgentContext{
-		SystemPrompt: t.spec.SystemPrompt,
-		Messages: agentcore.MessageList{
-			agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent(prompt)}},
-		},
-		Tools: tools,
-	}
-
-	stream := StartRun(ctx, childCtx, runCfg)
-	// Drain events (DrainStream never returns early, so the producer goroutine is
-	// never blocked on back-pressure); forward streamed child text as
-	// tool-execution updates when a sink is set.
-	var h StreamHandler
-	if onUpdate != nil {
-		h.OnText = func(delta string) {
-			onUpdate(agentcore.AgentToolResult{Content: agentcore.ContentList{agentcore.NewTextContent(delta)}})
-		}
-	}
-	// Progress reporting: when the parent loop injected a run-level emitter into
-	// ctx, translate the child's tool-execution / turn boundaries into
-	// SubAgentProgressEvent and emit them up the parent stream. Reporting is at
-	// activity granularity (per child tool start / turn boundary), NOT per text
-	// delta, so event volume stays proportional to the child's tool calls. When
-	// no emitter is present the OnEvent hook is left nil and progress is skipped.
-	if parentEmit := agentcore.ProgressEmitterFromContext(ctx); parentEmit != nil {
-		// chars accumulates the child's streamed text length so a coarse output
-		// token estimate can ride along on each progress event (0 = unknown).
-		chars := 0
-		if prev := h.OnText; prev != nil {
-			h.OnText = func(delta string) {
-				chars += len(delta)
-				prev(delta)
-			}
-		} else {
-			h.OnText = func(delta string) { chars += len(delta) }
-		}
-		h.OnEvent = func(ev agentcore.AgentEvent) {
-			act := activityOf(ev)
-			if act == "" {
-				return
-			}
-			_ = parentEmit(ctx, agentcore.SubAgentProgressEvent{
-				ToolCallID:  id,
-				Description: description,
-				Activity:    act,
-				Tokens:      estimateTokens(chars),
-			})
-		}
-	}
-	final, err := DrainStream(ctx, stream, h)
+	started := time.Now().UTC()
+	plan, spawnFail, err := t.planChild(ctx, a)
 	if err != nil {
-		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q: %w", t.spec.Name, err)
+		return agentcore.AgentToolResult{}, err
 	}
-	// T5.1 envelope: normalize the settled run into the structured outcome. The
-	// parent's ctx governs the child, so a cancelled parent short-circuits as a
-	// tool error (the whole run is going down; an envelope inviting the model to
-	// re-dispatch would be wrong).
+	if spawnFail != nil {
+		// D-7: a spawn-time factory failure (e.g. a skill's frontmatter model
+		// that cannot resolve) is a normal envelope result, not a Go error — the
+		// parent model reads the cause and acts on next_step.
+		env, body := buildEnvelope(id, spawnFail, spawnFail.ErrorMessage, false)
+		return agentcore.AgentToolResult{
+			Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
+			Details: env,
+		}, nil
+	}
+	h := t.streamHandler(ctx, id, a.Description, onUpdate)
+	var childCtx *agentcore.AgentContext
+	runChild := func(p childPlan) (*agentcore.AssistantMessage, error) {
+		childCtx = &agentcore.AgentContext{
+			SystemPrompt: t.spec.SystemPrompt,
+			Messages:     p.messages,
+			Tools:        t.childTools(p.cfg),
+		}
+		return DrainStream(ctx, StartRun(ctx, childCtx, p.cfg), h)
+	}
+	final, derr := runChild(plan)
+	// P2 rate-limit degrade: a resumed run that dies on the upstream
+	// 429/503/529 family (the transport's retries exhausted) re-runs fresh on
+	// this process's model, once. A fresh run that fails again is reported as
+	// usual — never a second degrade.
+	if plan.resumed && derr == nil && ctx.Err() == nil && rateLimitFailure(final) {
+		if fp, fail := t.freshPlan(a); fail == nil {
+			fp.note = degradeNote(id, plan.target.Model, rateLimitDegradeReason)
+			final, derr = runChild(fp)
+			plan = fp
+		}
+	}
+	// Settle persistence (T7.1): every terminal outcome — completed, failed,
+	// cancelled, transport error — best-effort records the transcript and a
+	// terminal meta before any early return, so a run cancelled with its parent
+	// is still resumable in a later process. A write failure is logged and
+	// swallowed (log-and-continue, checkpoint's contract): a broken sidecar must
+	// never turn a settled run into an error.
+	metaReason := stopReasonOf(final)
+	switch {
+	case ctx.Err() != nil:
+		metaReason = "cancelled"
+	case derr != nil:
+		metaReason = "error"
+	}
+	t.persistSettle(id, childCtx, plan, metaReason, started)
+
 	if ctx.Err() != nil {
+		// A cancelled parent returns the context error unwrapped, exactly as the
+		// pre-resume path did (the whole run is going down; an envelope inviting
+		// the model to re-dispatch would be wrong).
 		return agentcore.AgentToolResult{}, ctx.Err()
+	}
+	if derr != nil {
+		return agentcore.AgentToolResult{}, fmt.Errorf("sub-agent %q: %w", t.spec.Name, derr)
 	}
 	text := ""
 	if final != nil {
 		text = agentcore.ContentToText(final.Content)
 	}
-	env, body := buildEnvelope(id, final, text)
+	env, body := buildEnvelope(id, final, text, t.resumable())
+	if plan.note != "" {
+		body = plan.note + "\n\n" + body
+	}
 	// Completed runs keep the pre-envelope contract: the child's final message
 	// is the sole handoff and the result text is returned verbatim (the
 	// envelope rides in Details for the TUI/telemetry), so existing consumers
-	// of successful task results see no change.
+	// of successful task results see no change. A degraded resume prepends its
+	// note to that verbatim body — the one deliberate exception, so the parent
+	// model never mistakes a fresh re-run for a continuation.
 	if env.Status == SubAgentStatusCompleted {
 		return agentcore.AgentToolResult{
 			Content: agentcore.ContentList{agentcore.NewTextContent(body)},
@@ -406,6 +458,400 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id, prompt, descrip
 		Content: agentcore.ContentList{agentcore.NewTextContent(env.Format(body))},
 		Details: env,
 	}, nil
+}
+
+// freshPlan resolves the normal (non-resume) child plan through the tool's
+// factory. A factory error is returned as the D-7 synthetic final message (the
+// caller renders it as an envelope), never as a Go error.
+func (t *SubAgentTool) freshPlan(a subAgentArgs) (childPlan, *agentcore.AssistantMessage) {
+	cfg := RunConfig{}
+	if t.spec.NewRunConfigE != nil {
+		rc, err := t.spec.NewRunConfigE()
+		if err != nil {
+			return childPlan{}, &agentcore.AssistantMessage{StopReason: agentcore.StopReasonError, ErrorMessage: err.Error()}
+		}
+		cfg = rc
+	} else {
+		cfg = t.spec.NewRunConfig()
+	}
+	return childPlan{cfg: cfg, messages: agentcore.MessageList{promptMessage(a.Prompt)}, target: t.spec.Target}, nil
+}
+
+// planChild resolves the child plan for one call: a fresh plan, or — when a
+// resume handle is present — the replayed-and-sanitized prefix plus the pinned
+// run configuration.
+func (t *SubAgentTool) planChild(ctx context.Context, a subAgentArgs) (childPlan, *agentcore.AssistantMessage, error) {
+	if a.Resume == "" {
+		p, fail := t.freshPlan(a)
+		return p, fail, nil
+	}
+	prefix, meta, err := t.loadResumable(a.Resume)
+	if err != nil {
+		return childPlan{}, nil, err
+	}
+	dec, err := t.resolveResume(meta)
+	if err != nil {
+		// A pinned factory that broke is a spawn failure (D-7 envelope), not a
+		// reason to silently continue on another model.
+		return childPlan{}, &agentcore.AssistantMessage{StopReason: agentcore.StopReasonError, ErrorMessage: err.Error()}, nil
+	}
+	if dec.degradeReason != "" {
+		p, fail := t.freshPlan(a)
+		if fail != nil {
+			return childPlan{}, fail, nil
+		}
+		p.note = degradeNote(a.Resume, meta.Model, dec.degradeReason)
+		return p, nil, nil
+	}
+	msgs := t.sanitizeResumePrefix(prefix, dec.cfg)
+	msgs, err = t.applyResumeBudget(ctx, msgs, dec.cfg, dec.window, a.Prompt)
+	if err != nil {
+		return childPlan{}, nil, err
+	}
+	msgs = append(msgs, promptMessage(a.Prompt))
+	return childPlan{cfg: dec.cfg, messages: msgs, target: dec.target, resumed: true, resumedFrom: a.Resume}, nil, nil
+}
+
+// promptMessage wraps a prompt as the child's user turn.
+func promptMessage(prompt string) agentcore.Message {
+	return agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent(prompt)}}
+}
+
+// loadResumable reads and validates the transcript behind a resume handle. Every
+// failure is fail-closed (a Go error, never a silent fresh start): an unbound
+// store, a missing handle, a non-terminal record, or a corrupt transcript.
+func (t *SubAgentTool) loadResumable(agentID string) (agentcore.MessageList, SubagentMeta, error) {
+	st := t.spec.Store
+	if st == nil || st.SessionID() == "" {
+		return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q unavailable: this run has no sub-agent transcript store bound to a session", agentID)
+	}
+	msgs, meta, err := st.Load(agentID)
+	if err != nil {
+		return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q: %w", agentID, err)
+	}
+	if meta == nil {
+		if len(msgs) == 0 {
+			return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q: no such sub-agent in this session (it was never dispatched, or the handle is not an agent_id from a settled result)", agentID)
+		}
+		return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q: the sub-agent has no settled record yet; it may still be running", agentID)
+	}
+	if meta.Status != SubAgentStatusCompleted && meta.Status != SubAgentStatusFailed {
+		return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q refused: the sub-agent is still running", agentID)
+	}
+	if len(msgs) == 0 {
+		return nil, SubagentMeta{}, fmt.Errorf("sub-agent resume %q: the stored transcript is empty", agentID)
+	}
+	return msgs, *meta, nil
+}
+
+// resolveResume decides which run configuration drives a resumed child. The
+// source triple recorded in meta is pinned (P2): an identical triple rides the
+// tool's own factory, a different one is re-resolved through NewRunConfigFor. A
+// nil resolver or a resolution failure is reported as a degrade reason (the
+// caller re-runs fresh with a note) instead of aborting the spawn.
+func (t *SubAgentTool) resolveResume(meta SubagentMeta) (resumeDecision, error) {
+	src := SubAgentTarget{
+		Model:        meta.Model,
+		BaseURL:      meta.BaseURL,
+		Protocol:     meta.Protocol,
+		ProviderName: meta.Provider,
+		Proxy:        meta.Proxy,
+	}
+	if t.sameTarget(src) {
+		// Same process / same config: the factory already runs the pinned triple,
+		// and its triple is frozen for the process's lifetime, so a pin needs no
+		// re-resolution.
+		if t.spec.NewRunConfigE != nil {
+			rc, err := t.spec.NewRunConfigE()
+			if err != nil {
+				return resumeDecision{}, err
+			}
+			return resumeDecision{cfg: rc, target: t.spec.Target, window: t.spec.Target.ContextWindow}, nil
+		}
+		if t.spec.NewRunConfig == nil {
+			return resumeDecision{}, fmt.Errorf("sub-agent %q: no run configuration", t.spec.Name)
+		}
+		return resumeDecision{cfg: t.spec.NewRunConfig(), target: t.spec.Target, window: t.spec.Target.ContextWindow}, nil
+	}
+	if t.spec.NewRunConfigFor == nil {
+		return resumeDecision{degradeReason: fmt.Sprintf("the source model %s cannot be re-resolved here", displayModelName(meta.Model))}, nil
+	}
+	rc, err := t.spec.NewRunConfigFor(src)
+	if err != nil {
+		return resumeDecision{degradeReason: fmt.Sprintf("the source model %s is no longer available (%v)", displayModelName(meta.Model), err)}, nil
+	}
+	window := rc.ContextWindow
+	if window == 0 {
+		window = t.spec.Target.ContextWindow
+	}
+	return resumeDecision{cfg: rc, target: src, window: window}, nil
+}
+
+// sameTarget reports whether src is the triple the tool's factory runs.
+func (t *SubAgentTool) sameTarget(src SubAgentTarget) bool {
+	tgt := t.spec.Target
+	return src.Model == tgt.Model && src.BaseURL == tgt.BaseURL && src.Protocol == tgt.Protocol &&
+		src.ProviderName == tgt.ProviderName && src.Proxy == tgt.Proxy
+}
+
+// displayModelName names a model in a message, with a placeholder when the
+// record left it empty.
+func displayModelName(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "(unknown)"
+	}
+	return model
+}
+
+// sanitizeResumePrefix turns a stored transcript into the request prefix a
+// resumed child starts from. It runs the same projection the loop uses (T3.3),
+// which drops projection-only markers and repairs dangling tool calls with a
+// synthetic error result — a strict provider rejects a request containing any
+// unanswered tool_use, so the prefix itself must be well formed (the crush
+// lesson, §2.5). Side-effect results are then replaced, on this in-memory copy
+// only, by an "already executed" marker (T5.2: the prefix must never grant the
+// child side effects it did not just perform); read-only results stay verbatim.
+// The stored transcript keeps the real records.
+func (t *SubAgentTool) sanitizeResumePrefix(prefix agentcore.MessageList, cfg RunConfig) agentcore.MessageList {
+	view := compaction.ProjectView(prefix)
+	readOnly := t.readOnlyToolNames(cfg)
+	out := make(agentcore.MessageList, len(view))
+	copy(out, view)
+	for i, m := range out {
+		tr, ok := m.(agentcore.ToolResultMessage)
+		if !ok {
+			continue
+		}
+		if readOnly[tr.ToolName] {
+			continue
+		}
+		if tr.IsError {
+			tr.Content = agentcore.ContentList{agentcore.NewTextContent(resumeFailedSideEffectMarker)}
+		} else {
+			tr.Content = agentcore.ContentList{agentcore.NewTextContent(resumeSideEffectMarker)}
+		}
+		out[i] = tr
+	}
+	return out
+}
+
+// resumeSideEffectMarker replaces a successful side-effect tool result in a
+// replayed prefix: the call did happen, but its effect is not re-applied and
+// the child must re-verify anything it relies on.
+const resumeSideEffectMarker = "[This call already ran before the interruption; its effect was NOT re-applied. " +
+	"Re-verify the current state before relying on this result.]"
+
+// resumeFailedSideEffectMarker is the failed-call counterpart: the call ran but
+// did not succeed, so it may need re-running.
+const resumeFailedSideEffectMarker = "[This call ran and failed before the interruption. Re-run it if it is still needed.]"
+
+// readOnlyToolNames maps each tool the child can run to whether it is read-only
+// (T5.2 effect table). A tool name absent from the set is treated as
+// side-effecting, the conservative direction.
+func (t *SubAgentTool) readOnlyToolNames(cfg RunConfig) map[string]bool {
+	tools := t.childTools(cfg)
+	out := make(map[string]bool, len(tools))
+	for _, tl := range tools {
+		out[tl.Name()] = agentcore.EffectOf(tl).ReadOnly
+	}
+	return out
+}
+
+// resumeWindowPct is the share of the model's context window a replayed prefix
+// may occupy before it must be distilled — grok's ResumeWindowPolicy (window ×
+// 95%).
+const resumeWindowPct = 95
+
+// applyResumeBudget enforces the window policy on a replayed prefix (T7.1 slice
+// 2). Within budget — or an unknown window (0), which skips the check — the
+// prefix is returned unchanged. Over budget, the older history is distilled with
+// the loop's own compaction primitive while a recent tail is kept verbatim
+// (opencode's preserve_recent_tokens shape); if the distilled prefix still
+// exceeds the budget the resume is refused fail-closed, teaching the parent
+// model to re-dispatch fresh (or use a larger-window model).
+func (t *SubAgentTool) applyResumeBudget(ctx context.Context, msgs agentcore.MessageList, cfg RunConfig, window int, prompt string) (agentcore.MessageList, error) {
+	if window <= 0 {
+		return msgs, nil
+	}
+	budget := window * resumeWindowPct / 100
+	if budget <= 0 {
+		return msgs, nil
+	}
+	if compaction.EstimateContextTokens(withTrailingPrompt(msgs, prompt)).Tokens <= budget {
+		return msgs, nil
+	}
+	// Keep the recent tail proportional to the window, clamped to the range
+	// opencode uses (25% usable, 2k..15k).
+	keep := window / 4
+	if keep < 2000 {
+		keep = 2000
+	}
+	if keep > 15000 {
+		keep = 15000
+	}
+	scfg := cfg
+	scfg.Compaction = compaction.CompactionSettings{
+		Enabled:          true,
+		ReserveTokens:    compaction.DefaultCompactionSettings.ReserveTokens,
+		KeepRecentTokens: keep,
+	}
+	res, err := runCompaction(ctx, msgs, &scfg, -1, "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("sub-agent resume: distill the previous transcript: %w", err)
+	}
+	if res == nil {
+		return nil, fmt.Errorf("sub-agent resume refused: the previous transcript exceeds the resume limit (%d tokens of a %d-token window) and holds nothing distillable; re-dispatch a fresh sub-agent with a smaller task",
+			compaction.EstimateContextTokens(msgs).Tokens, window)
+	}
+	distilled := res.RebuildContext(msgs, nowMillis())
+	if compaction.EstimateContextTokens(withTrailingPrompt(distilled, prompt)).Tokens > budget {
+		return nil, fmt.Errorf("sub-agent resume refused: the previous transcript still exceeds the resume limit (%d tokens of a %d-token window) after distillation; re-dispatch a fresh sub-agent or use a model with a larger context window",
+			compaction.EstimateContextTokens(distilled).Tokens, window)
+	}
+	return distilled, nil
+}
+
+// withTrailingPrompt returns msgs followed by the pending prompt as a final user
+// turn, without mutating msgs: the budget must count what the request carries.
+func withTrailingPrompt(msgs agentcore.MessageList, prompt string) agentcore.MessageList {
+	out := make(agentcore.MessageList, 0, len(msgs)+1)
+	out = append(out, msgs...)
+	out = append(out, promptMessage(prompt))
+	return out
+}
+
+// childTools is the tool set advertised to and runnable by the child: an
+// explicit spec set when pinned, otherwise the run config's registry (the tools
+// the executor can actually run).
+func (t *SubAgentTool) childTools(cfg RunConfig) []agentcore.AgentTool {
+	if len(t.spec.Tools) > 0 {
+		return t.spec.Tools
+	}
+	if reg := cfg.Batch.ToolExecutorConfig.Registry; reg != nil {
+		return reg.List()
+	}
+	return nil
+}
+
+// streamHandler builds the DrainStream handler for one child run: text deltas
+// are forwarded to onUpdate when a sink is set, and (when the parent loop
+// injected a progress emitter into ctx) the child's tool/turn boundaries are
+// surfaced as SubAgentProgressEvent up the parent stream. Reporting is at
+// activity granularity, NOT per text delta, so event volume stays proportional
+// to the child's tool calls.
+func (t *SubAgentTool) streamHandler(ctx context.Context, id, description string, onUpdate agentcore.ToolUpdateFunc) StreamHandler {
+	var h StreamHandler
+	if onUpdate != nil {
+		h.OnText = func(delta string) {
+			onUpdate(agentcore.AgentToolResult{Content: agentcore.ContentList{agentcore.NewTextContent(delta)}})
+		}
+	}
+	parentEmit := agentcore.ProgressEmitterFromContext(ctx)
+	if parentEmit == nil {
+		return h
+	}
+	// chars accumulates the child's streamed text length so a coarse output
+	// token estimate can ride along on each progress event (0 = unknown).
+	chars := 0
+	if prev := h.OnText; prev != nil {
+		h.OnText = func(delta string) {
+			chars += len(delta)
+			prev(delta)
+		}
+	} else {
+		h.OnText = func(delta string) { chars += len(delta) }
+	}
+	h.OnEvent = func(ev agentcore.AgentEvent) {
+		act := activityOf(ev)
+		if act == "" {
+			return
+		}
+		_ = parentEmit(ctx, agentcore.SubAgentProgressEvent{
+			ToolCallID:  id,
+			Description: description,
+			Activity:    act,
+			Tokens:      estimateTokens(chars),
+		})
+	}
+	return h
+}
+
+// resumable reports whether this tool can advertise a resume handle: the run
+// must have a transcript store bound to a session.
+func (t *SubAgentTool) resumable() bool {
+	st := t.spec.Store
+	return st != nil && st.SessionID() != ""
+}
+
+// persistSettle best-effort records the settled child transcript and meta. It is
+// inert without a bound store or a child context. Writes are independent of the
+// result path: a failure is logged and swallowed.
+func (t *SubAgentTool) persistSettle(agentID string, childCtx *agentcore.AgentContext, plan childPlan, reason string, started time.Time) {
+	st := t.spec.Store
+	if st == nil || childCtx == nil {
+		return
+	}
+	if err := st.Append(agentID, childCtx.Messages); err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: sub-agent transcript not saved: %v\n", err)
+	}
+	status := SubAgentStatusFailed
+	if reason == SubAgentStatusCompleted {
+		status = SubAgentStatusCompleted
+	}
+	target := plan.target
+	if target.Model == "" {
+		target = t.spec.Target
+	}
+	now := time.Now().UTC()
+	meta := SubagentMeta{
+		Status:      status,
+		StopReason:  reason,
+		Model:       target.Model,
+		BaseURL:     target.BaseURL,
+		Protocol:    target.Protocol,
+		Provider:    target.ProviderName,
+		Proxy:       target.Proxy,
+		Messages:    len(childCtx.Messages),
+		ResumedFrom: plan.resumedFrom,
+		CreatedAt:   started,
+		UpdatedAt:   now,
+	}
+	if err := st.Finalize(agentID, meta); err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: sub-agent meta not saved: %v\n", err)
+	}
+}
+
+// rateLimitDegradeReason is the note a rate-limit degrade renders, so the parent
+// model knows the continuation it asked for was substituted.
+const rateLimitDegradeReason = "the source model returned a rate-limit / unavailable error (429/503/529)"
+
+// degradeNote is the line prepended to a result when a resume could not be
+// honored and a fresh run was substituted.
+func degradeNote(agentID, sourceModel, reason string) string {
+	return fmt.Sprintf("[resume degraded: could not continue sub-agent %s (model %s) — %s. Ran as a fresh sub-agent instead.]",
+		agentID, displayModelName(sourceModel), reason)
+}
+
+// rateLimitFailure reports whether a settled run died on the upstream
+// rate-limit/unavailable family (429/503/529) after the transport's retries were
+// exhausted — the P2 trigger for degrading a resume to a fresh run. The failure
+// surfaces as the synthesized error turn's ErrorMessage (the loop converts a
+// provider connect failure into an error assistant message), so that is what is
+// inspected.
+func rateLimitFailure(final *agentcore.AssistantMessage) bool {
+	if final == nil {
+		return false
+	}
+	text := final.ErrorMessage
+	if text == "" {
+		return false
+	}
+	for _, code := range []string{"upstream 429", "upstream 503", "upstream 529"} {
+		if strings.Contains(text, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeProcess runs the child agent loop in a fresh pigo subprocess over stdio
@@ -453,7 +899,10 @@ func (t *SubAgentTool) executeProcess(ctx context.Context, id, prompt string) (a
 	if body == "" {
 		body = res.StopReason
 	}
-	env, body := buildEnvelope(id, envelopeFinalOf(res), body)
+	// Process-isolated runs do not persist a transcript and cannot be resumed
+	// (P5: the child would need its own store and the parent's path in the RPC
+	// params), so the envelope never advertises a resume handle here.
+	env, body := buildEnvelope(id, envelopeFinalOf(res), body, false)
 	if env.Status == SubAgentStatusCompleted {
 		return agentcore.AgentToolResult{
 			Content: agentcore.ContentList{agentcore.NewTextContent(body)},

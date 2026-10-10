@@ -107,4 +107,10 @@ type Options struct {
 	// Permissions is the user's [permissions] rules table (T5.2), loaded
 	// into the permission engine alongside the persisted permissions file.
 	Permissions config.PermissionsConfig
+
+	// Subagents is the run's sub-agent transcript store (T7.1,
+	// run.Env.Subagents); nil when tools are off. The session creation path
+	// binds the session id onto it so task children settle into this session's
+	// sidecar and can be resumed.
+	Subagents *runtime.SubagentStore
 }

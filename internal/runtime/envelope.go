@@ -25,10 +25,11 @@ import (
 //     the structured fields, not by Go-error plumbing, so the parent model can
 //     read and act on next_step.
 //
-// Deviations from kimi are registered in the spec (§7): v1 has no resume
-// channel (child sessions are not persisted), so resume_hint/next_step wording
-// is re-dispatch oriented and the resume ownership checks land with resume in
-// a later iteration.
+// Deviations from kimi are registered in the spec (§7). T7.1 adds the resume
+// channel: a settled run with a bound transcript store advertises its agent_id
+// as a resume handle, and a FAILED outcome's next_step leads with resume.
+// Completed runs keep the byte-identical verbatim contract (P4) and cancelled
+// runs deliberately advertise nothing (the user asked it to stop).
 
 // maxEnvelopeBody caps the free-text body embedded in a failed envelope (kimi
 // caps reason text at 2000 chars): an error dump or partial output is context
@@ -57,28 +58,59 @@ type SubAgentEnvelope struct {
 	// NextStep is the guidance for the parent model (empty when completed —
 	// the final message below the envelope is the only handoff needed).
 	NextStep string `json:"next_step,omitempty"`
+	// ResumeHint is the re-dispatch instruction that advertises how to continue
+	// this sub-agent's conversation (T7.1). It is set only for a FAILED outcome
+	// whose transcript was persisted — cancelled runs carry none (the user
+	// asked it to stop; kimi/grok agree) and completed runs keep the
+	// byte-identical verbatim contract (P4), though their transcript is still
+	// written and resumable by an explicitly-passed agent_id.
+	ResumeHint string `json:"resume_hint,omitempty"`
+}
+
+// resumeHintFor renders the resume advertisement for a settled FAILED run whose
+// transcript store is bound. agentID is the resume handle (the parent task
+// call's tool-call id).
+func resumeHintFor(agentID string) string {
+	return fmt.Sprintf("Re-dispatch the task tool with resume=%q to continue this sub-agent's conversation.", agentID)
 }
 
 // nextStepFor maps a normalized stop reason to the parent-model guidance,
-// following kimi's NEXT_STEP_BY_REASON table adapted for a v1 without resume
-// (re-dispatch instead of "resume the same child").
-func nextStepFor(stopReason string) string {
+// following kimi's NEXT_STEP_BY_REASON table. When the run is resumable
+// (resumable, a settled failed run with a persisted transcript) the failure
+// guidance leads with resume; otherwise it stays re-dispatch oriented.
+func nextStepFor(stopReason, agentID string, resumable bool) string {
 	switch stopReason {
 	case SubAgentStatusCompleted, agentcore.StopReasonEndTurn:
 		return ""
 	case "max_tokens":
+		if resumable {
+			return fmt.Sprintf("Resume to continue where it stopped: re-dispatch the task tool with resume=%q to carry the sub-agent's prior context, "+
+				"or split the remaining work into a smaller follow-up task. Its partial output is below.", agentID)
+		}
 		return "The sub-agent hit its output limit before finishing; its partial output is below. " +
 			"Split the remaining work into a smaller follow-up task, or complete it yourself; " +
 			"if neither is feasible, report the partial result and the shortfall to the user."
 	case "error":
+		if resumable {
+			return fmt.Sprintf("Resume to continue where it stopped: re-dispatch the task tool with resume=%q to continue from its prior context "+
+				"(the failure may have been transient), or re-dispatch a rewritten, smaller task. If neither works, report the failure and the reason above to the user.", agentID)
+		}
 		return "The sub-agent failed. Re-dispatch with a rewritten or smaller task, or handle it yourself; " +
 			"if neither works, report the failure and the reason above to the user."
 	case "cancelled":
 		return "The sub-agent was stopped by the user. Do not restart it unless the user asks."
 	case "no_final_message":
+		if resumable {
+			return fmt.Sprintf("Resume to continue where it stopped: re-dispatch the task tool with resume=%q and ask it explicitly to report its findings, "+
+				"or verify the outcome yourself.", agentID)
+		}
 		return "The sub-agent produced no final report. Re-dispatch with a more explicit instruction to report its findings, " +
 			"or verify the outcome yourself."
 	default:
+		if resumable {
+			return fmt.Sprintf("Resume to continue where it stopped: re-dispatch the task tool with resume=%q to continue from its prior context, "+
+				"or re-dispatch a rewritten, smaller task.", agentID)
+		}
 		return "Re-dispatch with a rewritten or smaller task, or handle it yourself; " +
 			"if neither works, report the failure to the user."
 	}
@@ -109,7 +141,9 @@ func stopReasonOf(final *agentcore.AssistantMessage) string {
 // buildEnvelope assembles the envelope for a settled child run. body is the
 // child's final text (or the synthesized error text); it is returned capped for
 // non-completed outcomes so a runaway failure does not flood the parent.
-func buildEnvelope(agentID string, final *agentcore.AssistantMessage, body string) (SubAgentEnvelope, string) {
+// resumable marks a settled FAILED run whose transcript was persisted under
+// agentID, which is what lets the envelope advertise the resume handle.
+func buildEnvelope(agentID string, final *agentcore.AssistantMessage, body string, resumable bool) (SubAgentEnvelope, string) {
 	reason := stopReasonOf(final)
 	env := SubAgentEnvelope{AgentID: agentID, StopReason: reason}
 	if reason == SubAgentStatusCompleted && strings.TrimSpace(body) != "" {
@@ -121,7 +155,13 @@ func buildEnvelope(agentID string, final *agentcore.AssistantMessage, body strin
 		reason = "no_final_message"
 		env.StopReason = reason
 	}
-	env.NextStep = nextStepFor(reason)
+	// A cancelled run advertises no handle: the user asked the sub-agent to
+	// stop, so inviting the parent to continue it would fight that intent
+	// (kimi/grok agree; P4 as refined in §5.3).
+	if resumable && reason != "cancelled" {
+		env.ResumeHint = resumeHintFor(agentID)
+	}
+	env.NextStep = nextStepFor(reason, agentID, env.ResumeHint != "")
 	// Body fallback chain (mirrors the child-side diagnostic): when the final
 	// message carries no content, the loop's synthesized diagnostic lives in
 	// ErrorMessage — surface it so the envelope always carries its cause. A
@@ -157,6 +197,9 @@ func (e SubAgentEnvelope) Format(body string) string {
 	fmt.Fprintf(&b, "[subagent result]\nagent_id: %s\nstatus: %s\nstop_reason: %s\n", e.AgentID, e.Status, e.StopReason)
 	if e.NextStep != "" {
 		fmt.Fprintf(&b, "next_step: %s\n", e.NextStep)
+	}
+	if e.ResumeHint != "" {
+		fmt.Fprintf(&b, "resume_hint: %s\n", e.ResumeHint)
 	}
 	b.WriteString("---\n")
 	b.WriteString(body)
