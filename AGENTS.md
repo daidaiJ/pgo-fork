@@ -9,15 +9,16 @@
 
 ## 🔄 现场速览
 
-- **当前阶段**：**T7.6+D-C1 审批三态批已落地**（2026-10-11 深夜，feat +
-  docs 推送 origin/dev；44 包 0 FAIL）——三态环 ask→plan→always-approve
-  （Shift+Tab + /mode）+ 引擎 1.5 plan 门 + D-C1 本地审批面板 + D-C2 诚实
-  文案 + B5 lsp_rename 过 T5.2（LSP 家族 7→8）；规格 =
-  [wiki/port/approval-modes.md](wiki/port/approval-modes.md)（偏差
-  D-15~D-19 + 待拍板「交互默认是否改 ask」）。最新交接卡 =
-  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（深夜）。
-- **接手者第一步**：按排期口径（实用体验 > 小添头）从待排期池取件——
-  T7.1、T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐（D-11）、
+- **当前阶段**：**T7.1 子智能体续接——实作方案细化定稿（实现移交下会话）**
+  （2026-10-11 会话；零代码改动，HEAD = `9020d49`）。四参照实现级深挖
+  （grok / opencode / crush / kimi）+ P1–P5 拍板（P2 = pin 源模型 +
+  不可用/429 降级 fresh，用户二稿）+ 文件级步骤与测试矩阵（§5.2/§5.4）；
+  权威 = [wiki/port/subagent-resume.md](wiki/port/subagent-resume.md) §5 +
+  取证附录 [subagent-resume-refs.md](wiki/port/subagent-resume-refs.md)。
+  最新交接卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（续）。
+- **接手者第一步**：照 subagent-resume.md **§5.2 开工 T7.1**（切片 1 底座 →
+  切片 2 超窗；并行子代理一次 ≤ 3）；或按排期口径（实用体验 > 小添头）改取
+  待排期池余件——T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐（D-11）、
   dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、T7.4；或等用户 TUI
   真机验收反馈（清单 = `.handoff/handoff.md` §2.2 + 各面板）。
 
@@ -25,7 +26,8 @@
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
-| 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | 见 git log | approval-modes.md |
+| 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
+| 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | `a62589c`+`a04748e`/`9020d49` | approval-modes.md |
 | 10-11 晚 | T8.2 LSP 批 2（查询面 + per-tool 开关 + pull 兜底 + 收割重放 + 自动安装；B2 改判不落地） | `9b71cf7`+`fcc0f0f` | lsp-support.md §7 |
 | 10-11 | T8.3 输入排队（队列 pane + 中断冻结 + Alt+Enter send-now） | `5668f49`+`fdf60c8` | queue-management.md |
 | 10-11 | T8.4 /shell 切换 + 默认 shell 后端 | `c84ce54`+`73dd287` | shell-switch.md |
@@ -40,6 +42,9 @@
 
 ## 未验证事项（真机验收与缓落件）
 
+- [ ] **T7.1 实现未开工**（方案细化定稿待执行）：切片 1 底座（落盘 + resume
+      + 前缀重放 + 句柄）+ 切片 2 超窗；步骤 = subagent-resume.md §5.2，
+      测试矩阵 = §5.4；P4 completed 无 hint 与两参照相左（可复议点）
 - [ ] **TUI 面板真机手感一批约**：T7.6 审批面（Shift+Tab 环 + 三态标签 +
       待审批面板 Esc·a·s + /mode 面板 mid-run）、T8.3 队列 pane（↑↓ 选中 +
       Del + Esc 冻结体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2
