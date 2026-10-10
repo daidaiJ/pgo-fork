@@ -25,7 +25,7 @@
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
-| 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0` | subagent-resume.md §6 |
+| 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0`+`8c0d8f8` | subagent-resume.md §6 |
 | 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
 | 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | `a62589c`+`a04748e`/`9020d49` | approval-modes.md |
 | 10-11 晚 | T8.2 LSP 批 2（查询面 + per-tool 开关 + pull 兜底 + 收割重放 + 自动安装；B2 改判不落地） | `9b71cf7`+`fcc0f0f` | lsp-support.md §7 |
