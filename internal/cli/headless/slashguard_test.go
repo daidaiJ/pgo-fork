@@ -23,7 +23,9 @@ func TestRefuseBuiltinSlash(t *testing.T) {
 		wantHas string
 	}{
 		{"/sessions", "needs an interactive terminal"},
+		{"/resume", "needs an interactive terminal"}, // declared alias resolves the same
 		{"/model gpt-5", "needs an interactive terminal"},
+		{"/effect high", "needs an interactive terminal"}, // declared alias resolves the same
 		{"/fork 2", "needs an interactive terminal"},
 		{"/help", "is a built-in slash command"},
 		{"/status", "is a built-in slash command"},

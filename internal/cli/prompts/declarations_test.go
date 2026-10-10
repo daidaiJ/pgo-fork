@@ -32,14 +32,17 @@ func bareRegistry(t *testing.T) *runtime.SlashRegistry {
 // name set is exhaustive (a re-introduced no-op stub shows up as a name or a
 // missing face), and every built-in is either executable (Parse/Action/Run/
 // Expand) or declares a Projection face — no registration may again exist
-// whose only behavior is returning an empty status string.
+// whose only behavior is returning an empty status string. Aliases are
+// declared identity (slice 4): /effect belongs to /think and /resume to
+// /sessions as Aliases fields, so they appear in the Candidates rows instead
+// of the canonical catalog.
 func TestBuiltinCatalogHasNoSilentStubs(t *testing.T) {
 	reg := bareRegistry(t)
 	want := []string{
-		"btw", "clone", "compact", "context", "copy", "dream", "dump", "effect",
+		"btw", "clone", "compact", "context", "copy", "dream", "dump",
 		"exit", "export", "fork", "goal", "help", "import", "mcp", "memory",
 		"model", "models", "quit", "rebuild", "remote-control", "rename",
-		"resume", "rewind", "session", "sessions", "skills", "status", "think",
+		"rewind", "session", "sessions", "skills", "status", "think",
 		"tree",
 	}
 	var got []string
@@ -53,12 +56,36 @@ func TestBuiltinCatalogHasNoSilentStubs(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("builtin catalog = %v, want %v", got, want)
 	}
+	// Declared aliases resolve to their owning command (the human dispatch
+	// path), stay out of the canonical catalog, and render as candidate rows
+	// that say what they alias.
+	for alias, owner := range map[string]string{"effect": "think", "resume": "sessions"} {
+		cmd, ok := reg.Lookup(alias)
+		if !ok || cmd.Name != owner {
+			t.Errorf("Lookup(%s) = (%+v, %v), want the %s command", alias, cmd, ok, owner)
+		}
+	}
+	rows := map[string]string{}
+	for _, c := range reg.Candidates() {
+		rows[c.Name] = c.Description
+	}
+	for alias, owner := range map[string]string{"effect": "think", "resume": "sessions"} {
+		desc, ok := rows[alias]
+		if !ok {
+			t.Errorf("Candidates should carry the %s alias row", alias)
+			continue
+		}
+		if !strings.HasPrefix(desc, "alias of /"+owner) {
+			t.Errorf("%s row description = %q, want the alias-of-%s prefix", alias, desc, owner)
+		}
+	}
 }
 
 // TestDeclaredFacesResolveExplicitly pins §6: a declared command whose loop
 // face the calling path cannot project resolves to the shared unavailability
 // notice (Kind SlashAction, no prompt) — TUI faces say so, REPL faces point at
-// --no-tui.
+// --no-tui. /resume resolves through its declared alias and the notice keeps
+// the invoked form.
 func TestDeclaredFacesResolveExplicitly(t *testing.T) {
 	reg := bareRegistry(t)
 	for _, tc := range []struct{ line, want string }{

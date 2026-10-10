@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/runtime"
 )
 
@@ -70,6 +71,33 @@ func TestSlashMenuFiltersByPrefix(t *testing.T) {
 		if !strings.HasPrefix(n, "/mo") {
 			t.Errorf("candidate %q does not match prefix /mo (set %v)", n, names)
 		}
+	}
+}
+
+// TestSlashMenuIncludesAliasRows pins the declared aliases as candidate rows
+// (T7.7 slice 4, grok's trigger list): typing an alias prefix suggests it, and
+// the row renders with its alias-of description so the menu stays
+// self-explanatory.
+func TestSlashMenuIncludesAliasRows(t *testing.T) {
+	m := typeInto(t, NewModel(Options{}), "/ef").(Model)
+	if !m.menu.active {
+		t.Fatalf("menu should be active for '/ef'")
+	}
+	if names := menuNames(m); !containsAll(names, "/effect") {
+		t.Errorf("candidate set %v missing the /effect alias", names)
+	}
+	m = typeInto(t, NewModel(Options{}), "/res").(Model)
+	if names := menuNames(m); !containsAll(names, "/resume") {
+		t.Errorf("candidate set %v missing the /resume alias", names)
+	}
+	var label string
+	for _, c := range m.menu.filtered {
+		if c.Name == "resume" {
+			label = prompts.FormatCommandLine(c)
+		}
+	}
+	if !strings.Contains(label, "alias of /sessions") {
+		t.Errorf("alias row label = %q, want the alias-of-sessions description", label)
 	}
 }
 

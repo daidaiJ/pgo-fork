@@ -560,7 +560,7 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 					// TUI-face pickers/overlays the REPL cannot run: project a
 					// candidate list plus a usage hint (spec §4.5) instead of a
 					// fake picker or a bare notice.
-					projectTextFace(out, &deps, cmd)
+					projectTextFace(out, &deps, cmd, name)
 					continue
 				}
 			}

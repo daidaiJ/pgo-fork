@@ -329,10 +329,13 @@ type SlashCommand struct {
 	// set by the AddX method matching the command's source; callers should not
 	// set it directly.
 	Tier Tier
-	// Aliases are alternative invocation names (declared identity, T7.7). The
-	// field is the declaration face; alias resolution at dispatch (with the
-	// model-authored fail-closed rule) lands with the alias/audience slice —
-	// no registered command declares aliases yet.
+	// Aliases are alternative invocation names (declared identity, T7.7
+	// slice 4). They resolve through the registry lookup for typed
+	// invocations and appear as candidate rows (Candidates), while the
+	// model-authored resolution ignores them (ResolveModelAuthored —
+	// fail-closed exact canonical). Aliases share the command namespace: an
+	// alias colliding with another command's key follows the same tier rule
+	// as a name, and two built-ins claiming one key is a programming error.
 	Aliases []string
 	// Audience gates who may invoke the command (T7.7 §4.3). Zero value is
 	// AudienceHumanOnly: fail-closed, a command stays human-only unless it
@@ -449,6 +452,15 @@ func RegisterBuiltin(cmd SlashCommand) {
 // commands, applying the built-in-wins priority rule.
 type SlashRegistry struct {
 	commands map[string]SlashCommand
+	// aliases maps declared alias names to the canonical command name they
+	// invoke (T7.7 slice 4). Aliases share the command namespace: a key is
+	// either exactly one command's canonical name or exactly one command's
+	// alias, and the same tier rule resolves collisions between the two —
+	// a lower-tier command arriving later loses its claim to a built-in
+	// alias exactly as it would to a built-in name (recorded in shadowed),
+	// and two built-ins claiming one key is a programming error (panic, the
+	// grok registry's rebuild_triggers rule).
+	aliases map[string]string
 	// shadowed records commands that lost a same-name conflict to a higher-tier
 	// command, with their tier and source for diagnostics. Same-tier overrides
 	// (last-write-wins) are not recorded.
@@ -457,9 +469,9 @@ type SlashRegistry struct {
 
 // NewSlashRegistry builds a registry seeded with all registered built-ins.
 func NewSlashRegistry() *SlashRegistry {
-	r := &SlashRegistry{commands: make(map[string]SlashCommand, len(builtinCommands))}
-	for name, cmd := range builtinCommands {
-		r.commands[name] = cmd
+	r := &SlashRegistry{commands: make(map[string]SlashCommand, len(builtinCommands)), aliases: map[string]string{}}
+	for _, cmd := range builtinCommands {
+		r.add(cmd)
 	}
 	return r
 }
@@ -545,48 +557,100 @@ func (r *SlashRegistry) AddCLI(cmd SlashCommand) {
 	r.add(cmd)
 }
 
-// add installs cmd with tier-based conflict resolution. If a same-named command
-// already exists, the higher tier wins and the loser is appended to shadowed;
-// within the same tier the new command replaces the old (last-write-wins, no
-// shadow entry). A built-in always wins because TierBuiltin is highest.
+// add installs cmd: its canonical name first, then each declared alias, both
+// through the one namespace-wide tier rule (bind). A built-in always wins
+// because TierBuiltin is highest.
 func (r *SlashRegistry) add(cmd SlashCommand) {
-	existing, ok := r.commands[cmd.Name]
-	if !ok {
-		r.commands[cmd.Name] = cmd
-		return
-	}
-	switch {
-	case existing.Tier > cmd.Tier:
-		// New command is lower tier: it loses and is shadowed.
-		r.shadowed = append(r.shadowed, ShadowedEntry{Name: cmd.Name, Tier: cmd.Tier, Source: cmd.Source})
-	case existing.Tier < cmd.Tier:
-		// New command is higher tier: it wins; the old one is shadowed.
-		r.shadowed = append(r.shadowed, ShadowedEntry{Name: existing.Name, Tier: existing.Tier, Source: existing.Source})
-		r.commands[cmd.Name] = cmd
-	default:
-		// Same tier: last-write-wins (a re-load), no shadow entry.
-		r.commands[cmd.Name] = cmd
+	r.bind(cmd.Name, cmd, true)
+	for _, alias := range cmd.Aliases {
+		if alias == "" || alias == cmd.Name {
+			continue
+		}
+		r.bind(alias, cmd, false)
 	}
 }
 
-// Lookup returns the command bound to name (without the leading "/").
+// bind resolves one key claim (canonical when named, else a declared alias)
+// under the tier rule that governs the whole command namespace. When the key
+// is already owned, the higher tier keeps it and the loser is recorded in
+// shadowed (a losing canonical claim shadows the whole command; a losing
+// alias claim leaves the command reachable by its canonical name, so it is
+// not recorded); same tier is last-write-wins (a re-load), and two built-ins
+// claiming one key is a programming error (panic).
+func (r *SlashRegistry) bind(key string, cmd SlashCommand, canonical bool) {
+	if prev, ok := r.owner(key); ok {
+		if cmd.Source == SourceBuiltin && prev.Source == SourceBuiltin {
+			panic(fmt.Sprintf("agent: duplicate built-in slash command key %q", key))
+		}
+		switch {
+		case prev.Tier > cmd.Tier:
+			if canonical {
+				r.shadowed = append(r.shadowed, ShadowedEntry{Name: cmd.Name, Tier: cmd.Tier, Source: cmd.Source})
+			}
+			return
+		case prev.Tier < cmd.Tier:
+			r.shadowed = append(r.shadowed, ShadowedEntry{Name: prev.Name, Tier: prev.Tier, Source: prev.Source})
+		}
+		// Lower-tier owner or same-tier reload: the key moves.
+		r.unbind(key)
+	}
+	if canonical {
+		r.commands[key] = cmd
+		return
+	}
+	r.aliases[key] = cmd.Name
+}
+
+// owner returns the command a key currently resolves to, whether it is bound
+// as a canonical name or as a declared alias. A stale alias (its canonical
+// command was removed) is dropped and reported as unowned.
+func (r *SlashRegistry) owner(key string) (SlashCommand, bool) {
+	if cmd, ok := r.commands[key]; ok {
+		return cmd, true
+	}
+	canonical, ok := r.aliases[key]
+	if !ok {
+		return SlashCommand{}, false
+	}
+	cmd, ok := r.commands[canonical]
+	if !ok {
+		delete(r.aliases, key)
+		return SlashCommand{}, false
+	}
+	return cmd, true
+}
+
+// unbind releases a key from both namespace shapes; the caller rebinds it.
+func (r *SlashRegistry) unbind(key string) {
+	delete(r.commands, key)
+	delete(r.aliases, key)
+}
+
+// Lookup returns the command bound to name (without the leading "/"). A
+// declared alias resolves to the command that declared it (the human path:
+// grok's dispatch resolves canonical names and aliases through one key map —
+// the model-authored path does not; see ResolveModelAuthored).
 func (r *SlashRegistry) Lookup(name string) (SlashCommand, bool) {
-	cmd, ok := r.commands[name]
-	return cmd, ok
+	return r.owner(name)
 }
 
 // Remove deletes a command by name (without the leading "/"), regardless of
-// tier. It backs the config-surface commands (T6.9): disabling a skill takes
-// its /name command off the list immediately, and /skills reload re-registers
-// the survivors. Returns false when the name was not registered. Remove is
-// deliberately not tier-aware — the surface controllers know exactly which
-// commands they own (they track the names they registered), so a blanket
-// delete is the honest primitive.
+// tier, together with every alias resolving to it. It backs the config-surface
+// commands (T6.9): disabling a skill takes its /name command off the list
+// immediately, and /skills reload re-registers the survivors. Returns false
+// when the name was not registered. Remove is deliberately not tier-aware —
+// the surface controllers know exactly which commands they own (they track the
+// names they registered), so a blanket delete is the honest primitive.
 func (r *SlashRegistry) Remove(name string) bool {
 	if _, ok := r.commands[name]; !ok {
 		return false
 	}
 	delete(r.commands, name)
+	for alias, canonical := range r.aliases {
+		if canonical == name {
+			delete(r.aliases, alias)
+		}
+	}
 	return true
 }
 
@@ -595,6 +659,38 @@ func (r *SlashRegistry) List() []SlashCommand {
 	out := make([]SlashCommand, 0, len(r.commands))
 	for _, c := range r.commands {
 		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Candidates returns the candidate-surface rows: every canonical command plus
+// one row per declared alias, in name order. It is the source the completion
+// menus, /help and every other advertised surface render (grok: the
+// completion triggers are the canonical names and the aliases, so a typed
+// alias stays discoverable). An alias row is the owning command with the
+// alias as its Name and an "alias of /canonical:" description prefix, so the
+// surfaces need no per-row alias logic. The canonical catalog stays List —
+// /status counts and identity checks read it without alias duplicates.
+func (r *SlashRegistry) Candidates() []SlashCommand {
+	out := r.List()
+	keys := make([]string, 0, len(r.aliases))
+	for alias := range r.aliases {
+		keys = append(keys, alias)
+	}
+	sort.Strings(keys)
+	for _, alias := range keys {
+		cmd, ok := r.owner(alias)
+		if !ok {
+			continue
+		}
+		row := cmd
+		row.Name = alias
+		row.Description = "alias of /" + cmd.Name
+		if cmd.Description != "" {
+			row.Description += ": " + cmd.Description
+		}
+		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -630,22 +726,29 @@ func (r *SlashRegistry) Resolve(input string) (prompt string, handled bool, err 
 // command with no executable face (its Projection face lives in another
 // front-end) returns {Handled:true, Kind:SlashAction, Message:<unavailability
 // notice>} — never a silent no-op. An unknown "/name" yields an error.
+//
+// The name is resolved through the one splitter (SplitInvocation) and the one
+// lookup (aliases included), so the registry, the REPL, the TUI and the
+// headless guard all answer "is this /name?" identically; the unavailability
+// notice names the invoked form (a typed alias stays "/resume", not the
+// canonical "/sessions").
 func (r *SlashRegistry) ResolveOutcome(input string) (SlashOutcome, error) {
-	trimmed := strings.TrimLeft(input, " \t")
-	if !strings.HasPrefix(trimmed, "/") {
+	name, args, ok := SplitInvocation(input)
+	if !ok {
 		return SlashOutcome{Handled: false, Kind: SlashPrompt, Prompt: input}, nil
 	}
-	rest := trimmed[1:]
-	name := rest
-	args := ""
-	if i := strings.IndexAny(rest, " \t"); i >= 0 {
-		name = rest[:i]
-		args = strings.TrimSpace(rest[i+1:])
-	}
-	cmd, ok := r.commands[name]
-	if !ok {
+	cmd, found := r.Lookup(name)
+	if !found {
 		return SlashOutcome{}, fmt.Errorf("unknown command %q", "/"+name)
 	}
+	return r.resolveCommand(cmd, name, args)
+}
+
+// resolveCommand folds one resolved command + arguments into its outcome. It
+// is the body both resolution entries share (the human path above and the
+// model-authored gate below) so the Parse/Action/Run/Expand precedence and
+// the unavailability notice have one source.
+func (r *SlashRegistry) resolveCommand(cmd SlashCommand, name, args string) (SlashOutcome, error) {
 	if cmd.Parse != nil {
 		// T7.7 contract command: parse into a typed intent and hand it back —
 		// resolution never executes. Usage errors surface the same message
@@ -669,12 +772,48 @@ func (r *SlashRegistry) ResolveOutcome(input string) (SlashOutcome, error) {
 	if cmd.Expand == nil {
 		// A declaration with no executable face (T7.7 §6): identity-only
 		// entries whose loop face another front-end owns resolve to an
-		// explicit unavailability outcome, never a silent no-op.
+		// explicit unavailability outcome, never a silent no-op. The notice
+		// names the invoked form, so a typed alias reads back as typed.
 		return SlashOutcome{Handled: true, Kind: SlashAction,
-			Message: cmd.Projection.UnavailableNotice(cmd.Name),
+			Message: cmd.Projection.UnavailableNotice(name),
 		}, nil
 	}
 	return SlashOutcome{Handled: true, Kind: SlashPrompt, Prompt: cmd.Expand(args)}, nil
+}
+
+// ResolveModelAuthored resolves input as model-authored text (T7.7 §4.3, the
+// grok slash_authority alignment): fail-closed — only a command that opted in
+// via AudienceHumanAndModel, named by its exact canonical name, resolves.
+// Aliases are ignored (an alias form stays plain text even for an opted-in
+// command, grok ExactCanonical), an unknown "/name" is plain text rather than
+// an error, and a human-only command is refused: the model may not compact the
+// context, switch models or toggle surfaces by writing their names. The
+// refused, unknown and non-invocation cases all return {Handled:false,
+// Prompt:input}, so the caller treats the text verbatim (grok: demote to the
+// skill-candidate path); a usage error in model-authored text degrades the
+// same way instead of surfacing as a front-end error.
+//
+// No production surface feeds model output through the registry yet (model
+// output streams to the transcript and is never re-resolved as input); this
+// is the entry any future such path must use, pinned fail-closed by tests.
+// The Offered predicate is deliberately not consulted here: it gates
+// session-state applicability on the human surfaces, while this gate is about
+// who may invoke at all.
+func (r *SlashRegistry) ResolveModelAuthored(input string) SlashOutcome {
+	name, args, ok := SplitInvocation(input)
+	if !ok {
+		return SlashOutcome{Handled: false, Kind: SlashPrompt, Prompt: input}
+	}
+	// Exact canonical names only: the alias index is deliberately bypassed.
+	cmd, found := r.commands[name]
+	if !found || cmd.Audience != AudienceHumanAndModel {
+		return SlashOutcome{Handled: false, Kind: SlashPrompt, Prompt: input}
+	}
+	out, err := r.resolveCommand(cmd, name, args)
+	if err != nil {
+		return SlashOutcome{Handled: false, Kind: SlashPrompt, Prompt: input}
+	}
+	return out
 }
 
 // firstNonEmptyLine returns the first line of s whose trimmed form is non-empty,

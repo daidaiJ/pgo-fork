@@ -111,7 +111,9 @@ func slashToken(buffer string) (token string, ok bool) {
 // refresh recomputes the menu from the current buffer and registry. It activates
 // only when the buffer is a "/name" prefix that matches at least one command;
 // otherwise it deactivates and clears its candidates. The selection is clamped
-// so it stays in range as the filtered set shrinks.
+// so it stays in range as the filtered set shrinks. Candidates includes the
+// declared aliases (T7.7 slice 4, grok's trigger list), so typing "/eff" or
+// "/res" still suggests /effect and /resume.
 func (mn *slashMenu) refresh(buffer string, reg *runtime.SlashRegistry) {
 	token, ok := slashToken(buffer)
 	if !ok || reg == nil {
@@ -119,7 +121,7 @@ func (mn *slashMenu) refresh(buffer string, reg *runtime.SlashRegistry) {
 		return
 	}
 	var out []runtime.SlashCommand
-	for _, c := range reg.List() {
+	for _, c := range reg.Candidates() {
 		if strings.HasPrefix(c.Name, token) {
 			out = append(out, c)
 		}

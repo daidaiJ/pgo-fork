@@ -347,8 +347,8 @@ func formatNotifications(notes []plugin.CommandNotification) string {
 	return b.String()
 }
 
-// RegisterLiveCommands installs the contract commands (T7.7): /model
-// /models /think /effect /status /session /compact /memory /rebuild declare
+// RegisterLiveCommands installs the contract commands (T7.7): /model /models
+// /think (alias /effect) /status /session /compact /memory /rebuild declare
 // identity plus a pure Parse (parse.go); their Execute faces live in the
 // front-end Executor (executor.go). /help stays an Action closure — it renders
 // the registry itself. The remaining built-ins are loop-face declarations:
@@ -371,21 +371,16 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		Description: "list preset providers and models you can switch to; /models fetch queries the live endpoint for its real catalog",
 		Parse:       parseModels,
 	})
-	// T7.7 contract commands: /think and its /effect alias share one Parse
+	// T7.7 contract commands: /think declares its /effect alias (slice 4 —
+	// the former second registration is declared identity now); one Parse
 	// (parse.go); the Execute face — the former thinkAction body — lives in
 	// Executor.execute. Projection marks the bare-submit dropdown the TUI
 	// opens for both names.
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "think",
+		Aliases:      []string{"effect"},
 		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
 		Description:  "view or switch the reasoning-effort level; takes effect on the next turn",
-		Projection:   runtime.ProjThinkMenu,
-		Parse:        parseThink,
-	})
-	reg.AddBuiltin(runtime.SlashCommand{
-		Name:         "effect",
-		ArgumentHint: "[off|minimal|low|medium|high|xhigh|max]",
-		Description:  "alias of /think: view or switch the reasoning-effort level",
 		Projection:   runtime.ProjThinkMenu,
 		Parse:        parseThink,
 	})
@@ -443,7 +438,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 			color := ui.Enabled()
 			var b strings.Builder
 			b.WriteString(ui.Colorize(color, ui.Bold, "available commands:"))
-			for _, c := range reg.List() {
+			for _, c := range reg.Candidates() {
 				name := "/" + c.Name
 				rest := strings.TrimPrefix(FormatCommandLine(c), name)
 				b.WriteString("\n  ")
@@ -471,8 +466,7 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 	for _, c := range []runtime.SlashCommand{
 		{Name: "exit", Description: "exit pigo", Projection: runtime.ProjQuit},
 		{Name: "quit", Description: "exit pigo", Projection: runtime.ProjQuit},
-		{Name: "sessions", Description: "open the session picker: browse, resume or delete sessions", Projection: runtime.ProjSessionsPicker},
-		{Name: "resume", Description: "alias of /sessions: open the session picker", Projection: runtime.ProjSessionsPicker},
+		{Name: "sessions", Aliases: []string{"resume"}, Description: "open the session picker: browse, resume or delete sessions", Projection: runtime.ProjSessionsPicker},
 		{Name: "rename", Description: "rename the session's display title (terminal title follows)", ArgumentHint: "<title|--auto>", Projection: runtime.ProjRename},
 		{Name: "context", Description: "toggle the context-usage overlay panel", Projection: runtime.ProjContextPanel},
 		{Name: "remote-control", Description: "mirror this session to a phone/browser on your LAN: /remote-control [stop|status]", Projection: runtime.ProjRemoteControl},

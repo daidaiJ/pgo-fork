@@ -19,13 +19,16 @@ import (
 // projectTextFace prints the REPL's degraded projection of a declared TUI-face
 // command: the candidate list this front-end can produce from its own state,
 // the usage line, and the explicit availability notice (§6: execution or
-// explicit rejection, never a silent no-op).
-func projectTextFace(out io.Writer, deps *replDeps, cmd runtime.SlashCommand) {
+// explicit rejection, never a silent no-op). The usage line and the notice
+// name the invoked form (a typed alias reads back as typed).
+func projectTextFace(out io.Writer, deps *replDeps, cmd runtime.SlashCommand, invoked string) {
 	if cmd.Projection == runtime.ProjSessionsPicker {
 		writeSessionCandidates(out, deps)
 	}
-	fmt.Fprintf(out, "usage: %s\n", prompts.FormatCommandLine(cmd))
-	fmt.Fprintln(out, cmd.Projection.UnavailableNotice(cmd.Name))
+	row := cmd
+	row.Name = invoked
+	fmt.Fprintf(out, "usage: %s\n", prompts.FormatCommandLine(row))
+	fmt.Fprintln(out, cmd.Projection.UnavailableNotice(invoked))
 }
 
 // writeSessionCandidates lists the saved sessions as the /sessions and /resume
