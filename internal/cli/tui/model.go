@@ -75,6 +75,20 @@ type Model struct {
 	// run enqueues instead of submitting). runEndMsg pops the first entry and
 	// starts it, so the queue drains one prompt per ended run.
 	queued []string
+	// sendNow holds prompts submitted with Alt+Enter while a run streams
+	// (T8.3, grok interjection): they start when the current run ends, ahead
+	// of queued. runEndMsg drains them before queued.
+	sendNow []string
+	// queueHeld freezes the queue after an interrupt (T8.3 ruling): runEndMsg
+	// keeps the queued prompts instead of auto-starting the next one, and the
+	// next manual action — a bare Enter promoting the front prompt, or a
+	// fresh submit — resumes the normal drain. Set by the Esc/Ctrl+C
+	// interrupt, cleared in startPrompt.
+	queueHeld bool
+	// qpane is the queue pane's selection state (T8.3): rows render whenever
+	// prompts are queued; with an empty composer the arrow keys select a row
+	// for deletion (see queuepane.go).
+	qpane queuePane
 	// runCh is the bridge channel for the in-flight run, or nil when idle. Update
 	// re-issues waitForEvent(runCh) after every bridged msg except runEndMsg.
 	runCh chan tea.Msg
@@ -673,18 +687,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The composer stays focused across the whole run (a blur/focus cycle
 		// resets the Windows IME to English mid-session), so no re-focus here.
 		// Re-probe git since a run may have changed the working tree. Then drain
-		// the queue: the first prompt entered while the run streamed starts now.
-		if len(m.queued) > 0 {
-			next := m.queued[0]
-			m.queued = m.queued[1:]
+		// the queue — T8.3 semantics: after an interrupt the queue is held
+		// (prompts stay queued until a manual action resumes them), otherwise
+		// the next prompt starts now, with slash-command entries executing
+		// inline (they start no run) so the queue never stalls behind one.
+		if m.queueHeld {
+			if n := len(m.queueRows()); n > 0 {
+				m.transcript.addSystem(fmt.Sprintf("(queue held — %d waiting; Enter runs the next)", n))
+				m.relayout()
+			}
+			return m, fetchGitCmd(m.cwd)
+		}
+		var cmds []tea.Cmd
+		for {
+			next, ok := m.popQueueFront()
+			if !ok {
+				break
+			}
 			if strings.HasPrefix(next, "/") {
-				mod, cmd := m.runSlash(next)
-				return mod, cmd
+				var cmd tea.Cmd
+				var mod tea.Model
+				mod, cmd = m.runSlash(next)
+				m = mod.(Model)
+				cmds = append(cmds, cmd)
+				if m.running {
+					// The command started a run; its own runEndMsg drains the rest.
+					return m, tea.Batch(cmds...)
+				}
+				continue
 			}
 			m.transcript.addUser(next)
 			m.remoteEcho("\n> " + next + "\n")
 			mod, cmd := m.startPrompt(next)
-			return mod, tea.Batch(cmd, fetchGitCmd(m.cwd))
+			cmds = append(cmds, cmd, fetchGitCmd(m.cwd))
+			return mod, tea.Batch(cmds...)
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
 		}
 		return m, fetchGitCmd(m.cwd)
 
@@ -882,6 +921,38 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Queue pane keys (T8.3): with an empty composer and rows visible, ↑/↓ arm
+	// and move the row selection and Del removes the selected row — both while
+	// a run streams and while a held queue waits above the input. The
+	// sub-agent panel keeps priority when both are live (its branch above
+	// already returned); Esc here only disarms the selection — without one it
+	// falls through to the interrupt-or-quit handling below.
+	if m.input.Value() == "" && len(m.queueRows()) > 0 {
+		switch msg.String() {
+		case "up":
+			m.queueSelectUp()
+			m.relayout()
+			return m, nil
+		case "down":
+			m.queueSelectDown()
+			m.relayout()
+			return m, nil
+		case "delete":
+			if removed, ok := m.queueDeleteSelected(); ok {
+				first, _ := queueRowText(removed)
+				m.transcript.addSystem(fmt.Sprintf("(removed from queue: %q — %d waiting)", first, len(m.queueRows())))
+				m.relayout()
+				return m, nil
+			}
+		case "esc":
+			if m.qpane.selecting {
+				m.qpane.selecting = false
+				m.relayout()
+				return m, nil
+			}
+		}
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		// Ctrl+C copies the current mouse selection when there is one (over OSC52),
@@ -936,6 +1007,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Ctrl+D quits only when idle; mid-run it is ignored so a run is never
 		// dropped by a stray EOF key.
 		if !m.running {
+			m.queued = nil
+			m.sendNow = nil
 			m.shutdownRemote()
 			m.quitting = true
 			return m, tea.Quit
@@ -947,17 +1020,56 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the slash menu is open, Enter runs the highlighted command (handled
 		// above), so this branch is only reached with the menu closed.
 		if !m.running {
+			// Queued rows while idle (held after an interrupt, or left behind
+			// by a slash-command drain): a bare Enter is the manual trigger —
+			// it promotes the front prompt instead of no-oping on the empty
+			// buffer (T8.3).
+			if len(m.queueRows()) > 0 && strings.TrimSpace(m.input.Value()) == "" {
+				return m.startQueuedFront()
+			}
 			return m.submit()
 		}
 		// While a run streams, Enter enqueues the composed buffer (grok-style
 		// queue) instead of dropping it; runEndMsg drains the queue.
 		if v := strings.TrimSpace(m.input.Value()); v != "" {
-			m.recordHistory(v)
-			m.queued = append(m.queued, v)
-			m.input.Clear()
-			m.closeMenus()
-			m.transcript.addSystem(fmt.Sprintf("(queued — %d waiting, starts when the run ends)", len(m.queued)))
-			m.relayout()
+			// Expand paste/image placeholders now: the buffer is consumed
+			// here (it is cleared below), and the queued prompt must carry
+			// the real body — runEndMsg starts it verbatim.
+			if prompt := strings.TrimSpace(m.expandImages(m.expandPastes(m.input.Value()))); prompt != "" {
+				m.recordHistory(v)
+				m.queued = append(m.queued, prompt)
+				m.pastes = make(map[int]string)
+				m.images = make(map[int]string)
+				m.input.Clear()
+				m.closeMenus()
+				m.transcript.addSystem(fmt.Sprintf("(queued — %d waiting, starts when the run ends)", len(m.queued)))
+				m.relayout()
+			}
+		}
+		return m, nil
+	case "alt+enter":
+		// Send-now (T8.3, grok interjection): idle it submits like Enter;
+		// while a run streams the buffer jumps the queue — it starts when the
+		// current run ends, ahead of previously queued prompts (which keep
+		// their order behind it).
+		if !m.running {
+			return m.submit()
+		}
+		if v := strings.TrimSpace(m.input.Value()); v != "" {
+			if prompt := strings.TrimSpace(m.expandImages(m.expandPastes(m.input.Value()))); prompt != "" {
+				m.recordHistory(v)
+				m.sendNow = append(m.sendNow, prompt)
+				m.pastes = make(map[int]string)
+				m.images = make(map[int]string)
+				m.input.Clear()
+				m.closeMenus()
+				if n := len(m.queued); n > 0 {
+					m.transcript.addSystem(fmt.Sprintf("(send-now — starts when the run ends, ahead of %d queued)", n))
+				} else {
+					m.transcript.addSystem("(send-now — starts when the run ends)")
+				}
+				m.relayout()
+			}
 		}
 		return m, nil
 	case "pgup", "pgdown":
@@ -1613,6 +1725,9 @@ func (m Model) startPrompt(prompt string) (tea.Model, tea.Cmd) {
 	ch, cmd := m.startRunFn(prompt)
 	m.runCh = ch
 	m.running = true
+	// A run started — the queue pump is live again (T8.3: the held state ends
+	// at the next manual action; the drain's own starts are always unheld).
+	m.queueHeld = false
 	now := time.Now()
 	m.spinner.begin(now)
 	m.statusBar.usage.beginRun(now)
@@ -1649,9 +1764,16 @@ func (m Model) interruptOrQuit() (tea.Model, tea.Cmd) {
 		if m.interruptFn != nil {
 			m.interruptFn()
 		}
+		// T8.3: the interrupt freezes the queue — runEndMsg keeps the queued
+		// prompts instead of auto-starting the next one, so the user's
+		// interrupt is never steamrolled by the queue.
+		m.queueHeld = true
 		m.transcript.addSystem("(interrupting the current run…)")
 		return m, nil
 	}
+	// Quitting drops the whole queue (T8.3 ruling), held or not.
+	m.queued = nil
+	m.sendNow = nil
 	m.shutdownRemote()
 	m.quitting = true
 	return m, tea.Quit
@@ -2122,10 +2244,21 @@ func (m Model) renderContent() (string, *tea.Cursor) {
 			b.WriteString(panel)
 			b.WriteByte('\n')
 		}
+		// The queue pane (T8.3) renders directly above the running line:
+		// "#N" rows for the prompts waiting to start (send-now first).
+		if rows := m.queueView(m.theme, width); rows != "" {
+			b.WriteString(rows)
+			b.WriteByte('\n')
+		}
 		if line := m.spinner.view(width, m.turnElapsed()); line != "" {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
+	} else if rows := m.queueView(m.theme, width); rows != "" {
+		// Held queue (T8.3): after an interrupt the rows stay visible above
+		// the input until a manual action resumes or clears them.
+		b.WriteString(rows)
+		b.WriteByte('\n')
 	}
 	// The autocomplete popup, when open, renders just above the input line as an
 	// overlay (it contributes no rows while idle, so the empty-shell layout is
@@ -2298,10 +2431,31 @@ func (m Model) keyBinds() []keyBind {
 			{"Esc", "返回"},
 			{"Ctrl+C", "停止"},
 		}
-	case m.running:
+	case m.qpane.selecting && m.input.Value() == "" && len(m.queueRows()) > 0:
+		// Queue row selection armed (T8.3): the pane consumes the arrows.
+		stop := "停止"
+		if !m.running {
+			stop = "退出"
+		}
 		return []keyBind{
-			{"Enter", "排队"},
-			{"Ctrl+C", "停止"},
+			{"↑/↓", "选择"},
+			{"Del", "移除"},
+			{"Esc", "返回"},
+			{"Ctrl+C", stop},
+		}
+	case m.running:
+		binds := []keyBind{{"Enter", "排队"}, {"Alt+Enter", "插队"}}
+		if len(m.queueRows()) > 0 {
+			binds = append(binds, keyBind{"↑/↓", "队列"}, keyBind{"Del", "移除"})
+		}
+		return append(binds, keyBind{"Ctrl+C", "停止"})
+	case len(m.queueRows()) > 0:
+		// Held queue (T8.3): a bare Enter runs the next queued prompt.
+		return []keyBind{
+			{"Enter", "运行下一条"},
+			{"↑/↓", "队列"},
+			{"Del", "移除"},
+			{"Ctrl+C", "退出"},
 		}
 	default:
 		return []keyBind{
@@ -2396,6 +2550,9 @@ func (m *Model) relayout() {
 	// the border's inner width (the rounded box costs one column per side).
 	m.input.SetWidth(m.width - 2)
 	rows := m.height - 3 - m.input.Height() - m.menu.rows() - m.modelMenu.rows()
+	// Queue rows (T8.3) reserve their height in both states: above the running
+	// line mid-run, above the input when the queue is held after an interrupt.
+	rows -= m.queueLineCount()
 	if m.running {
 		rows-- // the running status line occupies the row just above the input
 		// The sub-agent panel reserves one status row per live sub-agent, plus the

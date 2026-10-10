@@ -85,11 +85,14 @@ func newInput() input {
 	// flag 1 only disambiguates special keys and leaves text entry untouched.
 	// On terminals without the protocol (macOS Terminal.app, tmux by default)
 	// Shift+Enter arrives byte-identical to Enter and would submit, so Ctrl+J (a
-	// literal LF, always distinct from Enter's CR) and Alt+Enter (ESC-prefixed,
-	// always distinct) are kept as silent fallbacks — a newline is guaranteed to
-	// work everywhere. All three split the line at the cursor and keep typed text.
+	// literal LF, always distinct from Enter's CR) is kept as the silent
+	// fallback — a newline is guaranteed to work everywhere. Alt+Enter used to
+	// share that fallback but is now the model's send-now key (T8.3): handleKey
+	// intercepts it before the textarea sees it, so it stays out of this
+	// binding. All the keys here split the line at the cursor and keep typed
+	// text.
 	ta.KeyMap.InsertNewline = key.NewBinding(
-		key.WithKeys("shift+enter", "ctrl+j", "alt+enter"),
+		key.WithKeys("shift+enter", "ctrl+j"),
 		key.WithHelp("shift+enter", "insert newline"),
 	)
 	// Keep textarea's REAL cursor reporting (the default): the model surfaces

@@ -54,9 +54,10 @@ func TestInputEmojiByRune(t *testing.T) {
 	}
 }
 
-// TestInputNewlineKeys verifies each newline binding — Shift+Enter (primary),
-// Ctrl+J and Alt+Enter (fallbacks) — inserts a newline into the buffer while
-// plain runes fill each line.
+// TestInputNewlineKeys verifies each newline binding — Shift+Enter (primary)
+// and Ctrl+J (the universal fallback) — inserts a newline into the buffer
+// while plain runes fill each line. Alt+Enter is intentionally absent: since
+// T8.3 it is the model's send-now key and no longer inserts a newline.
 func TestInputNewlineKeys(t *testing.T) {
 	cases := []struct {
 		name string
@@ -64,7 +65,6 @@ func TestInputNewlineKeys(t *testing.T) {
 	}{
 		{"shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}},
 		{"ctrl+j", tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}},
-		{"alt+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
