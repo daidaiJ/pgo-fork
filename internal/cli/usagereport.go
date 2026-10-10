@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,19 +18,27 @@ import (
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/statline"
+	"github.com/smallnest/pigo/internal/usage"
 )
 
-// UsageReportOptions carries the session display context for /usage.
+// UsageReportOptions carries the session display context for /usage. Quota is
+// the provider plan-quota section (T6.3), resolved by the caller before the
+// report is rendered: nil leaves the report as it was.
 type UsageReportOptions struct {
 	// SessionID / Model, when non-empty, are shown in the report header.
 	SessionID string
 	Model     string
+	Quota     *QuotaSection
 }
 
 // WriteUsageReport renders the session's cumulative usage: the grok-aligned
 // tallies (✓/✗ calls, retries, cache misses), the token totals with the cache
 // and think shares, the last turn's perf, and the sub-agent share. Values that
 // were never observed are omitted (zero-hide, matching the status line).
+//
+// When the caller resolved a provider plan quota it follows as its own
+// section: the same command reports what this session spent and what the
+// subscription has left (usage-ledger.md D-6).
 func WriteUsageReport(out io.Writer, s statline.Stats, opts UsageReportOptions) {
 	color := ui.Enabled()
 	title := "session usage"
@@ -42,6 +51,7 @@ func WriteUsageReport(out io.Writer, s statline.Stats, opts UsageReportOptions) 
 	}
 	if s.Calls == 0 {
 		fmt.Fprintf(out, "  %s\n", ui.Colorize(color, ui.Dim, "no accounted turns yet"))
+		writeQuotaSection(out, opts.Quota)
 		return
 	}
 
@@ -84,6 +94,21 @@ func WriteUsageReport(out io.Writer, s statline.Stats, opts UsageReportOptions) 
 		}
 		fmt.Fprintln(out)
 	}
+	writeQuotaSection(out, opts.Quota)
+}
+
+// writeQuotaSection appends the plan-quota block after the session block,
+// separated by a blank line, and writes nothing when the caller probed no
+// quota (or when the provider has no quota source).
+func writeQuotaSection(out io.Writer, sec *QuotaSection) {
+	if sec == nil {
+		return
+	}
+	if sec.Err != nil && errors.Is(sec.Err, usage.ErrUnsupported) && sec.Snapshot == nil {
+		return
+	}
+	fmt.Fprintln(out)
+	WriteQuotaReport(out, *sec, time.Now())
 }
 
 // UsageLedger loads every session's usage ledger under root (the sessions

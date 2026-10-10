@@ -163,9 +163,11 @@ func (t *TokenSource) Token(ctx context.Context) (string, error) {
 	return t.accessToken, nil
 }
 
-// CredentialStore resolves API keys per provider from three layers, in order:
-// OAuth token source (if registered), environment variable, config file. It
-// implements the LoopConfig.GetAPIKey shape via GetAPIKey.
+// CredentialStore resolves API keys per provider from five layers, in order:
+// OAuth token source (if registered), an explicit override (--api-key), the
+// provider's environment variable, the config file, and finally the discovery
+// layer that reads a key another agent CLI already stored. It implements the
+// LoopConfig.GetAPIKey shape via GetAPIKey.
 //
 // It is safe for concurrent use.
 type CredentialStore struct {
@@ -173,10 +175,19 @@ type CredentialStore struct {
 	config    *APIKeyConfig
 	sources   map[string]*TokenSource // provider → OAuth token source
 	overrides map[string]string       // provider → explicit key (highest static priority)
+	// discover is the lowest-priority source, consulted only when pigo itself
+	// has no credential for the provider: it reads a key another agent CLI
+	// already stored (see opencodeauth.go). found memoizes its answers,
+	// including the empty ones, so a miss costs one file stat per process.
+	discover func(provider string) string
+	found    map[string]string
 }
 
 // NewCredentialStore builds a store over an optional config file. A nil config
-// is treated as empty.
+// is treated as empty. It installs the default discovery layer
+// (DiscoverFromOpenCode), which only speaks for the provider ids it maps and
+// finds nothing on a machine without that CLI's store, so an explicit key is
+// never overridden by it.
 func NewCredentialStore(config *APIKeyConfig) *CredentialStore {
 	if config == nil {
 		config = &APIKeyConfig{Keys: make(map[string]string)}
@@ -185,7 +196,18 @@ func NewCredentialStore(config *APIKeyConfig) *CredentialStore {
 		config:    config,
 		sources:   make(map[string]*TokenSource),
 		overrides: make(map[string]string),
+		discover:  DiscoverFromOpenCode,
 	}
+}
+
+// SetDiscovery replaces the lowest-priority credential source. A nil function
+// disables discovery. It is the seam for tests and for front-ends that want a
+// different store.
+func (c *CredentialStore) SetDiscovery(fn func(provider string) string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.discover = fn
+	c.found = nil
 }
 
 // SetOverride records an explicit API key for a provider that wins over the
@@ -211,8 +233,8 @@ func (c *CredentialStore) RegisterOAuth(provider string, src *TokenSource) {
 
 // GetAPIKey resolves the API key for a provider. Resolution order: OAuth token
 // (refreshed on expiry) → explicit override (--api-key) → environment variable
-// → config file. Returns "" when no credential is available. This matches
-// LoopConfig.GetAPIKey so it can be assigned directly.
+// → config file → discovery. Returns "" when no credential is available. This
+// matches LoopConfig.GetAPIKey so it can be assigned directly.
 //
 // On OAuth refresh failure it falls back to override/env/config rather than
 // returning a secret-bearing error; the empty return lets the caller fall back
@@ -239,7 +261,31 @@ func (c *CredentialStore) GetAPIKey(ctx context.Context, provider string) string
 	if env := envAPIKey(provider); env != "" {
 		return env
 	}
-	return cfgKey
+	if cfgKey != "" {
+		return cfgKey
+	}
+	return c.discovered(provider)
+}
+
+// discovered consults the discovery layer for a provider, memoizing the answer
+// (including "none") for the process. The lookup runs outside the lock: two
+// callers racing the first read both look, and both store the same answer.
+func (c *CredentialStore) discovered(provider string) string {
+	c.mu.RLock()
+	fn := c.discover
+	cached, seen := c.found[provider] // a nil map reads as "not seen"
+	c.mu.RUnlock()
+	if fn == nil || provider == "" || seen {
+		return cached
+	}
+	key := fn(provider)
+	c.mu.Lock()
+	if c.found == nil {
+		c.found = make(map[string]string)
+	}
+	c.found[provider] = key
+	c.mu.Unlock()
+	return key
 }
 
 // HasCredential reports whether any credential (OAuth/env/config) is available

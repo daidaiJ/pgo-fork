@@ -1,0 +1,20 @@
+{
+  "_note": "Documented-shape fixture (no OpenCode Go key on this machine): usage.{rolling,weekly,monthly}.{status,percent,resetsAt}, percent = USED share, per grok-build-proxy docs-local/usage/quota-endpoints-and-credentials.md §3.",
+  "usage": {
+    "rolling": {
+      "status": "active",
+      "percent": 17.4,
+      "resetsAt": "2026-10-10T15:30:00.000Z"
+    },
+    "weekly": {
+      "status": "active",
+      "percent": 62,
+      "resetsAt": "2026-10-15T13:07:00.000Z"
+    },
+    "monthly": {
+      "status": "limited",
+      "percent": 88.1,
+      "resetsAt": "2026-11-01T00:00:00.000Z"
+    }
+  }
+}

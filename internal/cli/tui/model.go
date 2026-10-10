@@ -1361,6 +1361,7 @@ func (m Model) executor() *prompts.Executor {
 			cli.WriteUsageReport(&b, s.usage.Stats(), cli.UsageReportOptions{
 				SessionID: s.header.ID,
 				Model:     model,
+				Quota:     cli.QuotaSectionFor(s.live, s.creds),
 			})
 			return strings.TrimRight(b.String(), "\n")
 		}

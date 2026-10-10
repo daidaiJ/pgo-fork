@@ -1,0 +1,57 @@
+{
+  "credits": {
+    "credits": {
+      "belowThreshold": false,
+      "creditThreshold": 0,
+      "monthlyCredits": 52.4281492675,
+      "purchasedCredits": 0,
+      "freeCredits": 0
+    },
+    "windowLimits": {
+      "limited": true,
+      "exceeded": null,
+      "fiveHour": {
+        "used": 0.523905795,
+        "cap": 14,
+        "exceeded": false,
+        "resetAt": 1791648943527
+      },
+      "weekly": {
+        "used": 4.993972312,
+        "cap": 35,
+        "exceeded": false,
+        "resetAt": 1792040820334
+      }
+    },
+    "sandboxAccess": true,
+    "sandboxMinutes": {
+      "usedMinutes": 0,
+      "limitMinutes": 0,
+      "overageUsd": 0,
+      "resetAt": 1793491200000
+    }
+  },
+  "subscriptions": {
+    "success": true,
+    "data": {
+      "id": "sub_fixture0000000000000000",
+      "status": "active",
+      "userId": "00000000-0000-0000-0000-000000000000",
+      "orgId": null,
+      "createdAt": "2026-09-20T04:15:48.000Z",
+      "priceId": "price_fixture00000000000000",
+      "metadata": {
+        "commandCode": "true"
+      },
+      "quantity": 1,
+      "cancelAtPeriodEnd": false,
+      "currentPeriodStart": "2026-09-20T04:15:48.000Z",
+      "currentPeriodEnd": "2026-10-20T04:15:48.000Z",
+      "endedAt": null,
+      "cancelAt": null,
+      "canceledAt": null,
+      "planId": "individual-goat",
+      "pendingPhase": null
+    }
+  }
+}

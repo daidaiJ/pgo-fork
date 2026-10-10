@@ -1,0 +1,24 @@
+{
+  "credits": {
+    "credits": {
+      "monthlyCredits": "52.43"
+    },
+    "windowLimits": {
+      "five_hour": {
+        "used": "0.5",
+        "limit": 14,
+        "resetsAt": "2026-10-10T15:00:00Z"
+      },
+      "rolling5h": {
+        "used": 0,
+        "cap": 0
+      },
+      "weekly": {
+        "used": 4.5,
+        "cap": 0,
+        "exceeded": true
+      }
+    }
+  },
+  "subscriptions_error": "commandcode: HTTP 503 (Service Unavailable)"
+}

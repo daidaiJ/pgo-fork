@@ -343,6 +343,7 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			cli.WriteUsageReport(&b, deps.usage.Stats(), cli.UsageReportOptions{
 				SessionID: deps.header.ID,
 				Model:     deps.live.Model,
+				Quota:     cli.QuotaSectionFor(deps.live, deps.creds),
 			})
 			fmt.Fprint(out, b.String())
 			return ""
