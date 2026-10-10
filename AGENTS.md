@@ -49,31 +49,32 @@
   [implementation-plan.md](wiki/port/implementation-plan.md) **T7.8**；卡 =
   [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09 深夜 2。
 
-### T7.7 命令面契约重构切片 3 — 已提交（下一步 = 切片 4）
+### T7.7 命令面契约重构切片 4 收口 — 已落地（T7.7 四切片全部完成）
 
-- **当前状态：** 切片 3 落地 = **`3a36a02`**（2026-10-09 深夜，17 文件〔新增 4 /
-  删 1〕，本地 dev 不推；切片 1 = `35edcd2`、切片 2 = `4bb2321` 照旧）；42 包
-  0 FAIL（`.gtmp/s3-final-test.log`）；两份二进制已刷（第二份 = `cp`，sha256 一致）；
-  REPL slash 面 + headless 拒绝已用本地假端点（SSE）+ 管道配方真机核验。
-- **关键证据：** 单一 `ProjREPLFace` 拆为 9 个面值（`ProjFork`…`ProjDream`）+
-  `Projection.REPLOnly()`；**REPL 的 13 名 if 链删除**（改按 Projection 单
-  switch，每面一个投影点；名字/参数切分单源 `runtime.SplitInvocation`，REPL /
-  TUI / headless 共用）；REPL 对 TUI-face 命令打「候选列表 + usage + 明确提示」
-  （新 `repl/slashproject.go`：/sessions //resume 列会话、/rename //context 给
-  用法行，不实现假交互）；**headless `-p` 遇内建 slash 明确拒绝**（exit 2，
-  身份判定 = 新 `prompts.BuiltinCatalog()`，不再把字面文本当 prompt 发模型；
-  plugin/模板/技能/普通文本与 `/未知名` 照旧）；候选面单源渲染
-  `prompts.FormatCommandLine` + 徽标单源 `SlashCommandSource.Badge()`（TUI 菜单 /
-  /help / REPL 补全三处同源，builtin 无标记；删 REPL `formatHelpLine` 死码与
-  TUI `sourceTag`，/help 退役 `(source: <tier>)`）；测试 = runtime
-  split/badge/REPLOnly + prompts `help_test.go` + repl `slashproject_test.go` +
-  headless `slashguard_test.go` + tui 菜单行型。
-- **排期口径（2026-10-09 用户裁定）：实用体验 > 小添头和主题美化**——T7.7
-  切片 4 等实用件排最前；T7.4 主题系统等美化/添头件排后（登记 =
-  `.handoff/handoff.md` §3.5）。
+- **当前状态：** 切片 4 落地（2026-10-10，feat + docs 指针两段提交，
+  **推送 origin/dev**）；**T7.7 收口**（切片 1 = `35edcd2`、切片 2 = `4bb2321`、
+  切片 3 = `3a36a02` 照旧）；43 包 0 FAIL（`.gtmp/s4-fulltest2.log`）；两份
+  二进制已刷（第二份 = `cp`，sha256 一致）；REPL 别名派发 + headless 别名拒绝
+  已用本地假端点（SSE）+ 管道配方真机核验。
+- **关键证据：** **别名索引**（`SlashRegistry.aliases` 别名→canonical；别名与
+  命令名同一命名空间、同一 tier 规则：低阶后到撞内建别名 = 影子记录、内建互撞
+  = panic〔grok `rebuild_triggers` 对齐〕；`Lookup`/`Remove` 别名感知）；
+  **别名声明转正**（`think.Aliases=["effect"]`、`sessions.Aliases=["resume"]`，
+  两张重复注册删除，目录钉 30→28 + 2 别名）；候选面三处换源 `Candidates()`
+  （canonical 行 + 别名行〔`alias of /x:` 描述前缀〕，TUI 菜单 / REPL 补全 //
+  /help，打字 `/ef` `/res` 仍可补全；`List()` 保持 canonical-only）；
+  **解析路径统一**（`ResolveOutcome` 走 `SplitInvocation`+`Lookup`，Parse/
+  Action/Run/Expand 优先级抽 `resolveCommand` 单源；不可用通知与 usage 行保留
+  调用形态——打 `/resume` 回 `/resume`）；**受众门 fail-closed**（新
+  `ResolveModelAuthored`：仅 `AudienceHumanAndModel` + 精确 canonical〔别名
+  刻意绕开〕可解析，其余一律原文返回按纯文本——grok `slash_authority` 对齐；
+  **pigo 现无模型自撰解析路径**，语义与测试矩阵先钉，消费面接入零改动）；
+  测试 = runtime `slashalias_test.go` 矩阵 + declarations 28+别名钉 + headless
+  别名拒绝 + tui 菜单别名行钉。
 - **详情指针：** 规格 + 偏差 = [slash-command-surface.md](wiki/port/slash-command-surface.md)
-  §7 切片 3 段（切片 1/2 段照旧）；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
-  T7.7 ⑨；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-09 深夜。
+  §5 切片 4 标注 + §7 切片 4 段（切片 1-3 段照旧）；任务 =
+  [implementation-plan.md](wiki/port/implementation-plan.md) T7.7 ⑩；
+  卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10。
 
 ### T7.3 交互式 slash 改造四批 — 已提交（TUI 真机验收待用户）
 
@@ -128,31 +129,38 @@
       两段 Enter / Esc / 删字弹回）
 - [ ] /skills //mcp 面板真机（行型截断 / mcp Enter 展开 + Space server/
       tool 启停写 config + note 回显）
-- [ ] slash 菜单 [skill] 标记 + /resume 别名 + `/model <id> <effort>` 参数式
+- [ ] slash 菜单 [skill] 标记 + /resume 别名 + 菜单别名行（/effect //resume）
+      + `/model <id> <effort>` 参数式
 - [ ] **T7.8 `/dump` 的 TUI 面**（打成系统块 + 路径可读）；自动落盘与 `/dump`
       已在 REPL/headless 真机核验；**流式开始后的失败不落盘**为登记口径
       （原始响应不可复原），流式失败只照原样上报
 - [ ] 上三批：S2 终端标题、S1/S8、thinking 布局、交互式 v1 真机对表 grok
-- [ ] **T7.7 多面命令契约重构（2026-10-08 立项；切片 1 = `35edcd2`、切片 2 =
-      `4bb2321`、切片 3 = `3a36a02`〔均 2026-10-09，本地 dev 未推〕；下一步 =
-      切片 4 别名解析（fail-closed）+ 受众门测试 + 全量回归收口）**：
-      现状 = **假注册已清零** + `Projection` 面枚举（22 类，含 9 个 REPL 面）
-      + TUI runSlash 与 **REPL 两条按名字分发的拦截清单均已归零**（声明驱动单
-      switch）+ /memory //rebuild 契约化 + sessions/resume/rename/context/
-      memory/rebuild 入目录 + REPL 对 TUI 面出「候选列表 + usage + 明确提示」+
-      headless `-p` 对内建 slash 明确报错 + 候选面（TUI 菜单 //help / REPL
-      补全）同源自 `prompts.FormatCommandLine`；
-      `Suggest`/`Preselect` 与 `Offered` 谓词按偏差登记缓落（候选是前端投影的
-      live 数据）；
-      目标形态照 grok（用户裁定"grok 这边明显更正确"）：
-      **规格定稿 = [slash-command-surface.md](wiki/port/slash-command-surface.md)**
-      （单份声明目录 + 类型化 `Intent`/`Execute` + TUI/REPL/headless 三投影器 +
-      四切片 + 验收；偏差登记含"为何不照抄 ACP 双目录"）；
-      登记 = R12 + tui-slash-ux §13.5 + implementation-plan T7.7
+- [ ] **T7.7 遗留（2026-10-10 四切片收口，本件关闭）**：`Suggest`/`Preselect`
+      与 `Offered` 谓词缓落（候选是前端投影的 live 数据，偏差第四次登记）；
+      9 个 REPL-face 命令的 TUI 面板化 = 后续独立批；受众门生产消费面
+      （subagent 输出 / code mode）接入时走 `ResolveModelAuthored`
+      （fail-closed 语义已钉 + 测试矩阵）；规格 =
+      [slash-command-surface.md](wiki/port/slash-command-surface.md)
+      （§7 切片 4 段 + 切片 1-3 段；登记 = R12 + tui-slash-ux §13.5 +
+      implementation-plan T7.7）
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-09：T7.8 请求转储落地（`e55fc51`，已推 origin/dev）**——
+- **当前阶段**：**2026-10-10：T7.7 切片 4 落地并收口（T7.7 关闭）**——
+  **别名解析 fail-closed**（`SlashRegistry` 别名索引：别名与命令名同一命名
+  空间同一 tier 规则，内建互撞 panic〔grok 对齐〕；`/effect`→`/think`、
+  `/resume`→`/sessions` 转正为 `Aliases` 声明，重复注册删除，目录钉 30→28
+  + 2 别名）+ 候选面三处换源 `Candidates()`（canonical 行 + `alias of /x:`
+  别名行，TUI 菜单 / REPL 补全 //help，`List()` 保持 canonical-only）+
+  解析路径统一（`ResolveOutcome` 走 `SplitInvocation`+`Lookup`，解析体抽
+  `resolveCommand` 单源；通知/usage 保留调用形态）+ **受众门 fail-closed**
+  （`ResolveModelAuthored`：HumanAndModel + 精确 canonical 双 fail-closed、
+  别名忽略，其余按纯文本；pigo 现无模型自撰解析路径，语义+测试先钉）；
+  43 包 0 FAIL（`.gtmp/s4-fulltest2.log`）；REPL 别名派发 + headless 别名
+  拒绝管道真机核验过；规格 = slash-command-surface.md §5/§7 切片 4 段，
+  任务 = implementation-plan T7.7 ⑩。
+  上一阶段：
+  **2026-10-09：T7.8 请求转储落地（`e55fc51`，已推 origin/dev）**——
   连接期失败（传输错误 / 429·503·529 重试耗尽 / 4xx·5xx）旁路捕获原始请求 + 响应，
   凭据按形状脱敏，落盘 `<dump 根>/<session id>-<时间戳>/dump.json` 并在有 session
   在飞时自动落盘；`/dump` 写/复用并打印路径（无记录时指磁盘最新 dump）；
