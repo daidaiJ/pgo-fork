@@ -5,6 +5,32 @@
 
 ## 🔄 Handoff 摘要
 
+### T8.1 供应商配置统一批 — 已落地并推送
+
+- **当前状态：** 2026-10-10 晚落地（feat + docs 指针两段提交，**推送 origin/dev**）；
+  43 包 0 FAIL（`.gtmp/t81-fulltest.log`）；两份二进制已刷（第二份 = `cp`）；
+  真机核验（隔离 HOME + 假端点）：config 供应商继承链路零 flag 跑通、未知 id /
+  no-model 明确拒绝、/models 列 config providers + profiles。
+- **关键证据：** ①**config 归一 `~/.pigo`**（双轨缺陷收口）：`FileConfigPath`
+  = `$PIGO_HOME/config.toml` 否则 `~/.pigo/config.toml`；`LoadUserConfig`
+  权威优先 + legacy XDG 只读回退 + **一次性迁移副本**；`PIGO_HOME` 显式时不回
+  读宿主 XDG。②**`[provider."<id>"]` 连接节**（base_url/protocol/api_key/
+  credential/env_key/proxy）+ 档案逐字段继承（**凭据整组 opt-out**，grok
+  `with_provider_defaults` 对齐）+ `ResolveModelConnection` 单源；坏节跳过 +
+  启动 warn，引用未命中 fail-closed；顶层标量 `provider` 与节共享 TOML 键
+  （`UnmarshalTOML` 按形态路由）。③**两级代理**：`ProxyClient`（非法 URL
+  fail-fast）+ 驱动 `setHTTPClient` 注入缝 + `ResolveProviderWithProxy`
+  （模型 > 供应商 > 默认传输；SetupEnv / switchToProfile / executor 裸切换
+  接线）。④**解析拍板落地**：openrouter catch-all 与 `--model` 默认
+  `"openrouter/free"` 双双退役（未知 id / no-model 显式报错）；显式 base-url =
+  `custom` 通用驱动；/models 列 config providers + profiles。
+  **参照 = grok-build-proxy `583ac36`（v1.0.44）**：`[model_providers.<id>]`
+  引用继承 + fail-closed + LOCAL 二十三/二十四期出口代理（use_proxy opt-in +
+  三级自动探测——注册表探测未落，偏差登记）。
+- **详情指针：** 规格 = [wiki/port/provider-config.md](wiki/port/provider-config.md)
+  （§7 偏差 + 落地补充登记）；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
+  **T8.1**；卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（晚）。
+
 ### 原型专题文档批（rpiv-mono / pi-dynamic-workflow / dynamic-workflow 形态设计）— done（wiki 侧，无代码改动）
 
 - **当前状态：** 按用户点名（`juicesharp/rpiv-mono` 的 packages +
@@ -146,7 +172,17 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-10：T7.7 切片 4 落地并收口（T7.7 关闭）**——
+- **当前阶段**：**2026-10-10 晚：T8.1 供应商配置统一批落地**——config 归一
+  `~/.pigo`（双轨缺陷收口：legacy XDG 只读回退 + 一次性迁移副本）+
+  `[provider."<id>"]` 连接节 + 档案逐字段继承（凭据整组 opt-out，grok 对齐）+
+  供应商/模型两级代理（`ProxyClient` fail-fast + `setHTTPClient` 注入缝 +
+  `ResolveProviderWithProxy`）+ 解析拍板落地（openrouter catch-all 与
+  `--model` 默认退役，未知 id / no-model 显式报错；显式 base-url = `custom`
+  驱动）+ /models 列 config providers + profiles；43 包 0 FAIL
+  （`.gtmp/t81-fulltest.log`）；参照 = grok-build-proxy `583ac36`（v1.0.44）；
+  规格 = wiki/port/provider-config.md，任务 = implementation-plan T8.1。
+  上一阶段：
+  **2026-10-10：T7.7 切片 4 落地并收口（T7.7 关闭）**——
   **别名解析 fail-closed**（`SlashRegistry` 别名索引：别名与命令名同一命名
   空间同一 tier 规则，内建互撞 panic〔grok 对齐〕；`/effect`→`/think`、
   `/resume`→`/sessions` 转正为 `Aliases` 声明，重复注册删除，目录钉 30→28
