@@ -9,20 +9,23 @@
 
 ## 🔄 现场速览
 
-- **当前阶段**：**T8.2 LSP 批 2 已落地**（2026-10-11 晚，feat `9b71cf7` +
-  docs `fcc0f0f` 推送 origin/dev；44 包 0 FAIL）——B1/B3/B4 落地 +
-  B2 watched_files 取证改判不落地（D-12），余 B5 随 T7.6+D-C1；第 8 期
-  ✅ 全部完成 4/4。最新交接卡 =
-  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（晚）。
+- **当前阶段**：**T7.6+D-C1 审批三态批已落地**（2026-10-11 深夜，feat +
+  docs 推送 origin/dev；44 包 0 FAIL）——三态环 ask→plan→always-approve
+  （Shift+Tab + /mode）+ 引擎 1.5 plan 门 + D-C1 本地审批面板 + D-C2 诚实
+  文案 + B5 lsp_rename 过 T5.2（LSP 家族 7→8）；规格 =
+  [wiki/port/approval-modes.md](wiki/port/approval-modes.md)（偏差
+  D-15~D-19 + 待拍板「交互默认是否改 ask」）。最新交接卡 =
+  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（深夜）。
 - **接手者第一步**：按排期口径（实用体验 > 小添头）从待排期池取件——
-  T7.6+D-C1、T7.1、T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐
-  （D-11）、dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、T7.4；或等
-  用户 TUI 真机验收反馈（清单 = `.handoff/handoff.md` §2.2 + 各面板）。
+  T7.1、T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐（D-11）、
+  dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、T7.4；或等用户 TUI
+  真机验收反馈（清单 = `.handoff/handoff.md` §2.2 + 各面板）。
 
 ### 近期批次速览（细节 = wiki 卡/分册，勿在此展开）
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
+| 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | 见 git log | approval-modes.md |
 | 10-11 晚 | T8.2 LSP 批 2（查询面 + per-tool 开关 + pull 兜底 + 收割重放 + 自动安装；B2 改判不落地） | `9b71cf7`+`fcc0f0f` | lsp-support.md §7 |
 | 10-11 | T8.3 输入排队（队列 pane + 中断冻结 + Alt+Enter send-now） | `5668f49`+`fdf60c8` | queue-management.md |
 | 10-11 | T8.4 /shell 切换 + 默认 shell 后端 | `c84ce54`+`73dd287` | shell-switch.md |
@@ -37,16 +40,21 @@
 
 ## 未验证事项（真机验收与缓落件）
 
-- [ ] **TUI 面板真机手感一批约**：T8.3 队列 pane（↑↓ 选中 + Del + Esc 冻结
-      体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2 /lsp 面板（含批 2
-      工具行 Space 翻转）；前置各自见规格（/lsp 需 `[lsp] enabled` 或项目层
-      开 + 目录受信）
+- [ ] **TUI 面板真机手感一批约**：T7.6 审批面（Shift+Tab 环 + 三态标签 +
+      待审批面板 Esc·a·s + /mode 面板 mid-run）、T8.3 队列 pane（↑↓ 选中 +
+      Del + Esc 冻结体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2
+      /lsp 面板（含批 2 工具行 Space 翻转）；前置各自见规格（/lsp 需
+      `[lsp] enabled` 或项目层开 + 目录受信；审批面板需 `-a=false` 或
+      /mode ask）
+- [ ] **T7.6 待拍板**：交互模式默认是否从 `--approve` 改 ask（D-C1 落地后
+      ask 第一次可用；规格 approval-modes.md §2.8）；D-C3 bash 只读白名单
+      （落地后 plan 模式 bash 只读调研自动受益）
 - [ ] **T7.3 面板族真机对表 grok**（/model 档案链式、/think 下拉、/skills
       //mcp 两级、slash 菜单 [skill] 标记、/resume 别名；前置 = config 先加
       `[models."<id>"]` 档案；清单 = `.handoff/handoff.md` §2.2）
-- [ ] **T8.2 批 2 余项**：B5 = lsp_rename 过 T5.2 + 多 root/多 server 路由
-      （随 T7.6+D-C1 取件）；call hierarchy 缓；watched_files 重开条件 =
-      多语言 server 出现（D-12）；auto-install 冷装路径未真机走通（单测钉边界）
+- [ ] **T8.2 缓落件**：call hierarchy 缓；lsp_rename 多 root/多 server 路由
+      （多语言 server 前提）；auto-install 冷装路径未真机走通（单测钉边界）；
+      watched_files 重开条件 = 多语言 server 出现（D-12）
 - [ ] **T7.8 `/dump` 的 TUI 面**；流式开始后的失败不落盘（登记口径）
 - [ ] **T7.7 缓落**：`Suggest`/`Preselect` 与 `Offered` 谓词、9 个 REPL-face
       命令的 TUI 面板化（独立批）、受众门生产消费面接入
