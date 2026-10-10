@@ -61,7 +61,9 @@
       /lsp 面板（含批 2 工具行 Space 翻转）、`/usage` 打开的 overlay
       「用量上限」tab（Tab/Shift+Tab + 条对齐 + `查询中…` 行）、**流式思考块
       折叠**（Ctrl+T / 双击三态、提示文案、回合结束后用户展开态保留——规格 =
-      `tui-mouse-fold-todo.md` §7）；前置各自见规格（/lsp 需
+      `tui-mouse-fold-todo.md` §7）、**overlay 居中**（`/skills` //mcp /lsp
+      /shell /mode 与 /context /sessions 同一放置规则，`4cf3205`）、面板**样式
+      对表 grok ExtensionsModal**（待做）；前置各自见规格（/lsp 需
       `[lsp] enabled` 或项目层开 + 目录受信；审批面板需 `-a=false` 或
       /mode ask——交互默认维持 approve 已拍板）
 - [ ] **T7.6 缓落件**：D-C3 bash 只读白名单（落地后 plan 模式 bash 只读
