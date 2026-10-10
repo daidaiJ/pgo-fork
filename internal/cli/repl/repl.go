@@ -268,6 +268,21 @@ func (deps replDeps) notifierHandle() func(agentcore.AgentEvent) {
 	return deps.notifier.Handle
 }
 
+// printUsageReport writes the /usage report: this session's cumulative
+// accounting plus the active provider's plan quota (T6.3). The TUI's usage
+// overlay tab renders the identical text through the same shared renderer, so
+// the REPL and the panel can never disagree. It serves both the ProjUsagePanel
+// site (the TUI owns the panel form) and the Executor's Parse fallback.
+func printUsageReport(out io.Writer, deps *replDeps) {
+	var b bytes.Buffer
+	cli.WriteUsageReport(&b, deps.usage.Stats(), cli.UsageReportOptions{
+		SessionID: deps.header.ID,
+		Model:     deps.live.Model,
+		Quota:     cli.QuotaSectionFor(deps.live, deps.creds),
+	})
+	fmt.Fprint(out, b.String())
+}
+
 // runREPL runs the read → run → stream-print loop until EOF, /exit or /quit. It
 // reads from in (os.Stdin in production) and writes prompts, streamed replies
 // and status lines to out (os.Stdout). It is the interactive replacement for the
@@ -335,17 +350,11 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 			cli.PersistTurn(out, &deps)
 			return ""
 		},
-		// /usage and /stats read the session usage ledger (O1/T7.3c) through the
-		// shared renderer; they print in the REPL (return "") exactly like
-		// /status and /session above.
+		// /usage's text projection (both the ProjUsagePanel site above and the
+		// Parse fallback): the session ledger plus the provider plan quota,
+		// through the shared renderer. /stats prints here too.
 		Usage: func() string {
-			var b bytes.Buffer
-			cli.WriteUsageReport(&b, deps.usage.Stats(), cli.UsageReportOptions{
-				SessionID: deps.header.ID,
-				Model:     deps.live.Model,
-				Quota:     cli.QuotaSectionFor(deps.live, deps.creds),
-			})
-			fmt.Fprint(out, b.String())
+			printUsageReport(out, &deps)
 			return ""
 		},
 		Stats: func(window string) string {
@@ -581,6 +590,12 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 					// /remote-control starts/stops the in-process server and
 					// toggles deps.remote / the output tee in place.
 					runRemoteControl(out, &deps, line)
+					continue
+				case runtime.ProjUsagePanel:
+					// /usage opens the TUI overlay; the REPL has no overlay, so it
+					// projects the same report as text (the panel's tab body and this
+					// line share one renderer).
+					printUsageReport(out, &deps)
 					continue
 				case runtime.ProjSessionsPicker, runtime.ProjRename, runtime.ProjContextPanel:
 					// TUI-face pickers/overlays the REPL cannot run: project a

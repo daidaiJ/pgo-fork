@@ -186,6 +186,10 @@ const (
 	ProjSessionsPicker
 	// ProjContextPanel toggles the context-usage overlay (/context).
 	ProjContextPanel
+	// ProjUsagePanel opens the usage overlay at its plan-quota tab (/usage).
+	// The TUI shows the grok Usage-limit tab (the subscription's windows plus
+	// this session's totals); the REPL projects the same report as text.
+	ProjUsagePanel
 	// ProjRename renames the session title (/rename).
 	ProjRename
 	// ProjRebuild reconstructs the context off the UI loop (/rebuild).
@@ -243,6 +247,8 @@ func (p Projection) String() string {
 		return "sessions picker"
 	case ProjContextPanel:
 		return "context panel"
+	case ProjUsagePanel:
+		return "usage panel"
 	case ProjRename:
 		return "rename"
 	case ProjRebuild:

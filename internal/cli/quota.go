@@ -14,9 +14,12 @@ import (
 )
 
 // QuotaTimeout bounds the whole provider-quota lookup. /usage is synchronous
-// in both front-ends, so the network step must be short and fail soft: a slow
-// provider costs a bounded delay, never a hung command.
-const QuotaTimeout = 5 * time.Second
+// in the REPL and a bounded network step in the TUI, so the lookup must be
+// short and fail soft: a slow provider costs a bounded delay, never a hung
+// command. Measured against the live Command Code endpoint the proxied route
+// takes ~2s, so this leaves room for a spike without approaching the tens of
+// seconds a direct (proxyless) route needs.
+const QuotaTimeout = 8 * time.Second
 
 // QuotaProbe identifies the provider connection a quota lookup asks about.
 type QuotaProbe struct {
@@ -75,7 +78,28 @@ func QuotaSectionFor(live *LiveConfig, creds *provider.CredentialStore) *QuotaSe
 	}
 	probe := QuotaProbeFor(live, creds)
 	snap, err := ProbeQuota(probe)
-	return &QuotaSection{Label: probe.Label(), Snapshot: snap, Err: err}
+	return QuotaSectionFrom(probe, snap, err)
+}
+
+// QuotaSupported reports whether the provider has a quota source at all. It is
+// the cheap pre-check that keeps a provider without one (sensenova, openrouter,
+// …) from starting a lookup that could only fail, so its panel tab stays quiet.
+func QuotaSupported(probe QuotaProbe) bool {
+	_, ok := usage.Lookup(probe.Provider, probe.BaseURL)
+	return ok
+}
+
+// QuotaSectionFrom builds the section for a finished lookup, naming the
+// provider from the source that served it. That name is the useful one: a
+// connection declared through [provider."<id>"] resolves to the generic
+// "custom"/"openai" driver, so only the source knows the plan belongs to
+// "commandcode".
+func QuotaSectionFrom(probe QuotaProbe, snap *usage.Snapshot, err error) *QuotaSection {
+	label := probe.Label()
+	if src, ok := usage.Lookup(probe.Provider, probe.BaseURL); ok {
+		label = src.Name()
+	}
+	return &QuotaSection{Label: label, Snapshot: snap, Err: err}
 }
 
 // EffectiveBaseURL fills in a registry provider's default base URL when the

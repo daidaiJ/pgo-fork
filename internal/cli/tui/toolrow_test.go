@@ -302,12 +302,33 @@ func TestContextPanelRender(t *testing.T) {
 		}
 	}
 
-	p.tab = 1
+	p.tab = tabSession
 	p.scroll = 0
 	d.sessionReport = "session: xyz"
 	out = stripANSI(p.render(DefaultTheme(), d, 80, 30))
 	if !strings.Contains(out, "session: xyz") {
 		t.Errorf("session tab should render the report, got:\n%s", out)
+	}
+
+	// The usage tab (grok's "Usage limit") carries the /usage report: the
+	// provider plan quota plus this session's tallies.
+	p.tab = tabUsage
+	p.scroll = 0
+	d.usageReport = "session usage · m\n  calls     ✓ 2\ngg-plan · plan quota (GOAT)"
+	out = stripANSI(p.render(DefaultTheme(), d, 80, 30))
+	for _, want := range []string{"✓ 2", "plan quota (GOAT)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage tab missing %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "session: xyz") {
+		t.Errorf("usage tab leaked the session tab's body:\n%s", out)
+	}
+	d.usageReport = ""
+	d.usageWaiting = true
+	out = stripANSI(p.render(DefaultTheme(), d, 80, 30))
+	if !strings.Contains(out, "查询中") {
+		t.Errorf("a lookup in flight should say so, got:\n%s", out)
 	}
 }
 

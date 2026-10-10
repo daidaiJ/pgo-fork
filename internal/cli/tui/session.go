@@ -481,6 +481,10 @@ func (s *runSession) rebuildCmd() tea.Cmd {
 // is left unchanged on failure), mirroring rebuildDoneMsg.
 type compactDoneMsg struct{ summary string }
 
+// usageQuotaMsg carries a finished provider plan-quota lookup for the /usage
+// overlay tab; sec holds either the snapshot or the reason there is none.
+type usageQuotaMsg struct{ sec *cli.QuotaSection }
+
 // compactCmd runs a manual compaction off the tea loop (the summarization
 // stream must not block the UI goroutine) through the shared
 // cli.RunManualCompact core — T7.7: one implementation behind the REPL's

@@ -481,14 +481,17 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		Parse:       parseDump,
 	})
 	// /usage and /stats are the usage face (O1/T7.3c): /usage reads this
-	// session's cumulative accounting (the same records the status line sums),
-	// /stats aggregates every session's ledger over a time window. Both are
-	// human-audience, text-only commands — the Execute faces are the Executor's
-	// Usage/Stats hooks (the REPL prints, the TUI renders a system block).
+	// session's cumulative accounting (the same records the status line sums)
+	// plus the active provider's plan quota, and /stats aggregates every
+	// session's ledger over a time window. /usage declares the ProjUsagePanel
+	// face — grok's /usage opens its usage modal at the allowance tab, so the
+	// TUI opens the overlay's plan-quota tab while the REPL projects the same
+	// report as text (Parse stays the argument contract).
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "usage",
-		Description: "show this session's token accounting: calls, tokens, cache and think share, last-turn perf",
+		Description: "show this session's token accounting and the provider plan quota",
 		Parse:       parseUsage,
+		Projection:  runtime.ProjUsagePanel,
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "stats",

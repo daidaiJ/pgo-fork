@@ -10,6 +10,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +47,12 @@ func WriteQuotaReport(out io.Writer, sec QuotaSection, now time.Time) {
 			return
 		}
 		detail := sec.Err.Error()
-		if errors.Is(sec.Err, usage.ErrNoCredential) {
+		switch {
+		case errors.Is(sec.Err, context.DeadlineExceeded):
+			// The raw net error ("Get \"https://…\": context deadline
+			// exceeded") is noisy and does not say what the bound was.
+			detail = fmt.Sprintf("timed out after %s", QuotaTimeout)
+		case errors.Is(sec.Err, usage.ErrNoCredential):
 			detail = "no API key configured"
 		}
 		fmt.Fprintf(out, "  %s\n", ui.Colorize(color, ui.Dim,

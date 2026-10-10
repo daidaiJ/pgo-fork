@@ -132,8 +132,16 @@ type Model struct {
 	header header
 
 	// ctxPanel is the context-usage overlay panel (grok context panel
-	// reference): toggled by /context, modal while open.
+	// reference): toggled by /context, opened at its plan-quota tab by /usage,
+	// modal while open.
 	ctxPanel contextPanel
+
+	// usagePanel is the last provider plan-quota lookup the /usage tab
+	// renders; nil before the first one. usageWaiting marks a lookup in
+	// flight: the probe runs off the tea loop, so the panel draws at once and
+	// fills in when it lands.
+	usagePanel   *cli.QuotaSection
+	usageWaiting bool
 
 	// turnStart anchors the running line's current-turn elapsed readout; reset
 	// at run start and at each turn boundary.
@@ -648,6 +656,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactionStartMsg:
 		m.spinner.pin("Compacting conversation")
 		return m, m.pumpNext()
+
+	case usageQuotaMsg:
+		// The /usage tab's provider probe landed (or failed): keep the
+		// section for the renderer — an error renders as one dim line, never
+		// as a zeroed plan.
+		m.usagePanel = msg.sec
+		m.usageWaiting = false
+		m.relayout()
+		return m, nil
 
 	case compactionMsg:
 		// T3.3 marker model: compaction only inserts a marker into the live
@@ -1350,21 +1367,10 @@ func (m Model) executor() *prompts.Executor {
 			s.renderSession(&b)
 			return strings.TrimRight(b.String(), "\n")
 		}
-		// /usage and /stats read the session usage ledger (O1/T7.3c) through the
-		// shared renderers; the TUI folds the returned text into a system block.
-		ex.Usage = func() string {
-			var b bytes.Buffer
-			model := ""
-			if s.live != nil {
-				model = s.live.Model
-			}
-			cli.WriteUsageReport(&b, s.usage.Stats(), cli.UsageReportOptions{
-				SessionID: s.header.ID,
-				Model:     model,
-				Quota:     cli.QuotaSectionFor(s.live, s.creds),
-			})
-			return strings.TrimRight(b.String(), "\n")
-		}
+		// /usage opens the overlay at its plan-quota tab (ProjUsagePanel); the
+		// tab body is rendered here from local state plus the last quota
+		// lookup. /stats reads the session usage ledger through the shared
+		// renderer and folds the returned text into a system block.
 		ex.Stats = func(window string) string {
 			w, _ := runtime.ParseUsageWindow(window)
 			var b bytes.Buffer
@@ -1458,6 +1464,8 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 				return m.compactNow(line)
 			case runtime.ProjContextPanel:
 				return m.toggleContextPanel(line)
+			case runtime.ProjUsagePanel:
+				return m.openUsagePanel(line)
 			case runtime.ProjRemoteControl:
 				return m.runRemoteControl(line)
 			case runtime.ProjRewind:
@@ -1607,6 +1615,39 @@ func (m Model) toggleContextPanel(line string) (tea.Model, tea.Cmd) {
 	m.ctxPanel.toggle()
 	m.relayout()
 	return m, nil
+}
+
+// openUsagePanel projects the ProjUsagePanel face (grok /usage alignment): it
+// opens the overlay at the plan-quota tab, showing the last lookup it has and
+// refreshing it off the tea loop — the provider probe is a network round trip,
+// so it must never block a render (or a keystroke).
+func (m Model) openUsagePanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	if m.session == nil {
+		m.transcript.addSystem("(usage unavailable: no active session)")
+		m.relayout()
+		return m, nil
+	}
+	m.ctxPanel.openAt(tabUsage)
+	m.relayout()
+	if m.usageWaiting {
+		return m, nil
+	}
+	probe := cli.QuotaProbeFor(m.session.live, m.session.creds)
+	if !cli.QuotaSupported(probe) {
+		return m, nil
+	}
+	m.usageWaiting = true
+	return m, m.quotaProbeCmd(probe)
+}
+
+// quotaProbeCmd runs the plan-quota lookup away from the tea loop and reports
+// it back as usageQuotaMsg.
+func (m Model) quotaProbeCmd(probe cli.QuotaProbe) tea.Cmd {
+	return func() tea.Msg {
+		snap, err := cli.ProbeQuota(probe)
+		return usageQuotaMsg{sec: cli.QuotaSectionFrom(probe, snap, err)}
+	}
 }
 
 // openSkillsPanel projects the ProjSkillsPanel face (T7.3 interactive
@@ -2410,6 +2451,27 @@ func (m Model) renderContent() (string, *tea.Cursor) {
 	return out, cur
 }
 
+// usageReport renders the /usage overlay tab's body: this session's
+// cumulative accounting plus the provider plan quota from the last lookup
+// (nil when none has run). It is built at render time from local state only —
+// the network probe runs as a command when the panel opens, never here.
+func (m Model) usageReport() string {
+	if m.session == nil {
+		return ""
+	}
+	model := ""
+	if m.session.live != nil {
+		model = m.session.live.Model
+	}
+	var b bytes.Buffer
+	cli.WriteUsageReport(&b, m.session.usage.Stats(), cli.UsageReportOptions{
+		SessionID: m.session.header.ID,
+		Model:     model,
+		Quota:     m.usagePanel,
+	})
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // contextData snapshots the live state the context panel renders (tab data is
 // gathered on the tea goroutine at render time — no I/O, no locking needed).
 func (m Model) contextData() contextData {
@@ -2423,6 +2485,8 @@ func (m Model) contextData() contextData {
 			m.session.renderSession(&buf)
 			return strings.TrimRight(buf.String(), "\n")
 		}(),
+		usageReport:  m.usageReport(),
+		usageWaiting: m.usageWaiting,
 	}
 	if m.session != nil {
 		d.sessionID = m.session.header.ID

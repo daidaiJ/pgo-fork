@@ -95,18 +95,24 @@ func TestQuotaProbeForUsesDiscoveredCredential(t *testing.T) {
 	}
 }
 
-// The section keeps the provider identity only when a snapshot failed to
-// resolve; a resolved one is labelled from its own source name.
-func TestQuotaSectionForLabelsFailure(t *testing.T) {
-	creds := provider.NewCredentialStore(nil)
-	sec := QuotaSectionFor(&LiveConfig{ProviderName: "custom", BaseURL: "https://api.commandcode.ai/provider/v1"}, creds)
+// The section names the provider from the matched source, not from the
+// resolved driver: a [provider."<id>"] connection resolves to the generic
+// "custom"/"openai" driver, so only the source knows this is "commandcode".
+func TestQuotaSectionFromNamesTheProvider(t *testing.T) {
+	probe := QuotaProbe{Provider: "custom", BaseURL: "https://api.commandcode.ai/provider/v1"}
+	sec := QuotaSectionFrom(probe, nil, usage.ErrNoCredential)
 	if sec == nil {
-		t.Fatal("QuotaSectionFor returned nil for a config-defined provider")
+		t.Fatal("QuotaSectionFrom returned nil")
 	}
-	if sec.Label != "api.commandcode.ai" {
-		t.Errorf("section label = %q, want the endpoint host", sec.Label)
+	if sec.Label != "commandcode" {
+		t.Errorf("section label = %q, want the source name", sec.Label)
 	}
 	if !errors.Is(sec.Err, usage.ErrNoCredential) {
 		t.Errorf("section error = %v, want ErrNoCredential", sec.Err)
+	}
+	// A provider no source serves keeps the probe's own label.
+	unknown := QuotaSectionFrom(QuotaProbe{Provider: "sensenova"}, nil, usage.ErrUnsupported)
+	if unknown.Label != "sensenova" {
+		t.Errorf("unsupported provider label = %q, want sensenova", unknown.Label)
 	}
 }

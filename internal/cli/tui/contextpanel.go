@@ -22,12 +22,20 @@ import (
 // offset for body content taller than the panel.
 type contextPanel struct {
 	open   bool
-	tab    int // 0 = context usage, 1 = session info
+	tab    int
 	scroll int
 }
 
+// The panel's tabs, in grok's usage-modal order (ContextUsage, UsageLimit,
+// SessionInfo): /context opens at tabContext, /usage at tabUsage.
+const (
+	tabContext = iota
+	tabUsage
+	tabSession
+)
+
 // contextTabs are the tab labels; the active one renders bright, the rest dim.
-var contextTabs = []string{"上下文用量", "会话信息"}
+var contextTabs = []string{"上下文用量", "用量上限", "会话信息"}
 
 // panelBodyRows is the content height budget the panel aims for; the body
 // scrolls past it. The panel otherwise sizes to its content.
@@ -36,7 +44,18 @@ const panelBodyRows = 20
 // toggle opens/closes the panel (resetting the view so a reopen starts clean).
 func (p *contextPanel) toggle() {
 	p.open = !p.open
-	p.tab = 0
+	p.tab = tabContext
+	p.scroll = 0
+}
+
+// openAt opens the panel on a specific tab (/usage lands on the plan-quota
+// tab, /context on the context tab — grok's per-command entry points).
+func (p *contextPanel) openAt(tab int) {
+	p.open = true
+	if tab < 0 || tab >= len(contextTabs) {
+		tab = tabContext
+	}
+	p.tab = tab
 	p.scroll = 0
 }
 
@@ -54,6 +73,9 @@ func (p *contextPanel) handleKey(key string) bool {
 	switch key {
 	case "tab":
 		p.tab = (p.tab + 1) % len(contextTabs)
+		p.scroll = 0
+	case "shift+tab":
+		p.tab = (p.tab - 1 + len(contextTabs)) % len(contextTabs)
 		p.scroll = 0
 	case "up":
 		if p.scroll > 0 {
@@ -80,7 +102,12 @@ type contextData struct {
 	skillCount      int
 	skillTokens     int
 	sessionID       string
-	sessionReport   string // tab 2 body (renderSession output)
+	sessionReport   string // tab 3 body (renderSession output)
+	// usageReport is tab 2's body (the /usage report: this session's tallies
+	// plus the provider plan quota), pre-rendered by the model; usageWaiting
+	// marks a quota lookup still in flight.
+	usageReport  string
+	usageWaiting bool
 }
 
 // render draws the overlay to width×height: a rounded bordered box, horizontally
@@ -133,9 +160,12 @@ func (p contextPanel) body(theme Theme, d contextData, width int) string {
 	b.WriteString(title + strings.Repeat(" ", gap) + close + "\n")
 	b.WriteString(theme.Chrome.Render(strings.Repeat("─", maxInt(width, 1))) + "\n\n")
 
-	if p.tab == 1 {
+	switch p.tab {
+	case tabUsage:
+		b.WriteString(scrollLines(p.usageBody(theme, d, width), p.scroll))
+	case tabSession:
 		b.WriteString(scrollLines(p.sessionBody(theme, d, width), p.scroll))
-	} else {
+	default:
 		b.WriteString(scrollLines(p.contextBody(theme, d, width), p.scroll))
 	}
 
@@ -212,7 +242,27 @@ func (p contextPanel) contextBody(theme Theme, d contextData, width int) string 
 	return b.String()
 }
 
-// sessionBody renders tab 2: the shared session report (same content /session
+// usageBody renders tab 2 (grok's "Usage limit"): the /usage report — the
+// provider's plan windows first, then this session's tallies — with a waiting
+// line while the quota lookup is still in flight.
+func (p contextPanel) usageBody(theme Theme, d contextData, width int) string {
+	var b strings.Builder
+	if d.usageReport != "" {
+		b.WriteString(theme.Chrome.Render(d.usageReport))
+	}
+	if d.usageWaiting {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(theme.KeyHint.Render("套餐余量：查询中…"))
+	}
+	if b.Len() == 0 {
+		return theme.Chrome.Render("(用量不可用：无活动会话)")
+	}
+	return b.String()
+}
+
+// sessionBody renders tab 3: the shared session report (same content /session
 // prints), pre-rendered plain and passed in as sessionReport.
 func (p contextPanel) sessionBody(theme Theme, d contextData, width int) string {
 	if d.sessionReport == "" {
