@@ -20,7 +20,7 @@
   切片 2 超窗；并行子代理一次 ≤ 3）；或按排期口径（实用体验 > 小添头）改取
   待排期池余件——T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐（D-11）、
   dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、T7.4；或等用户 TUI
-  真机验收反馈（清单 = `.handoff/handoff.md` §2.2 + 各面板）。
+  真机验收反馈（清单 = `wiki/port/tui-slash-ux.md` §14 + 各面板）。
 
 ### 近期批次速览（细节 = wiki 卡/分册，勿在此展开）
 
@@ -55,7 +55,7 @@
       调研自动受益）；plan 文件面随 dynamic-workflow（D-16）
 - [ ] **T7.3 面板族真机对表 grok**（/model 档案链式、/think 下拉、/skills
       //mcp 两级、slash 菜单 [skill] 标记、/resume 别名；前置 = config 先加
-      `[models."<id>"]` 档案；清单 = `.handoff/handoff.md` §2.2）
+      `[models."<id>"]` 档案；清单 = `wiki/port/tui-slash-ux.md` §14）
 - [ ] **T8.2 缓落件**：call hierarchy 缓；lsp_rename 多 root/多 server 路由
       （多语言 server 前提）；auto-install 冷装路径未真机走通（单测钉边界）；
       watched_files 重开条件 = 多语言 server 出现（D-12）
