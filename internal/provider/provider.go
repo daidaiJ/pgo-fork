@@ -110,6 +110,11 @@ type StreamConfig struct {
 	ThinkingLevel agentcore.ThinkingLevel
 	// Extra holds provider-specific options; opaque to the loop.
 	Extra map[string]any
+	// OnRetry, when non-nil, is called once per connect-time retry resubmission
+	// (the transport's 429/503/529 budget). It lets the loop account retries in
+	// the session usage ledger (O1/T7.3c) without the transport knowing what a
+	// session is.
+	OnRetry func()
 }
 
 // StreamFn produces a provider stream for a model + shaped context. Per the

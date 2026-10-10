@@ -111,7 +111,7 @@ func (d *openAICompatDriver) StreamCompletion(ctx context.Context, req Completio
 		}
 		return httpReq, nil
 	}
-	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewOpenAIDecoder(), Client: d.client})
+	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewOpenAIDecoder(), Client: d.client, OnRetry: req.Config.OnRetry})
 }
 
 // encodeOpenAIRequest serializes a CompletionRequest into an OpenAI Chat
@@ -336,7 +336,7 @@ func (d *anthropicCompatDriver) StreamCompletion(ctx context.Context, req Comple
 		}
 		return httpReq, nil
 	}
-	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewAnthropicDecoder(), Client: d.client})
+	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewAnthropicDecoder(), Client: d.client, OnRetry: req.Config.OnRetry})
 }
 
 // encodeAnthropicRequest serializes a CompletionRequest into an Anthropic

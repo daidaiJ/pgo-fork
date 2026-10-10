@@ -87,6 +87,9 @@ type TransportConfig struct {
 	Decoder Decoder
 	// MaxConnectRetries bounds connect-only retries (default 2).
 	MaxConnectRetries int
+	// OnRetry, when non-nil, is called once per retry resubmission (before the
+	// backoff sleep), so a caller can account retries (O1/T7.3c).
+	OnRetry func()
 }
 
 // StreamRequest runs cfg as a transport stream. Per the dual failure model it
@@ -111,7 +114,7 @@ func StreamRequest(ctx context.Context, cfg TransportConfig) (*AssistantMessageE
 
 	// Connect once up front so a "cannot even build the stream" failure surfaces
 	// as a returned error (the only early-error case per FR-13).
-	resp, err := connect(ctx, client, cfg.NewRequest, maxRetries)
+	resp, err := connect(ctx, client, cfg.NewRequest, maxRetries, cfg.OnRetry)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +127,8 @@ func StreamRequest(ctx context.Context, cfg TransportConfig) (*AssistantMessageE
 // connect performs the initial connection with retry. It only retries when the
 // server explicitly signals a retryable condition (429/503/529); it never
 // replays a consumed stream, so retrying at connect time is always safe.
-func connect(ctx context.Context, client *http.Client, newReq func(context.Context) (*http.Request, error), maxRetries int) (*http.Response, error) {
+// onRetry, when non-nil, is invoked once per retry resubmission.
+func connect(ctx context.Context, client *http.Client, newReq func(context.Context) (*http.Request, error), maxRetries int, onRetry func()) (*http.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := newReq(ctx)
@@ -138,6 +142,7 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 				recordFailure(req, nil, nil, lastErr)
 				return nil, lastErr
 			}
+			countRetry(onRetry)
 			if !sleepBackoff(ctx, attempt, 0) {
 				return nil, ctx.Err()
 			}
@@ -153,6 +158,7 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 				recordFailure(req, resp, body, lastErr)
 				return nil, lastErr
 			}
+			countRetry(onRetry)
 			if !sleepBackoff(ctx, attempt, retryAfter(resp.Header)) {
 				return nil, ctx.Err()
 			}
@@ -168,6 +174,13 @@ func connect(ctx context.Context, client *http.Client, newReq func(context.Conte
 		return resp, nil
 	}
 	return nil, lastErr
+}
+
+// countRetry invokes the retry observer, tolerating a nil observer.
+func countRetry(onRetry func()) {
+	if onRetry != nil {
+		onRetry()
+	}
 }
 
 // recordFailure hands a failed connect-time request to the dump recorder

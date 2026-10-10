@@ -113,6 +113,12 @@ type replDeps struct {
 	// section through the MCPSurfaceSource capability; nil when no server is
 	// configured.
 	mcpMgr *mcp.Manager
+	// usage is the session usage recorder (O1/T7.3c). streamRun wires it as the
+	// loop's RecordUsage sink, the /goal loop gets it too, and the /usage +
+	// /stats executor hooks read the same ledger through it. Nil only when the
+	// caller supplied none (tests, a session-less embed); the methods are
+	// nil-safe, so accounting then degrades to zero rather than panicking.
+	usage *runtime.UsageRecorder
 	// skillsView aliases the caller's skill slice so the status Skills section
 	// and the /skills surface see the same (reloadable) view.
 	skillsView *[]*runtime.Skill
@@ -327,6 +333,25 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 		Rebuild: func() string {
 			runManualRebuild(out, deps)
 			cli.PersistTurn(out, &deps)
+			return ""
+		},
+		// /usage and /stats read the session usage ledger (O1/T7.3c) through the
+		// shared renderer; they print in the REPL (return "") exactly like
+		// /status and /session above.
+		Usage: func() string {
+			var b bytes.Buffer
+			cli.WriteUsageReport(&b, deps.usage.Stats(), cli.UsageReportOptions{
+				SessionID: deps.header.ID,
+				Model:     deps.live.Model,
+			})
+			fmt.Fprint(out, b.String())
+			return ""
+		},
+		Stats: func(window string) string {
+			w, _ := runtime.ParseUsageWindow(window)
+			var b bytes.Buffer
+			cli.WriteStatsReport(&b, cli.UsageLedger(deps.store.Dir()), w, time.Now())
+			fmt.Fprint(out, b.String())
 			return ""
 		},
 	}
@@ -544,7 +569,7 @@ func runREPL(in io.Reader, out io.Writer, deps replDeps) error {
 					// /goal runs one or more agent streams and mutates the
 					// shared context/goal state, reusing the same SIGINT cancel
 					// plumbing as a normal turn.
-					goal.RunGoal(setCancel, out, &deps, line)
+					goal.RunGoal(setCancel, out, &deps, deps.usage, line)
 					continue
 				case runtime.ProjBtw:
 					// /btw runs an agent stream against a COPY of the main

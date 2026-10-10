@@ -173,6 +173,33 @@ func parseDump(args string) (runtime.Intent, error) {
 	return runtime.Intent{Kind: runtime.IntentDump}, nil
 }
 
+// parseUsage refuses arguments — /usage reports this session's cumulative
+// accounting, and there is nothing to select by argument.
+func parseUsage(args string) (runtime.Intent, error) {
+	if strings.TrimSpace(args) != "" {
+		return runtime.Intent{}, fmt.Errorf("usage: takes no arguments")
+	}
+	return runtime.Intent{Kind: runtime.IntentUsage}, nil
+}
+
+// parseStats implements /stats's window grammar: bare (default week), or
+// day|week|all. An unknown window is refused explicitly rather than silently
+// defaulting, so a typo is visible.
+func parseStats(args string) (runtime.Intent, error) {
+	arg := strings.TrimSpace(args)
+	if arg == "" {
+		return runtime.Intent{Kind: runtime.IntentStats}, nil
+	}
+	if len(strings.Fields(arg)) > 1 {
+		return runtime.Intent{}, fmt.Errorf("stats: takes at most one window argument (day|week|all)")
+	}
+	w, ok := runtime.ParseUsageWindow(arg)
+	if !ok {
+		return runtime.Intent{}, fmt.Errorf("stats: unknown window %q (want day|week|all)", arg)
+	}
+	return runtime.Intent{Kind: runtime.IntentStats, Window: string(w)}, nil
+}
+
 // parseLSP implements /lsp's subcommand grammar (T8.2): bare (or "status")
 // lists the server state; enable|disable [server] writes the project-layer
 // switch. The server name is optional — there is one configured server today

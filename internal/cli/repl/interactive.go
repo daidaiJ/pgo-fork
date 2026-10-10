@@ -136,6 +136,11 @@ type Options struct {
 	// nil when tools are off. Run binds the session id onto it so task children
 	// settle into this session's sidecar and can be resumed.
 	Subagents *runtime.SubagentStore
+	// Usage is the session usage recorder (O1/T7.3c, run.Env.Usage); nil when
+	// tools are off. Run binds the session id onto it and wires it as the loop's
+	// RecordUsage sink, so /usage and /stats read the same ledger the /status
+	// telemetry and the status line do.
+	Usage *runtime.UsageRecorder
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -210,6 +215,9 @@ func Run(opts Options) error {
 	// dispatched from here settle into <sessionsRoot>/<sessionID>.subagents/ and
 	// can be resumed. A nil store (or an unbound one) keeps the resume face off.
 	opts.Subagents.BindSession(header.ID)
+	// Bind the usage ledger to the same session (O1/T7.3c): every accounted turn
+	// (sub-agent turns included) accrues to this session's file.
+	opts.Usage.BindSession(header.ID)
 
 	// live holds the run configuration that a control command (e.g. /model) may
 	// mutate mid-session. streamRun reads it on each prompt so a model switch
@@ -402,6 +410,7 @@ func Run(opts Options) error {
 		toolPlan:   opts.ToolPlan,
 		permEngine: permEngine,
 		mcpMgr:     opts.MCP,
+		usage:      opts.Usage,
 		skillsView: skillsView,
 		surface:    surface,
 	}

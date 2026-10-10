@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/statline"
 )
 
 // SchemaVersion is the current session file schema version. It is written into
@@ -660,6 +661,9 @@ func (s *Store) Delete(id string) error {
 	// a later session reusing the id cannot inherit them. The literal mirrors
 	// runtime.SubagentsSidecarSuffix — the packages do not import each other.
 	_ = os.RemoveAll(filepath.Join(s.dir, id+".subagents"))
+	// The usage ledger (<id>.usage.jsonl, O1/T7.3c) is the session's token
+	// accounting; it goes with the session for the same reason.
+	_ = os.Remove(statline.UsagePath(s.dir, id))
 	return nil
 }
 
@@ -793,6 +797,9 @@ func (s *Store) listHeaders(includePeek bool) ([]SessionHeader, error) {
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
+		}
+		if statline.IsUsageFileName(e.Name()) {
+			continue // usage ledger sidecar (O1/T7.3c), not a session
 		}
 		id := strings.TrimSuffix(e.Name(), ".jsonl")
 		if !includePeek && IsPeek(id) {

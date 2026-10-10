@@ -42,8 +42,8 @@ func TestBuiltinCatalogHasNoSilentStubs(t *testing.T) {
 		"btw", "clone", "compact", "context", "copy", "dream", "dump",
 		"exit", "export", "fork", "goal", "help", "import", "lsp", "mcp", "memory",
 		"mode", "model", "models", "quit", "rebuild", "remote-control", "rename",
-		"rewind", "session", "sessions", "shell", "skills", "status", "think",
-		"tree",
+		"rewind", "session", "sessions", "shell", "skills", "stats", "status",
+		"think", "tree", "usage",
 	}
 	var got []string
 	for _, c := range reg.List() {

@@ -95,6 +95,9 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	// dispatched from a headless run settles into this session's sidecar and can
 	// be resumed by a later run. A nil store keeps the resume face off.
 	env.Subagents.BindSession(hs.header.ID)
+	// Bind the usage ledger to the same session (O1/T7.3c) so its per-turn
+	// records (sub-agent turns included) accrue to this session's file.
+	env.Usage.BindSession(hs.header.ID)
 	messages := append(priorMsgs, agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: promptContent})
 	agentCtx := &agentcore.AgentContext{
 		SystemPrompt: hs.header.SystemPrompt,
@@ -127,6 +130,10 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	runCfg.MaxOutputTokens = cli.ResolveMaxOutputTokens(env.Provider, p.Model)
 	runCfg.Compaction = compaction.DefaultCompactionSettings
 	runCfg.SessionID = hs.header.ID
+	// Account each turn's usage into the session ledger (O1/T7.3c). The sink is
+	// the session-bound recorder, so a later run (or the interactive front-ends)
+	// reads the same cumulative numbers.
+	runCfg.RecordUsage = env.Usage.Record
 	// Route auto-compaction checkpoints to the shared memory root so a rebuild can
 	// recover the pre-watermark prefix (no-op when memory is disabled → empty root).
 	runCfg.MemoryRoot = run.MemoryRootFromTools(env.Tools)

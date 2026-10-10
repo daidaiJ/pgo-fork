@@ -201,6 +201,11 @@ type SubAgentSpec struct {
 	// (a cross-process resume after a model change); a nil resolver makes such a
 	// resume degrade to a fresh run (P2) rather than silently un-pinning.
 	NewRunConfigFor func(SubAgentTarget) (RunConfig, error)
+	// Usage, when non-nil, is the parent session's usage recorder (O1/T7.3c):
+	// each child turn's record is attributed to the parent session with
+	// Subagent/AgentID set, so the session totals include sub-agent overhead.
+	// nil keeps the child's own sink (usually none) in place.
+	Usage *UsageRecorder
 }
 
 // subAgentArgs is the JSON argument shape for a sub-agent tool call: a
@@ -383,6 +388,13 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id string, a subAge
 		}, nil
 	}
 	h := t.streamHandler(ctx, id, a.Description, onUpdate)
+	// Attribute the child's turns to the parent session's usage ledger. The
+	// child config's own sink (if a driver ever sets one) is replaced rather than
+	// chained: the parent sink is the only ledger there is, and chaining would
+	// double-count the turn.
+	if t.spec.Usage != nil {
+		plan.cfg.RecordUsage = t.spec.Usage.ChildSink(id)
+	}
 	var childCtx *agentcore.AgentContext
 	runChild := func(p childPlan) (*agentcore.AssistantMessage, error) {
 		childCtx = &agentcore.AgentContext{
@@ -400,6 +412,9 @@ func (t *SubAgentTool) executeGoroutine(ctx context.Context, id string, a subAge
 	if plan.resumed && derr == nil && ctx.Err() == nil && rateLimitFailure(final) {
 		if fp, fail := t.freshPlan(a); fail == nil {
 			fp.note = degradeNote(id, plan.target.Model, rateLimitDegradeReason)
+			if t.spec.Usage != nil {
+				fp.cfg.RecordUsage = t.spec.Usage.ChildSink(id)
+			}
 			final, derr = runChild(fp)
 			plan = fp
 		}

@@ -101,6 +101,15 @@ type Env struct {
 	// session exists (BindSession), which scopes each child transcript to that
 	// session; without a bind the resume face stays inert.
 	Subagents *runtime.SubagentStore
+
+	// Usage persists the session's per-turn usage records (O1/T7.3c). It is
+	// created here (not by the front-end) so the task tool and the skill-as-tool
+	// children can attribute their turns to the parent session; front-ends bind
+	// their session id onto it (BindSession) beside Subagents and use it as the
+	// loop's RecordUsage sink, so the status line, /usage and /stats all read one
+	// ledger. It exists even under --no-tools: accounting does not depend on the
+	// tool face (a no-tools session still spends tokens).
+	Usage *runtime.UsageRecorder
 }
 
 // SetupEnv resolves the provider for model/baseURL, builds the tool set rooted
@@ -174,6 +183,13 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 	// subStore persists settled sub-agent transcripts beside the session files
 	// (T7.1). It stays nil under --no-tools (no task tool = no sub-agents).
 	var subStore *runtime.SubagentStore
+	// usageRec persists the session's per-turn usage records (O1/T7.3c). It is
+	// created here (not by the front-end) so the task tool AND the skill-as-tool
+	// children can attribute their turns to the parent session's ledger; the
+	// front-end binds the session id onto it and wires it as the loop's
+	// RecordUsage sink. It exists even under --no-tools: accounting does not
+	// depend on the tool face (a no-tools session still spends tokens).
+	usageRec := runtime.NewUsageRecorder(sessionsDir())
 	// Wire the generic task tool (US-002, #454) unless tools are disabled. It
 	// dispatches general-purpose sub-agents that reuse the resolved provider
 	// stream/model. Each spawn gets a fresh child RunConfig whose registry is the
@@ -244,6 +260,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 			Store:           subStore,
 			Target:          subagentTarget(model, baseURL, protocol, resolvedName, proxy, prov, maxCtx),
 			NewRunConfigFor: newRunConfigFor,
+			Usage:           usageRec,
 		}))
 	}
 	// Wire the session-local reminder scheduler (issue #565) unless tools are
@@ -355,6 +372,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 			}
 			spec := s.SubAgentSpec(skillFace, skillChildRunConfig(s, model, baseURL, protocol, prov, resolvedName, apiKey, childCreds, toolPlan, toolsCfg))
 			spec.Sem = sem
+			spec.Usage = usageRec // attribute skill sub-agent turns to the session ledger (O1/T7.3c)
 			tools = append(tools, runtime.NewSubAgentTool(spec))
 		}
 	}
@@ -463,6 +481,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 		Memory:       memStore,
 		Schedule:     sched,
 		Subagents:    subStore,
+		Usage:        usageRec,
 		MaxContext:   maxCtx,
 		ToolPlan:     toolPlan,
 	}, nil

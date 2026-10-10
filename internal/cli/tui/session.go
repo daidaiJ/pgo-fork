@@ -96,6 +96,12 @@ type runSession struct {
 	// reads it back through the Host contract.
 	telemetry *cli.TelemetryHolder
 
+	// usage is the session usage recorder (O1/T7.3c): the run loop records each
+	// turn into it and the usage row, /usage and /stats read the same ledger.
+	// It is bound to the session id at assembly (beside Subagents); nil when
+	// tools are off.
+	usage *runtime.UsageRecorder
+
 	// memoryRoot is the persistent-memory Store root (empty when memory is
 	// disabled). It routes auto-compaction checkpoints and /rebuild recovery to
 	// <memoryRoot>/sessions/<id>/, the canonical checkpoint location.
@@ -230,6 +236,11 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 	// This is also the session-switch path, so a /sessions pick re-scopes the
 	// sidecar to the newly active session.
 	opts.Subagents.BindSession(header.ID)
+	// Bind the session usage ledger to the same session (O1/T7.3c): the loop's
+	// per-turn records (sub-agent turns included) accrue to this session's file,
+	// which is what makes the usage row and /usage cumulative across runs and
+	// across a resume.
+	opts.Usage.BindSession(header.ID)
 
 	live := &cli.LiveConfig{
 		Model:           opts.Model,
@@ -276,6 +287,7 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 		trust:      mgr,
 		shellguard: opts.Shellguard,
 		telemetry:  cli.NewTelemetryHolder(),
+		usage:      opts.Usage,
 		curLeaf:    curLeaf,
 		persisted:  len(history),
 		memoryRoot: run.MemoryRootFromTools(opts.Tools),
@@ -412,6 +424,10 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 	// the branch tip (after the last persisted entry), keeping the tree
 	// append-only under persist()'s plain tail append.
 	cfg.PersistedCount = func() int { return s.persisted }
+	// Account each turn's usage into the session ledger (O1/T7.3c). The sink is
+	// the session-bound recorder, so the usage row, /usage and /stats all read
+	// the same cumulative ledger; nil (tools off) leaves accounting off.
+	cfg.RecordUsage = s.usage.Record
 	// Per-turn wiring of the tool-execution + Stop seams; nil dispatcher is a
 	// no-op so the hot path pays nothing when no hooks are configured (FR-18).
 	if s.dispatcher != nil {

@@ -6,10 +6,12 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/compaction"
 	"github.com/smallnest/pigo/internal/provider"
+	"github.com/smallnest/pigo/internal/statline"
 )
 
 // streamRecoveryHint is the projection-only recovery prompt folded into the
@@ -111,6 +113,14 @@ type LoopConfig struct {
 
 	// Extra is forwarded to StreamConfig.Extra.
 	Extra map[string]any
+
+	// RecordUsage, when non-nil, receives one usage record per accounted
+	// provider turn (O1 / T7.3c): the four token buckets, the turn's timing, the
+	// connect-retry count and the outcome. The loop is the single recording
+	// point — it measures first-byte latency, counts retries and knows the final
+	// message — and the driver supplies the sink that persists the record into
+	// the session's ledger. nil disables accounting (zero overhead).
+	RecordUsage func(statline.Record)
 }
 
 // streamAssistantResponse runs one assistant turn: it builds the request from
@@ -124,7 +134,37 @@ type LoopConfig struct {
 // compaction pipeline's RequestView (microcompact pass + projection + repair)
 // so the projection happens exactly once per request. A nil view (standalone
 // or test callers) is derived here from the live list.
-func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc, view agentcore.MessageList) (agentcore.AssistantMessage, error) {
+func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentContext, cfg LoopConfig, emit agentcore.EmitFunc, view agentcore.MessageList) (settled agentcore.AssistantMessage, retErr error) {
+	// Usage accounting (O1 / T7.3c): the loop is the one place that sees the
+	// request's start time, its connect retries and its final message, so it is
+	// the recording point. The deferred call fires on every exit path — a
+	// successful turn, a provider error turn, and a cancelled stream — and
+	// measures the record from what the turn actually produced.
+	startedAt := time.Now()
+	var (
+		retries   int
+		firstByte time.Time
+	)
+	defer func() {
+		if cfg.RecordUsage == nil {
+			return
+		}
+		var ttft time.Duration
+		if !firstByte.IsZero() {
+			ttft = firstByte.Sub(startedAt)
+		}
+		r := statline.FromTurn(settled, statline.Timing{
+			TTFT:        ttft,
+			Duration:    time.Since(startedAt),
+			ThinkChars:  len(agentcore.ContentToThinking(settled.Content)),
+			StreamChars: len(agentcore.ContentToText(settled.Content)),
+			Retries:     retries,
+		}, cfg.Model, cfg.Provider)
+		if retErr != nil {
+			r.Err = true
+		}
+		cfg.RecordUsage(r)
+	}()
 	// 1. the request view (T3.3 marker-entry model): compaction markers
 	// collapse the summarized prefix, microcompact markers evict old tool
 	// results, dangling tool calls get synthetic results. The raw context is
@@ -184,6 +224,8 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 		APIKey:        key,
 		ThinkingLevel: cfg.ThinkingLevel,
 		Extra:         extra,
+		// Account connect-time retry resubmissions toward this turn's record.
+		OnRetry: func() { retries++ },
 	})
 	if err != nil {
 		// Early "cannot build stream" failure: synthesize a terminal message so
@@ -210,11 +252,13 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 				return agentcore.AssistantMessage{}, err
 			}
 		case provider.StreamTextEvent:
+			markFirstByte(&firstByte)
 			backfill(e.Partial)
 			if err := emit(ctx, agentcore.MessageUpdateEvent{Message: e.Partial, AssistantMessageEvent: e}); err != nil {
 				return agentcore.AssistantMessage{}, err
 			}
 		case provider.StreamThinkingEvent:
+			markFirstByte(&firstByte)
 			backfill(e.Partial)
 			if err := emit(ctx, agentcore.MessageUpdateEvent{Message: e.Partial, AssistantMessageEvent: e}); err != nil {
 				return agentcore.AssistantMessage{}, err
@@ -240,15 +284,23 @@ func streamAssistantResponse(ctx context.Context, agentCtx *agentcore.AgentConte
 	}
 
 	// 9. stream ended without done/error: fall back to the stream result.
-	final, resErr := stream.Result(ctx)
+	doneMsg, resErr := stream.Result(ctx)
 	if resErr != nil {
 		return newErrorAssistantMessage(cfg, resErr), nil
 	}
-	finalizeMessage(agentCtx, final, &addedPartial)
-	if err := emit(ctx, agentcore.MessageEndEvent{Message: final}); err != nil {
+	finalizeMessage(agentCtx, doneMsg, &addedPartial)
+	if err := emit(ctx, agentcore.MessageEndEvent{Message: doneMsg}); err != nil {
 		return agentcore.AssistantMessage{}, err
 	}
-	return final, nil
+	return doneMsg, nil
+}
+
+// markFirstByte records the first streamed reply/reasoning byte's time — the
+// TTFT anchor of the turn's usage record — only once per turn.
+func markFirstByte(anchor *time.Time) {
+	if anchor.IsZero() {
+		*anchor = time.Now()
+	}
 }
 
 // finalizeMessage replaces the placeholder partial with the final message, or

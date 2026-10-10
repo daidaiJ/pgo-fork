@@ -74,6 +74,9 @@ type TaskToolConfig struct {
 	// NewRunConfigFor re-resolves a provider for a resume whose source triple
 	// differs from Target (a cross-process resume after a model change).
 	NewRunConfigFor func(SubAgentTarget) (RunConfig, error)
+	// Usage, when non-nil, is the parent session's usage recorder: each task
+	// child's turns are attributed to the parent session's ledger (O1/T7.3c).
+	Usage *UsageRecorder
 }
 
 // NewTaskTool builds the generic `task` sub-agent tool. factory produces a fresh
@@ -102,6 +105,7 @@ func NewTaskToolWithConfig(factory func() RunConfig, sem chan struct{}, cfg Task
 		Store:           cfg.Store,
 		Target:          cfg.Target,
 		NewRunConfigFor: cfg.NewRunConfigFor,
+		Usage:           cfg.Usage,
 	})
 }
 

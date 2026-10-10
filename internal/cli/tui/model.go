@@ -331,6 +331,10 @@ func (m Model) withSession(s *runSession, history []agentcore.Message) Model {
 	// from the same live estimate the /context panel falls back to, instead of
 	// waiting for the end-of-run TelemetryEvent.
 	m.header.setTelemetry(estimateTokens(s.agentCtx.SystemPrompt)+messageTokens(s.agentCtx.Messages), s.live.ContextWindow)
+	// Seed the usage row with the session's cumulative accounting (O1/T7.3c) so
+	// a resumed session shows its totals from the first frame instead of
+	// restarting at zero. The live per-turn anchors stay reset.
+	m.statusBar.usage.seed(s.usage.Stats())
 	m.transcript.addBanner(renderBanner(m.theme, m.opts, m.cwd))
 	seedTranscript(&m.transcript, history)
 	return m
@@ -513,14 +517,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnEndMsg:
 		m.transcript.finalizeTurn(msg.msg)
-		// Fold the turn's usage payload into the run accounting (S12 usage row)
-		// and anchor the next turn's elapsed readout. A turn without a usage
-		// payload still counts toward the ✓ call tally.
+		// Usage row (O1/T7.3c): the loop recorded this turn into the session
+		// ledger while it settled (timing, retries and sub-agent attribution
+		// included), so the row re-aggregates the ledger and reports the
+		// session-cumulative numbers /usage shows. A session-less model (tests,
+		// pure construction) has no ledger, so the row just shows the model.
 		u := msg.msg.Usage
-		if u == nil {
-			m.statusBar.usage.foldTurn(0, 0, 0)
-		} else {
-			m.statusBar.usage.foldTurn(u.InputTokens, u.OutputTokens, u.CacheReadTokens)
+		if m.session != nil && m.session.usage != nil {
+			m.statusBar.usage.seed(m.session.usage.Stats())
+		}
+		m.statusBar.usage.endTurn()
+		if u != nil {
 			// Refresh the header readout per turn (S1/S2): input + cache buckets
 			// + output approximates the context the next request will see, so the
 			// figure tracks a long agentic run instead of jumping only at run end.
@@ -1341,6 +1348,26 @@ func (m Model) executor() *prompts.Executor {
 		ex.Session = func() string {
 			var b bytes.Buffer
 			s.renderSession(&b)
+			return strings.TrimRight(b.String(), "\n")
+		}
+		// /usage and /stats read the session usage ledger (O1/T7.3c) through the
+		// shared renderers; the TUI folds the returned text into a system block.
+		ex.Usage = func() string {
+			var b bytes.Buffer
+			model := ""
+			if s.live != nil {
+				model = s.live.Model
+			}
+			cli.WriteUsageReport(&b, s.usage.Stats(), cli.UsageReportOptions{
+				SessionID: s.header.ID,
+				Model:     model,
+			})
+			return strings.TrimRight(b.String(), "\n")
+		}
+		ex.Stats = func(window string) string {
+			w, _ := runtime.ParseUsageWindow(window)
+			var b bytes.Buffer
+			cli.WriteStatsReport(&b, cli.UsageLedger(s.store.Dir()), w, time.Now())
 			return strings.TrimRight(b.String(), "\n")
 		}
 	}

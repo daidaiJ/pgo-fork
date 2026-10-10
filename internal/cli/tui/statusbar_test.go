@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/cli/ui"
+	"github.com/smallnest/pigo/internal/statline"
 )
 
 // newTestStatusBar builds a usage row with a fixed model name so tests do not
@@ -15,23 +16,37 @@ func newTestStatusBar() statusBar {
 	return newStatusBar(DefaultTheme(), opts, "/tmp/project")
 }
 
+// usageTurn builds one settled-turn record for the status bar's ledger view.
+func usageTurn(in, out, cacheRead int) statline.Record {
+	return statline.Record{
+		At:         time.Now().UTC(),
+		Model:      "claude-opus",
+		Input:      in,
+		Output:     out,
+		CacheRead:  cacheRead,
+		TTFTMs:     800,
+		DurationMs: 3000,
+	}
+}
+
 func TestUsageRowRendersModelAndStats(t *testing.T) {
 	s := newTestStatusBar()
 	now := time.Now()
-	s.usage.beginRun(now.Add(-time.Minute))
-	s.usage.markFirstDelta(now.Add(-50 * time.Second))
-	s.usage.foldTurn(43000, 400, 8000)
-	s.usage.foldTurn(700, 280, 0)
+	s.usage.seed(statline.Aggregate([]statline.Record{
+		usageTurn(43000, 400, 8000),
+		usageTurn(700, 280, 0),
+	}))
 
 	out := s.Render(200, now)
 	for _, want := range []string{
 		"claude-opus (test-provider)", // model · provider
-		"✓ 2",                          // completed API turns
-		"in 44K",                     // summed prompt tokens
-		"out 680",                      // summed completion tokens
-		"cache",                        // cache hit share (observed)
-		"ttft",                         // first-token latency
-		"tok/s",                        // throughput
+		"✓ 2",                         // completed API turns
+		"in 44K",                      // summed prompt tokens
+		"out 680",                     // summed completion tokens
+		"cache",                       // cache hit share (observed)
+		"miss 1",                      // the second turn read no cache
+		"ttft",                        // last turn's first-token latency
+		"tok/s",                       // last turn's throughput
 	} {
 		if !strings.Contains(stripANSI(out), want) {
 			t.Errorf("usage row missing %q; got %q", want, stripANSI(out))
@@ -39,6 +54,43 @@ func TestUsageRowRendersModelAndStats(t *testing.T) {
 	}
 	if w := ui.Width(stripANSI(out)); w > 200 {
 		t.Errorf("render width %d exceeds terminal width 200", w)
+	}
+}
+
+// TestUsageRowShowsRetriesAndFailures pins the two grok segments O1 added
+// (ApiRetries `↻ n`, ApiCalls failure tally `✗ n`): both appear only when they
+// happened.
+func TestUsageRowShowsRetriesAndFailures(t *testing.T) {
+	s := newTestStatusBar()
+	now := time.Now()
+	recs := []statline.Record{usageTurn(1000, 100, 900), usageTurn(1000, 100, 900)}
+	recs[0].Retries = 2
+	recs[1].Err = true
+	s.usage.seed(statline.Aggregate(recs))
+
+	out := stripANSI(s.Render(200, now))
+	for _, want := range []string{"✓ 1", "✗ 1", "↻ 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage row missing %q; got %q", want, out)
+		}
+	}
+	// A clean session shows neither.
+	s.usage.seed(statline.Aggregate([]statline.Record{usageTurn(1000, 100, 900)}))
+	out = stripANSI(s.Render(200, now))
+	if strings.Contains(out, "↻") || strings.Contains(out, "✗") {
+		t.Errorf("zero-hide failed: %q", out)
+	}
+}
+
+// TestUsageRowLiveTTFTBeforeFirstRecord covers the mid-turn case: with no
+// settled record yet, the perf segment shows the in-flight turn's elapsed TTFT.
+func TestUsageRowLiveTTFTBeforeFirstRecord(t *testing.T) {
+	s := newTestStatusBar()
+	now := time.Now()
+	s.usage.beginRun(now.Add(-time.Minute))
+	s.usage.markFirstDelta(now.Add(-50 * time.Second))
+	if out := stripANSI(s.Render(200, now)); !strings.Contains(out, "10s") && !strings.Contains(out, "10000ms") {
+		t.Errorf("expected the live TTFT (~10s) in the row: %q", out)
 	}
 }
 
@@ -61,12 +113,11 @@ func TestUsageRowHidesUnobservedSegments(t *testing.T) {
 func TestUsageRowShowsColdCache(t *testing.T) {
 	s := newTestStatusBar()
 	now := time.Now()
-	s.usage.beginRun(now)
-	s.usage.foldTurn(500, 100, 0)
+	s.usage.seed(statline.Aggregate([]statline.Record{usageTurn(500, 100, 0)}))
 	if out := stripANSI(s.Render(120, now)); !strings.Contains(out, "cache 0%") {
 		t.Errorf("cache segment should read 0%% when no cache tokens are reported: %q", out)
 	}
-	s.usage.foldTurn(500, 100, 400)
+	s.usage.seed(statline.Aggregate([]statline.Record{usageTurn(500, 100, 0), usageTurn(500, 100, 400)}))
 	if out := stripANSI(s.Render(120, now)); !strings.Contains(out, "cache 29%") {
 		t.Errorf("cache segment should report the hit share (400/1400): %q", out)
 	}
@@ -91,9 +142,7 @@ func TestUsageRowThinkingShare(t *testing.T) {
 func TestUsageRowVeryNarrowNeverOverflows(t *testing.T) {
 	s := newTestStatusBar()
 	now := time.Now()
-	s.usage.beginRun(now.Add(-time.Minute))
-	s.usage.markFirstDelta(now.Add(-50 * time.Second))
-	s.usage.foldTurn(91000, 24000, 40000)
+	s.usage.seed(statline.Aggregate([]statline.Record{usageTurn(91000, 24000, 40000)}))
 
 	for _, width := range []int{1, 2, 3, 5, 8, 12} {
 		out := s.Render(width, now)

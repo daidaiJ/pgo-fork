@@ -48,8 +48,11 @@ const goalMaxNoProgress = 3
 
 // runGoal parses and dispatches a /goal invocation. setCancel publishes the
 // active run's cancel func so the REPL's SIGINT handler can interrupt an
-// autonomous run (same plumbing as a normal turn).
-func RunGoal(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, line string) {
+// autonomous run (same plumbing as a normal turn). usage, when non-nil, is the
+// session usage recorder: the autonomous loop's turns are accounted into the
+// same ledger the interactive turns use (O1/T7.3c), so /usage and /stats see a
+// goal session's real cost.
+func RunGoal(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, usage *runtime.UsageRecorder, line string) {
 	args := strings.TrimSpace(strings.TrimPrefix(line, "/goal"))
 
 	switch {
@@ -77,7 +80,7 @@ func RunGoal(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, l
 		}
 		host.Goal().Resume()
 		fmt.Fprintf(out, "resuming goal: %s\n", ui.OneLine(snap.Objective))
-		runGoalLoop(setCancel, out, host)
+		runGoalLoop(setCancel, out, host, usage)
 		return
 	}
 
@@ -97,7 +100,7 @@ func RunGoal(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, l
 	} else {
 		fmt.Fprintf(out, "goal set: %s\n", ui.OneLine(objective))
 	}
-	runGoalLoop(setCancel, out, host)
+	runGoalLoop(setCancel, out, host, usage)
 }
 
 // newGoalID returns a short unique id for a goal (used to key goal_complete's
@@ -191,7 +194,7 @@ func goalFollowUpDecision(snap agenttool.GoalSnapshot) (cont bool, terminal agen
 // the run or goalFollowUpDecision trips a guard. On return it prints the outcome
 // and persists the turn. The run reuses the REPL's SIGINT cancel plumbing via
 // setCancel.
-func runGoalLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Host) {
+func runGoalLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Host, usage *runtime.UsageRecorder) {
 	goalReg := goalToolRegistry(host.Registry(), host.Goal())
 	reminders := goalReminders(host.Registry(), host.Goal())
 
@@ -209,14 +212,17 @@ func runGoalLoop(setCancel func(context.CancelFunc), out io.Writer, host cli.Hos
 
 	cfg := runtime.RunConfig{
 		LoopConfig: runtime.LoopConfig{
-			Model:         host.Live().Model,
-			Provider:      host.Live().ProviderName,
-			ThinkingLevel: host.Live().ThinkingLevel,
-			Stream:        provider.StreamFnFromProvider(host.Live().Provider),
+			Model:           host.Live().Model,
+			Provider:        host.Live().ProviderName,
+			ThinkingLevel:   host.Live().ThinkingLevel,
+			Stream:          provider.StreamFnFromProvider(host.Live().Provider),
 			GetAPIKey:       host.Creds().GetAPIKey,
 			ContextWindow:   host.Live().ContextWindow,
 			MaxOutputTokens: host.Live().MaxOutputTokens,
 			Compaction:      compaction.DefaultCompactionSettings,
+			// Account each autonomous turn into the session usage ledger
+			// (O1/T7.3c), same as an interactive turn.
+			RecordUsage: usage.Record,
 		},
 		Batch: agenttool.BatchConfig{
 			ToolExecutorConfig: agenttool.ToolExecutorConfig{

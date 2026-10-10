@@ -480,6 +480,22 @@ func RegisterLiveCommands(reg *runtime.SlashRegistry, live *cli.LiveConfig, cred
 		Description: "write the last failed provider request (raw request + response) to the dump directory",
 		Parse:       parseDump,
 	})
+	// /usage and /stats are the usage face (O1/T7.3c): /usage reads this
+	// session's cumulative accounting (the same records the status line sums),
+	// /stats aggregates every session's ledger over a time window. Both are
+	// human-audience, text-only commands — the Execute faces are the Executor's
+	// Usage/Stats hooks (the REPL prints, the TUI renders a system block).
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:        "usage",
+		Description: "show this session's token accounting: calls, tokens, cache and think share, last-turn perf",
+		Parse:       parseUsage,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:         "stats",
+		ArgumentHint: "[day|week|all]",
+		Description:  "aggregate the local usage ledger by model over a time window (default week)",
+		Parse:        parseStats,
+	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:        "help",
 		Description: "list available slash commands",

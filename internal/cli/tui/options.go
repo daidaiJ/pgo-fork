@@ -113,4 +113,9 @@ type Options struct {
 	// binds the session id onto it so task children settle into this session's
 	// sidecar and can be resumed.
 	Subagents *runtime.SubagentStore
+	// Usage is the session usage recorder (O1/T7.3c, run.Env.Usage). The session
+	// creation path binds the session id onto it and wires it as the loop's
+	// RecordUsage sink, so the usage row, /usage and /stats read one ledger.
+	// Nil in tests / session-less construction; its methods are nil-safe.
+	Usage *runtime.UsageRecorder
 }

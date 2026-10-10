@@ -7,6 +7,8 @@
 
 package runtime
 
+import "strings"
+
 // Audience declares who may invoke a command. It is the model-authored-input
 // gate (grok ModelAuthoredEligibility alignment): fail-closed — a command is
 // human-only unless it explicitly opts in.
@@ -106,6 +108,11 @@ const (
 	// IntentRebuild reconstructs the conversation context from the session's
 	// persisted checkpoint (falling back to summarizing compaction) — /rebuild.
 	IntentRebuild
+	// IntentUsage renders this session's cumulative token accounting — /usage.
+	IntentUsage
+	// IntentStats renders the cross-session usage ledger over a time window —
+	// /stats [day|week|all].
+	IntentStats
 	// IntentDump writes the most recent failed provider request (raw request +
 	// response) to the dump directory — /dump.
 	IntentDump
@@ -172,6 +179,10 @@ func (k IntentKind) String() string {
 		return "mode-show"
 	case IntentModeSet:
 		return "mode-set"
+	case IntentUsage:
+		return "usage"
+	case IntentStats:
+		return "stats"
 	default:
 		return "unknown"
 	}
@@ -222,4 +233,36 @@ type Intent struct {
 	// Compact{user_context}). Reserved: the compactor takes no focus argument
 	// yet (spec deviation register), so Parse currently refuses arguments.
 	UserContext string
+	// IntentStats: the normalized time window (day|week|all); empty means the
+	// default (week).
+	Window string
+}
+
+// UsageWindow is the /stats time-window vocabulary: the Parse face validates
+// arguments against it and the front-end renderer resolves it to a lower bound.
+type UsageWindow string
+
+const (
+	// UsageWindowDay covers the last 24 hours.
+	UsageWindowDay UsageWindow = "day"
+	// UsageWindowWeek covers the last 7 days (the default).
+	UsageWindowWeek UsageWindow = "week"
+	// UsageWindowAll covers the whole ledger.
+	UsageWindowAll UsageWindow = "all"
+)
+
+// ParseUsageWindow maps a /stats argument to a window keyword. An empty or
+// unrecognized value yields the default (week) and false, so a caller can tell a
+// defaulted window from an explicit one.
+func ParseUsageWindow(arg string) (UsageWindow, bool) {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case string(UsageWindowDay):
+		return UsageWindowDay, true
+	case string(UsageWindowWeek):
+		return UsageWindowWeek, true
+	case string(UsageWindowAll):
+		return UsageWindowAll, true
+	default:
+		return UsageWindowWeek, false
+	}
 }

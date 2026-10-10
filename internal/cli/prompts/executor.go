@@ -58,6 +58,12 @@ type Executor struct {
 	// back to the recorder's in-flight session, published by the run loop, and
 	// then to "unknown-session".
 	DumpSession func() string
+	// Usage renders this session's cumulative token accounting (/usage) from the
+	// session usage ledger (O1/T7.3c). Nil → unavailable notice.
+	Usage func() string
+	// Stats renders the cross-session ledger aggregate (/stats) for the given
+	// window keyword ("" = the default week). Nil → unavailable notice.
+	Stats func(window string) string
 }
 
 // Execute runs one parsed intent and returns the outcome to project.
@@ -220,6 +226,16 @@ func (x *Executor) execute(it runtime.Intent) string {
 		return x.Rebuild()
 	case runtime.IntentDump:
 		return x.dumpLastFailure()
+	case runtime.IntentUsage:
+		if x.Usage == nil {
+			return "(usage unavailable: no active session)"
+		}
+		return x.Usage()
+	case runtime.IntentStats:
+		if x.Stats == nil {
+			return "(stats unavailable: no session store in this front-end)"
+		}
+		return x.Stats(it.Window)
 	default:
 		return fmt.Sprintf("unknown intent %s", it.Kind)
 	}

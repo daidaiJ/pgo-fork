@@ -180,6 +180,56 @@ func TestTransportRetryOn503(t *testing.T) {
 	}
 }
 
+// TestTransportOnRetryObserver verifies the retry observer (O1/T7.3c) fires once
+// per resubmission and not at all on a first-attempt success.
+func TestTransportOnRetryObserver(t *testing.T) {
+	t.Setenv("PIGO_STREAM_IDLE_TIMEOUT", "5s")
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) <= 2 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {\"done\":true}\n\n"))
+	}))
+	defer srv.Close()
+
+	retries := 0
+	stream, err := StreamRequest(context.Background(), TransportConfig{
+		NewRequest:        newReqFn(srv.URL),
+		Decoder:           &jsonDecoder{},
+		OnRetry:           func() { retries++ },
+		MaxConnectRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("retry should succeed: %v", err)
+	}
+	_, _ = stream.Result(context.Background())
+	if retries != 2 {
+		t.Errorf("OnRetry fired %d times, want 2 (one per 503 resubmission)", retries)
+	}
+
+	// A clean first attempt never fires the observer.
+	ok := sseServer(t, "data: {\"done\":true}\n\n")
+	defer ok.Close()
+	clean := 0
+	stream, err = StreamRequest(context.Background(), TransportConfig{
+		NewRequest: newReqFn(ok.URL),
+		Decoder:    &jsonDecoder{},
+		OnRetry:    func() { clean++ },
+	})
+	if err != nil {
+		t.Fatalf("clean request: %v", err)
+	}
+	_, _ = stream.Result(context.Background())
+	if clean != 0 {
+		t.Errorf("OnRetry fired %d times on a first-attempt success, want 0", clean)
+	}
+}
+
 // TestTransportRetryExhausted verifies a persistently retryable status returns
 // an early error after exhausting retries.
 func TestTransportRetryExhausted(t *testing.T) {
