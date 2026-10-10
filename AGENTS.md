@@ -5,7 +5,7 @@
 
 ## 🔄 Handoff 摘要
 
-### T8.2 LSP 支持批 1（internal/lsp 内核 + overlay 编辑回灌 + /lsp + 配置分层）— 已落地待提交
+### T8.2 LSP 支持批 1（internal/lsp 内核 + overlay 编辑回灌 + /lsp + 配置分层）— 已落地并推送
 
 - **当前状态：** 2026-10-10 深夜 2 落地（feat + docs 两段提交后推送
   origin/dev）；43 包 0 FAIL（`.gtmp/t82-final.log`）；两份二进制已刷
@@ -36,22 +36,33 @@
   T8.2 + [plan/phase-8.md](wiki/port/plan/phase-8.md)（期改 ✅2·⏳1）；
   卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（深夜 2）。
 
-### T8.4 /shell 切换 + 默认 shell 运行时后端配置 — 已立项（2026-10-11 用户点名，登记待排期）
+### T8.4 /shell 切换 + 默认 shell 运行时后端配置 — 已落地并推送
 
-- **当前状态：** 立项登记（无代码改动）。参照 = grok
-  `xai-grok-config/src/shell.rs`（config `[shell] backend` > `GROK_SHELL`
-  env > 自动探测；Windows 级联 pwsh 优先——MSYS 路径转换吃 `/` flag；
-  **grok 无 /shell 命令面**，pigo 增量 = T7.7 契约声明命令）。pigo 现状 =
-  `BashTool.Shell` 字段存在但无接线（含显式 Shell 恒 `-c` 的形态坑），
-  Windows 探测级联 bash→powershell→cmd（与 grok 相反）。
-- **要做草案 + 待拍板五条**：config `[shell]` 表 + `PIGO_SHELL` 覆盖链 /
-  装配注入 + flag 形态坑修复 / `/shell` 声明命令（新 Projection，面板照
-  /mcp//lsp）/ shellguard 兼容口径——待拍板 = Windows 级联是否改 pwsh
-  优先（涉模型 bash 语法教学）、切换生效时机、项目层是否允许（trust 门）、
-  shellguard 覆盖、工具名 bash 保持或别名。
-- **详情指针：** [plan/phase-8.md](wiki/port/plan/phase-8.md) T8.4 +
-  [implementation-plan.md](wiki/port/implementation-plan.md) 第 8 期行
-  （✅2 · ⏳2 / 4）。
+- **当前状态：** 2026-10-11 落地（feat + docs 两段提交后推送 origin/dev）；
+  44 包 0 FAIL（`.gtmp/t84-final.log`）；两份二进制已刷（第二份 = cp）；
+  管道真机八件核验：REPL listing 双态（auto = bash current / config=pwsh
+  current）、热切 + 写盘 `[shell] backend = "pwsh"` + 新进程跨进程生效、
+  未知后端解析拒绝、`PIGO_SHELL=cmd` env 层、非法 env 启动报错、headless
+  `-p /shell` exit 2。**拍板五条（用户确认）**：级联保持 bash 优先 / 会话内
+  热切 / 只允许全局层 / 非 bash 后端跳过 guard（宽松，风险登记）/ 加 `shell`
+  别名。**同轮拍板登记**：T8.3 四条全按最小建议、dynamic-workflow 选 C +
+  硬路由排实用件后、O1 与 S3/S4 合并、上游维持现状、**D-11 = MCP 默认
+  deferred 补齐立项（对标 grok，非本期）**、subagent 派发检查随 T7.1 观察。
+- **关键证据：** ①config `[shell]` 表（backend + custom command/args）+
+  `PIGO_SHELL` > 探测；解析单源 `run.ResolveShellSettings`（未知名 exit 2）。
+  ②`BashTool` + `ShellArgs` 前缀 + `SetShellSpec` 热切缝 + **修显式 Shell 恒
+  `-c` 坑**（basename 推断 flag 形态）+ `run.SetBashShell` 三路径注入 +
+  `Env.Bash`。③**`shell` 别名**（ShellAliasTool 委托同一实例）+ 边界三处
+  能力族归一（toolpolicy deny/allow 全族、shellguard 双名过门、T5.2 规则
+  `ruleFamily`）。④`/shell` 声明命令（ProjShellPanel：TUI 面板 Space 切换 /
+  REPL listing / headless exit 2）+ `SetShellBackend` 写盘（注释保留、缺失
+  拒写同 /skills 口径）；目录钉 29→30。⑤**grok 取证（D-11 答复）**：grok
+  只对 MCP defer（常驻 search_tool + use_tool 分派，内置全直出），pigo
+  T4.1 三档即其同构物，D-11 补齐 = 对齐此形态。
+- **详情指针：** 规格 = [wiki/port/shell-switch.md](wiki/port/shell-switch.md)
+  （拍板五条 + 收敛/分叉表 + 边界登记）；任务 = implementation-plan T8.4 +
+  [plan/phase-8.md](wiki/port/plan/phase-8.md)（期改 ✅3·⏳1 / 4）；卡 =
+  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（深夜 3）。
 
 ### 实施计划分册拆分 + 期级整体状态标记（索引 + plan/ 分册）— done（wiki 侧，无代码改动）
 
@@ -73,8 +84,7 @@
   第 7 期 🔶 部分完成 =
   ✅ T7.7/T7.8、🔶 T7.3（四批已落地 / 余 S3–S7·S9 + 真机验收）与 T7.5
   （普查 + farewell ✅ / P1 清单 ⏳）、⏳ T7.1/T7.2（调研定案待实作）/T7.4/
-  T7.6；第 8 期 🔶 部分完成 = ✅ T8.1、⏳ T8.2/T8.3（T8.x 自第 7 期段移出
-  独立成册）。任务内余项显式化：T6.1 `Repair(id)` 未接线、T6.10 截图回归
+  T7.6；第 8 期 🔶 部分完成 = ✅ T8.1/T8.2/T8.4、⏳ T8.3（四条已拍板待开工）。任务内余项显式化：T6.1 `Repair(id)` 未接线、T6.10 截图回归
   待用户、T7.8 `/dump` TUI 面、T5.1 所有权校验（→ T7.1 衔接）等。
 - **详情指针：** 索引 = [wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
   （整体状态判定 + 未完结项 + 交接关联段）；分册 = `wiki/port/plan/`
@@ -217,6 +227,8 @@
   改造、修复批、原型文档批）/ §3.5 已拍板口径 / §4 待拍板清单 / §5 环境事实
 
 ### 未验证事项
+- [ ] **T8.4 TUI /shell 面板真机手感**（后端列表级联序 + `[current]` 标注 +
+      Space 切换写全局 config + 下一条命令热切生效；前置 = 无，全局开关件）
 - [ ] **T8.2 TUI /lsp 面板真机手感**（server 行状态/诊断计数 + Enter 展开
       工具行 + Space 启停写项目层；前置 = `[lsp] enabled = true` 或项目层
       开 + 目录受信）；批 2 改进切片 B1–B5 待排期（lsp-support.md §7）
@@ -251,10 +263,18 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-10 深夜 2：T8.2 LSP 支持批 1 落地**——
-  internal/lsp 内核 + overlay 编辑回灌（编辑结果内联诊断）+ /lsp 面板 +
-  配置分层 trust 门 + 5 工具默认 deferred；对标 opencode + grok 收口
-  （规格 = wiki/port/lsp-support.md，任务 = implementation-plan T8.2）。
+- **当前阶段**：**2026-10-10 深夜 3：T8.4 /shell 切换 + 默认 shell 后端配置
+  落地**——config `[shell]` 表 + PIGO_SHELL 覆盖链（全局层 only）+ 热切缝
+  （修显式 Shell 恒 `-c` 坑）+ `shell` 别名（三处能力族归一）+ /shell 三投影
+  + shellguard 非 bash 后端跳过；五条拍板当日收口（规格 =
+  wiki/port/shell-switch.md，任务 = implementation-plan T8.4，期改 ✅3·⏳1）。
+  同轮拍板：T8.3 四条、dynamic-workflow C + 硬路由、O1 与 S3/S4 合并、
+  上游维持现状、**D-11 = MCP 默认 deferred 补齐立项（对标 grok，非本期）**。
+  上一阶段：
+  **2026-10-10 深夜 2：T8.2 LSP 支持批 1 落地**——internal/lsp 内核 +
+  overlay 编辑回灌（编辑结果内联诊断）+ /lsp 面板 + 配置分层 trust 门 +
+  5 工具默认 deferred；对标 opencode + grok 收口（规格 =
+  wiki/port/lsp-support.md，任务 = implementation-plan T8.2）。
   上一阶段：
   **2026-10-10 晚：T8.1 供应商配置统一批落地**——config 归一
   `~/.pigo`（双轨缺陷收口：legacy XDG 只读回退 + 一次性迁移副本）+
