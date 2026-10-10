@@ -9,23 +9,23 @@
 
 ## 🔄 现场速览
 
-- **当前阶段**：**T7.1 子智能体续接——实作方案细化定稿（实现移交下会话）**
-  （2026-10-11 会话；零代码改动，HEAD = `9020d49`）。四参照实现级深挖
-  （grok / opencode / crush / kimi）+ P1–P5 拍板（P2 = pin 源模型 +
-  不可用/429 降级 fresh，用户二稿）+ 文件级步骤与测试矩阵（§5.2/§5.4）；
-  权威 = [wiki/port/subagent-resume.md](wiki/port/subagent-resume.md) §5 +
-  取证附录 [subagent-resume-refs.md](wiki/port/subagent-resume-refs.md)。
-  最新交接卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（续）。
-- **接手者第一步**：照 subagent-resume.md **§5.2 开工 T7.1**（切片 1 底座 →
-  切片 2 超窗；并行子代理一次 ≤ 3）；或按排期口径（实用体验 > 小添头）改取
-  待排期池余件——T7.2、O1（与 S3/S4 合并）、MCP 默认 deferred 补齐（D-11）、
-  dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、T7.4；或等用户 TUI
-  真机验收反馈（清单 = `wiki/port/tui-slash-ux.md` §14 + 各面板）。
+- **当前阶段**：**T7.1 子智能体中断续接已落地（切片 1 底座 + 切片 2 超窗，
+  P1 一次收口）**（2026-10-11 深夜；feat `f6938b0`，44 包 0 FAIL，两份
+  二进制已刷）。交付 = 会话旁挂 transcript sidecar + `task` 工具 `resume`
+  参数（前缀重放 + T5.2 标注 + 超窗蒸馏）、failed 信封 `resume_hint`、前端
+  `BindSession`；权威 = [wiki/port/subagent-resume.md](wiki/port/subagent-resume.md)
+  §6（落地记录）+ §5（方案）。最新交接卡 = [wiki/port/handoff.md](wiki/port/handoff.md)
+  2026-10-11（深夜）。
+- **接手者第一步**：从待排期池取件——T7.2、O1（与 S3/S4 合并）、MCP 默认
+  deferred 补齐（D-11）、dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、
+  T7.4；或等用户 TUI 真机验收反馈（清单 = `wiki/port/tui-slash-ux.md` §14 +
+  各面板）。
 
 ### 近期批次速览（细节 = wiki 卡/分册，勿在此展开）
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
+| 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0` | subagent-resume.md §6 |
 | 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
 | 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | `a62589c`+`a04748e`/`9020d49` | approval-modes.md |
 | 10-11 晚 | T8.2 LSP 批 2（查询面 + per-tool 开关 + pull 兜底 + 收割重放 + 自动安装；B2 改判不落地） | `9b71cf7`+`fcc0f0f` | lsp-support.md §7 |
@@ -42,9 +42,13 @@
 
 ## 未验证事项（真机验收与缓落件）
 
-- [ ] **T7.1 实现未开工**（方案细化定稿待执行）：切片 1 底座（落盘 + resume
-      + 前缀重放 + 句柄）+ 切片 2 超窗；步骤 = subagent-resume.md §5.2，
-      测试矩阵 = §5.4；P4 completed 无 hint 与两参照相左（可复议点）
+- [ ] **T7.1 缓落件（已落地批的余项）**：逐轮增量落盘（挂 loop TurnEndEvent；
+      现为 settle 整写 D-T7）；process 隔离面 resume（P5）；pin-different 凭据
+      接 config face（T8.1 provider face）；跨 run resume 显面（kimi
+      previous-session reminder 注入先例）；resume 检索面；completed 无 hint
+      可复议点（P4，grok/kimi 相左）；`#4` 落地面偏差 = 子循环 window>0 开门
+      （仅 pin-different 路径）；真机手法 = subagent-resume.md §6.3（隔离
+      PIGO_HOME 需预造 `trust.json`，headless `-p` 不吃 `--approve`）
 - [ ] **TUI 面板真机手感一批约**：T7.6 审批面（Shift+Tab 环 + 三态标签 +
       待审批面板 Esc·a·s + /mode 面板 mid-run）、T8.3 队列 pane（↑↓ 选中 +
       Del + Esc 冻结体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2
@@ -100,3 +104,8 @@
   旧版本导致「实测跑的是旧二进制」）。
 - dev 分支本地开发，**2026-10-09 起按用户指示推送 `origin/dev`**（daidaiJ/pgo-fork
   fork 仓）；上游同步 / PR 策略已拍板（2026-10-11）：维持现状，只推 origin/dev。
+- **管道核验要派发非只读工具（如 `task`）时**：headless `-p` **不吃
+  `--approve`**（`--approve` 只喂 `trust.EstablishTrust`，仅 REPL 调用），
+  headless 走 `trustMgr.IsTrusted(cwd)`（`$PIGO_HOME/trust.json`）——隔离
+  home 下须预造 `{"<cwd>": true}`，否则工具被 trust 门拦成 failed tool
+  result（详见 `wiki/port/pitfalls.md`）。
