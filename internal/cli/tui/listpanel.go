@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/smallnest/pigo/internal/agenttool"
 )
 
 // listPanel is the interactive picker behind bare /skills and /mcp (T7.3
@@ -290,6 +292,32 @@ func gatherMCPRows(s *runSession) ([]listRow, string) {
 		out = append(out, row)
 	}
 	return out, ""
+}
+
+// gatherShellRows maps the shell backend table to the panel's flat rows
+// (T8.4): the live backend carries the [current] tag, every row's desc is
+// its program + flag prefix, and the note states the switch semantics.
+func gatherShellRows(s *runSession) ([]listRow, string) {
+	if s == nil {
+		return nil, "(Shell 面板不可用：无活动会话)"
+	}
+	if s.surface.Bash == nil {
+		return nil, "(bash 工具不可用：--no-tools 或策略移除)"
+	}
+	current := s.surface.Bash.ShellKind()
+	out := make([]listRow, 0, len(agenttool.ShellBackendNames()))
+	for _, name := range agenttool.ShellBackendNames() {
+		spec, err := agenttool.ShellSpecFor(name)
+		if err != nil {
+			continue
+		}
+		row := listRow{title: name, desc: fmt.Sprintf("%s %s", spec.Program, strings.Join(spec.Args, " "))}
+		if name == current {
+			row.tag = "[current]"
+		}
+		out = append(out, row)
+	}
+	return out, "切换写入 config.toml [shell] 并即时生效（下一条命令）；非 bash 后端跳过 shellguard 静态分析"
 }
 
 // gatherLSPRows maps the LSP manager's status to the panel's two-level rows

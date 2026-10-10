@@ -158,7 +158,7 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 	// allow falls through to the analysis. A nil seam (mode off) is a no-op.
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-	sgSeam, sgTerminated := agenttool.ShellguardDenialSeam(p.Shellguard, p.NonInteractiveDenial == "continue", runCancel)
+	sgSeam, sgTerminated := agenttool.ShellguardDenialSeam(p.Shellguard, agenttool.ShellKindFromTools(env.Tools), p.NonInteractiveDenial == "continue", runCancel)
 	if sgSeam != nil {
 		runCfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(runCfg.Batch.ToolExecutorConfig.BeforeToolCall, sgSeam)
 	}

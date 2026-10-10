@@ -129,6 +129,9 @@ type Options struct {
 	// LSP is the workspace language server (T8.2, run.Env.LSP); nil when
 	// LSP is disabled. It backs the /lsp surface command.
 	LSP *lsp.Manager
+	// Bash is the run's live bash tool (T8.4, run.Env.Bash); nil when tools
+	// are off or the policy removed it. It backs the /shell surface command.
+	Bash *agenttool.BashTool
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -291,11 +294,15 @@ func Run(opts Options) error {
 	surface := &prompts.SurfaceDeps{
 		MCP: opts.MCP,
 		LSP: opts.LSP,
+		Bash: opts.Bash,
 		LSPStore: func(enabled bool) error {
 			return run.SetProjectLSPEnabled(cwd, enabled)
 		},
 		LSPConfigured: func() bool {
 			return run.LSPProjectConfigured(cwd)
+		},
+		ShellStore: func(backend string) error {
+			return config.SetShellBackend(config.FileConfigPath(), backend)
 		},
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },

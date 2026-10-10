@@ -245,6 +245,17 @@ func (e *Engine) BeforeToolCall(ctx context.Context, call agentcore.AgentToolCal
 	return e.block(call, fmt.Sprintf("tool %q blocked: permission denied by the user.", call.Name))
 }
 
+// ruleFamily maps a tool name to its rule family (T8.4): the "shell" alias
+// is the bash tool under a second name, so bash rules match alias calls and
+// a settled ask-hint is stored as a bash rule — one boundary, two names.
+func ruleFamily(name string) string {
+	n := normalizeToolName(name)
+	if n == "shell" {
+		return "bash"
+	}
+	return n
+}
+
 // matchRule finds the first rule of the given action matching the call.
 // Persisted rules are consulted before session rules (deterministic order).
 func (e *Engine) matchRule(call agentcore.AgentToolCall, action Action) (Rule, bool) {
@@ -259,7 +270,7 @@ func (e *Engine) matchRule(call agentcore.AgentToolCall, action Action) (Rule, b
 	}
 	for _, table := range [][]Rule{persisted, session} {
 		for _, r := range table {
-			if r.Action != action || r.Tool != normalizeToolName(call.Name) {
+			if r.Action != action || r.Tool != ruleFamily(call.Name) {
 				continue
 			}
 			if ruleMatches(r, call) {
@@ -295,21 +306,21 @@ func ruleMatches(r Rule, call agentcore.AgentToolCall) bool {
 // allow rule (grok: dangerous commands are never whitelisted). For
 // write/edit it proposes the target's directory.
 func (e *Engine) proposeHint(call agentcore.AgentToolCall) ProposedHint {
-	switch call.Name {
+	switch ruleFamily(call.Name) {
 	case "bash":
 		cmd := strings.TrimSpace(bashCommandText(call.Arguments))
 		if cmd == "" || strings.ContainsAny(cmd, compoundMarkers) {
-			return ProposedHint{Tool: call.Name}
+			return ProposedHint{Tool: "bash"}
 		}
 		if d := shellguard.Analyze(cmd); d.Verdict != shellguard.Safe {
-			return ProposedHint{Tool: call.Name}
+			return ProposedHint{Tool: "bash"}
 		}
 		words := strings.Fields(cmd)
 		n := len(words)
 		if n > 2 {
 			n = 2
 		}
-		return ProposedHint{Tool: call.Name, Pattern: strings.Join(words[:n], " ")}
+		return ProposedHint{Tool: "bash", Pattern: strings.Join(words[:n], " ")}
 	case "write", "edit":
 		p := argPath(call.Arguments)
 		if p == "" {

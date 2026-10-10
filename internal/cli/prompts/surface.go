@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
@@ -45,6 +46,14 @@ type SurfaceDeps struct {
 	// LSPConfigured reports whether the project layer carries an lsp section
 	// (informational for the listing); nil = unknown.
 	LSPConfigured func() bool
+	// Bash is the run's live bash tool (T8.4); nil when tools are off or the
+	// policy removed it. The /shell listing reads its backend; the switch
+	// swaps it live (the next command runs under the new backend).
+	Bash *agenttool.BashTool
+	// ShellStore persists the [shell] backend to the global config.toml
+	// (config.SetShellBackend); nil makes /shell <backend> refuse (read-only
+	// surface). The project layer carries no shell key (T8.4 user ruling).
+	ShellStore func(backend string) error
 	// Skills returns the current skill view (the filtered LoadSkills result).
 	Skills func() []*runtime.Skill
 	// SetSkills swaps the caller's skill view (used by /skills reload); nil
@@ -90,6 +99,13 @@ func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 		Description:  "LSP server state and diagnostics counts; enable/disable writes the project switch",
 		Projection:   runtime.ProjLSPPanel,
 		Parse:        parseLSP,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:         "shell",
+		ArgumentHint: "[<backend>]",
+		Description:  "show or switch the shell backend (bash|powershell|pwsh|cmd|wsl); writes config, live for the next command",
+		Projection:   runtime.ProjShellPanel,
+		Parse:        parseShell,
 	})
 }
 
@@ -569,3 +585,56 @@ func (d *SurfaceDeps) LSPToolRows() []string {
 	}
 	return []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols"}
 }
+
+// shellList renders the shell face (T8.4): the selectable backends with the
+// live one marked and where the switch persists. A missing bash tool is a
+// NEUTRAL state (tools disabled / policy-removed), never an error.
+func (d *SurfaceDeps) shellList() string {
+	if d.Bash == nil {
+		return "shell: bash tool unavailable (tools disabled or policy-removed)"
+	}
+	kind := d.Bash.ShellKind()
+	var b strings.Builder
+	if kind == agenttool.ShellKindCustom {
+		b.WriteString("shell: custom (current — see config.toml [shell] command/args)")
+	} else {
+		fmt.Fprintf(&b, "shell: %s (current)", kind)
+	}
+	for _, name := range agenttool.ShellBackendNames() {
+		spec, err := agenttool.ShellSpecFor(name)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "\n  %s — %s %s", name, spec.Program, strings.Join(spec.Args, " "))
+	}
+	b.WriteString("\n  switch: /shell <backend> (writes config.toml [shell]; live: the next command)")
+	return b.String()
+}
+
+// shellSwitch swaps the live backend and persists it (T8.4 user ruling: hot
+// switch — the next command runs under the new backend — plus a global
+// config.toml [shell] write; the project layer carries no shell key).
+func (d *SurfaceDeps) shellSwitch(backend string) string {
+	if d.Bash == nil {
+		return "shell: bash tool unavailable (tools disabled or policy-removed)"
+	}
+	if d.ShellStore == nil {
+		return "shell: config writes unavailable in this context (read-only surface)"
+	}
+	spec, err := agenttool.ShellSpecFor(backend)
+	if err != nil {
+		return fmt.Sprintf("shell: %v", err)
+	}
+	d.Bash.SetShellSpec(spec)
+	if err := d.ShellStore(spec.Kind); err != nil {
+		return fmt.Sprintf("shell: switched to %s for this session, but the config write failed: %v", spec.Kind, err)
+	}
+	msg := fmt.Sprintf("shell: switched to %s — written to config.toml; live: the next command runs under %s", spec.Kind, spec.Kind)
+	if !agenttool.GuardableShellKind(spec.Kind) {
+		msg += " (shellguard static analysis is skipped for this backend)"
+	}
+	return msg
+}
+
+// ShellSwitch is the panel-facing wrapper of the /shell <backend> path.
+func (d *SurfaceDeps) ShellSwitch(backend string) string { return d.shellSwitch(backend) }

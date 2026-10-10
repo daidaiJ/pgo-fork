@@ -15,20 +15,20 @@ func bashCall(command string) agentcore.AgentToolCall {
 }
 
 func TestShellguardSeamOff(t *testing.T) {
-	if seam := ShellguardSeam(shellguard.ModeOff, nil); seam != nil {
+	if seam := ShellguardSeam(shellguard.ModeOff, nil, nil); seam != nil {
 		t.Fatal("ShellguardSeam(off) != nil; off must install nothing")
 	}
 }
 
 func TestShellguardSeamNonBashIgnored(t *testing.T) {
-	seam := ShellguardSeam(shellguard.ModeStrict, nil)
+	seam := ShellguardSeam(shellguard.ModeStrict, nil, nil)
 	if dec := seam(context.Background(), agentcore.AgentToolCall{Name: "read", Arguments: json.RawMessage(`{"path":"x"}`)}); dec != nil {
 		t.Fatal("seam gated a non-bash tool call")
 	}
 }
 
 func TestShellguardSeamSafeFallsThrough(t *testing.T) {
-	seam := ShellguardSeam(shellguard.ModeStrict, nil)
+	seam := ShellguardSeam(shellguard.ModeStrict, nil, nil)
 	if dec := seam(context.Background(), bashCall("go build ./...")); dec != nil {
 		t.Fatal("seam blocked a safe command")
 	}
@@ -36,7 +36,7 @@ func TestShellguardSeamSafeFallsThrough(t *testing.T) {
 
 func TestShellguardSeamStrictBlocks(t *testing.T) {
 	for _, cmd := range []string{"rm -rf /", "echo hi > out.txt", "timeout 5 rm -rf x"} {
-		seam := ShellguardSeam(shellguard.ModeStrict, nil)
+		seam := ShellguardSeam(shellguard.ModeStrict, nil, nil)
 		dec := seam(context.Background(), bashCall(cmd))
 		if dec == nil || !dec.Block {
 			t.Errorf("strict mode allowed %q", cmd)
@@ -51,7 +51,7 @@ func TestShellguardSeamStrictBlocks(t *testing.T) {
 func TestShellguardSeamIncompleteFailsClosed(t *testing.T) {
 	// Ask mode with a nil ask callback: an unparseable command must be
 	// blocked, never auto-allowed (fail-closed acceptance 2).
-	seam := ShellguardSeam(shellguard.ModeAsk, nil)
+	seam := ShellguardSeam(shellguard.ModeAsk, nil, nil)
 	if dec := seam(context.Background(), bashCall(`timeout --unknown 5 rm -rf x`)); dec == nil || !dec.Block {
 		t.Fatal("ask mode with nil ask allowed an Incomplete command")
 	}
@@ -65,7 +65,7 @@ func TestShellguardSeamAskConsultsCallback(t *testing.T) {
 			}
 			return allowed
 		}
-		seam := ShellguardSeam(shellguard.ModeAsk, ask)
+		seam := ShellguardSeam(shellguard.ModeAsk, nil, ask)
 		dec := seam(context.Background(), bashCall("rm -rf ./build"))
 		if allowed && dec != nil {
 			t.Fatal("ask mode blocked an approved command")
@@ -77,7 +77,7 @@ func TestShellguardSeamAskConsultsCallback(t *testing.T) {
 }
 
 func TestShellguardDenialSeamOff(t *testing.T) {
-	seam, terminated := ShellguardDenialSeam(shellguard.ModeOff, false, nil)
+	seam, terminated := ShellguardDenialSeam(shellguard.ModeOff, nil, false, nil)
 	if seam != nil || terminated != nil {
 		t.Fatal("off mode must install nothing")
 	}
@@ -86,7 +86,7 @@ func TestShellguardDenialSeamOff(t *testing.T) {
 func TestShellguardDenialSeamContinue(t *testing.T) {
 	canceled := false
 	cancel := func() { canceled = true }
-	seam, terminated := ShellguardDenialSeam(shellguard.ModeAsk, true, cancel)
+	seam, terminated := ShellguardDenialSeam(shellguard.ModeAsk, nil, true, cancel)
 	dec := seam(context.Background(), bashCall("rm -rf ./build"))
 	if dec == nil || !dec.Block {
 		t.Fatal("continue mode did not block the flagged command")
@@ -107,7 +107,7 @@ func TestShellguardDenialSeamContinue(t *testing.T) {
 func TestShellguardDenialSeamTerminate(t *testing.T) {
 	canceled := false
 	cancel := func() { canceled = true }
-	seam, terminated := ShellguardDenialSeam(shellguard.ModeAsk, false, cancel)
+	seam, terminated := ShellguardDenialSeam(shellguard.ModeAsk, nil, false, cancel)
 	dec := seam(context.Background(), bashCall("rm -rf ./build"))
 	if dec == nil || !dec.Block {
 		t.Fatal("terminate mode did not block the flagged command")

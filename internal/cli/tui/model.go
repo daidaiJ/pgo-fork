@@ -166,6 +166,9 @@ type Model struct {
 	// lspP is the /lsp panel (T8.2, two-level like mcpP: server row + the
 	// deferred tool family as children).
 	lspP listPanel
+	// shellP is the /shell panel (T8.4): the backend list with the live one
+	// marked; Space switches (config write + live swap).
+	shellP listPanel
 
 	// toolCards indexes the rich tool-call cards (#389, US-006) by tool-call id so
 	// a toolEndMsg can locate the card started earlier and flip its state / attach
@@ -752,6 +755,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.lspP.open {
 		return m.handleListPanelKey("lsp", msg)
 	}
+	if m.shellP.open {
+		return m.handleListPanelKey("shell", msg)
+	}
 
 	// While idle with the /model (or /think) argument popup open, it owns the
 	// arrow / Tab / Esc / Enter keys before the command menu gets them (T7.3
@@ -1228,6 +1234,11 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 					break // the parameter form is the text projection (Parse)
 				}
 				return m.openLSPPanel(line)
+			case runtime.ProjShellPanel:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the parameter form is the text projection (Parse)
+				}
+				return m.openShellPanel(line)
 			case runtime.ProjSessionsPicker:
 				return m.openSessionsPicker(line)
 			case runtime.ProjRename:
@@ -1442,6 +1453,23 @@ func (m Model) openLSPPanel(line string) (tea.Model, tea.Cmd) {
 	default:
 		rows, note := gatherLSPRows(m.session)
 		m.lspP = listPanel{open: true, title: "LSP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// openShellPanel projects the ProjShellPanel face (T8.4): the flat backend
+// list with the live one marked; Space switches (config write + live swap).
+func (m Model) openShellPanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(shell unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(shell: a run is in progress — open the panel once it finishes)")
+	default:
+		rows, note := gatherShellRows(m.session)
+		m.shellP = listPanel{open: true, title: "Shell 后端", hint: "↑↓ 选择 · Space 切换 · Esc 关闭", rows: rows, note: note}
 	}
 	m.relayout()
 	return m, nil
@@ -1876,6 +1904,9 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 	var apply func(listRow) string
 	var regather func() ([]listRow, string)
 	var expand func(listRow) // nil on the skills panel (one-level)
+	// spaceToggles: panels where Space flips the row (skills' Space types a
+	// space into the filter instead — backend names need no space).
+	spaceToggles := false
 	if kind == "skills" {
 		p = &m.skillsP
 		apply = func(r listRow) string { return m.session.surface.ToggleSkill(r.title, !r.off) }
@@ -1893,6 +1924,14 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 		}
 		regather = func() ([]listRow, string) { return gatherLSPRows(m.session) }
 		expand = func(r listRow) { p.toggleExpand(r) }
+		spaceToggles = true
+	} else if kind == "shell" {
+		// The shell panel (T8.4): Space on a backend row switches the live
+		// backend (config write + hot swap); rows are flat, no expansion.
+		p = &m.shellP
+		apply = func(r listRow) string { return m.session.surface.ShellSwitch(r.title) }
+		regather = func() ([]listRow, string) { return gatherShellRows(m.session) }
+		spaceToggles = true
 	} else {
 		p = &m.mcpP
 		apply = func(r listRow) string {
@@ -1903,6 +1942,7 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 		}
 		regather = func() ([]listRow, string) { return gatherMCPRows(m.session) }
 		expand = func(r listRow) { p.toggleExpand(r) }
+		spaceToggles = true
 	}
 	toggleSelected := func() {
 		if row, ok := p.selectedRow(); ok {
@@ -1931,8 +1971,8 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 			toggleSelected()
 		}
 	case " ":
-		if expand != nil {
-			toggleSelected() // Space on MCP toggles server or tool rows
+		if spaceToggles {
+			toggleSelected() // Space on MCP/LSP/shell toggles the row
 		} else {
 			p.filter += key
 			p.selected = 0
@@ -2050,6 +2090,9 @@ func (m Model) renderContent() (string, *tea.Cursor) {
 		b.WriteByte('\n')
 	} else if m.lspP.open {
 		b.WriteString(m.lspP.view(m.theme, width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if m.shellP.open {
+		b.WriteString(m.shellP.view(m.theme, width, max(height-7, 1)))
 		b.WriteByte('\n')
 	} else if m.ctxPanel.open {
 		b.WriteString(m.ctxPanel.render(m.theme, m.contextData(), width, max(height-7, 1)))

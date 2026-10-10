@@ -16,29 +16,60 @@ import (
 	"github.com/smallnest/pigo/internal/shellguard"
 )
 
-// bashToolName is the only tool the shellguard seam gates.
-const bashToolName = "bash"
+// bashToolName and shellToolName are the tools the shellguard seam gates:
+// "shell" is the bash tool's alias (T8.4), one implementation under two names.
+const (
+	bashToolName  = "bash"
+	shellToolName = "shell"
+)
+
+// isBashFamily reports whether a tool call targets the bash tool or its
+// "shell" alias: both names run the same implementation, so the gate and the
+// static analysis cover both.
+func isBashFamily(name string) bool {
+	return name == bashToolName || name == shellToolName
+}
+
+// liveShellKind resolves the seam's backend-kind closure; a nil closure (the
+// caller could not reach the tool) or an empty kind analyzes as bash.
+func liveShellKind(kind func() string) string {
+	if kind == nil {
+		return ShellKindBash
+	}
+	if k := kind(); k != "" {
+		return k
+	}
+	return ShellKindBash
+}
 
 // ShellguardAsk is the interactive approval callback for ask mode. It reports
 // whether the user allowed the flagged command this once. Implementations
 // must honor ctx cancellation (a canceled context denies).
 type ShellguardAsk func(ctx context.Context, call agentcore.AgentToolCall, d shellguard.Decision) bool
 
-// ShellguardSeam builds the BeforeToolCallFunc gating bash commands through
-// shellguard.Analyze. mode==off (or the zero-value "", as embedded in
+// ShellguardSeam builds the BeforeToolCallFunc gating bash-family commands
+// through shellguard.Analyze. mode==off (or the zero-value "", as embedded in
 // zero-value session structs) returns nil — the seam is never installed, so
-// the hot path pays nothing. Safe commands fall through to the next seam in
-// the chain; Hazardous/Incomplete are blocked — ask mode consults the ask
-// callback first (nil ask fails closed), strict mode blocks outright.
+// the hot path pays nothing. kind, when non-nil, reports the live shell
+// backend kind (T8.4): a non-bash backend (powershell/pwsh/cmd/custom) skips
+// the gate entirely — the analyzer speaks bash syntax and would misjudge —
+// per the user ruling (2026-10-11, lenient; a registered risk). A nil kind
+// analyzes as bash, the pre-T8.4 behavior. Safe commands fall through to the
+// next seam in the chain; Hazardous/Incomplete are blocked — ask mode
+// consults the ask callback first (nil ask fails closed), strict mode blocks
+// outright.
 //
 // Hazardous verdicts are never waivable by allow-lists: the seam has no
 // grant-store memory, so an ask-mode allow is per-call only.
-func ShellguardSeam(mode shellguard.Mode, ask ShellguardAsk) agentcore.BeforeToolCallFunc {
+func ShellguardSeam(mode shellguard.Mode, kind func() string, ask ShellguardAsk) agentcore.BeforeToolCallFunc {
 	if mode == shellguard.ModeOff || mode == "" {
 		return nil
 	}
 	return func(ctx context.Context, call agentcore.AgentToolCall) *agentcore.BeforeToolCallDecision {
-		if call.Name != bashToolName {
+		if !isBashFamily(call.Name) {
+			return nil
+		}
+		if !GuardableShellKind(liveShellKind(kind)) {
 			return nil
 		}
 		d := shellguard.Analyze(bashCommand(call.Arguments))
@@ -63,18 +94,22 @@ func ShellguardSeam(mode shellguard.Mode, ask ShellguardAsk) agentcore.BeforeToo
 
 // ShellguardDenialSeam builds the headless variant of the seam: there is no
 // interactive channel, so Hazardous/Incomplete commands are always denied.
-// allowContinue mirrors --non-interactive-denial continue: the denial becomes
-// a failed tool result the agent can route around, and the run keeps going.
-// Without it the seam cancels the run context (terminate) and terminated
-// reports true afterwards so the driver can explain the exit. mode==off
-// returns (nil, nil) — nothing is installed.
-func ShellguardDenialSeam(mode shellguard.Mode, allowContinue bool, cancel context.CancelFunc) (agentcore.BeforeToolCallFunc, func() bool) {
+// kind mirrors ShellguardSeam's live backend closure (T8.4: non-bash backends
+// skip the gate). allowContinue mirrors --non-interactive-denial continue:
+// the denial becomes a failed tool result the agent can route around, and the
+// run keeps going. Without it the seam cancels the run context (terminate)
+// and terminated reports true afterwards so the driver can explain the exit.
+// mode==off returns (nil, nil) — nothing is installed.
+func ShellguardDenialSeam(mode shellguard.Mode, kind func() string, allowContinue bool, cancel context.CancelFunc) (agentcore.BeforeToolCallFunc, func() bool) {
 	if mode == shellguard.ModeOff || mode == "" {
 		return nil, nil
 	}
 	terminated := false
 	seam := func(ctx context.Context, call agentcore.AgentToolCall) *agentcore.BeforeToolCallDecision {
-		if call.Name != bashToolName {
+		if !isBashFamily(call.Name) {
+			return nil
+		}
+		if !GuardableShellKind(liveShellKind(kind)) {
 			return nil
 		}
 		d := shellguard.Analyze(bashCommand(call.Arguments))

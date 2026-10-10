@@ -156,6 +156,18 @@ func toolNameSet(tools []agentcore.AgentTool) map[string]struct{} {
 	return set
 }
 
+// policyFamily maps a tool name to its capability family for the policy
+// boundary (T8.4): the "shell" alias is the bash tool under a second name,
+// so a deny of either name removes both and an allow of either admits both —
+// one implementation cannot be half-denied (a deny of bash that left the
+// alias standing would widen the boundary).
+func policyFamily(name string) string {
+	if name == "shell" {
+		return "bash"
+	}
+	return name
+}
+
 // ApplyToolPolicy narrows a tool set to the allow list and then removes the deny
 // list. Both empty means no restriction and the input is returned unchanged, so
 // the default path is a true no-op.
@@ -172,11 +184,20 @@ func ApplyToolPolicy(tools []agentcore.AgentTool, policy ToolPolicy) []agentcore
 	if len(tools) == 0 || policy.IsZero() {
 		return tools
 	}
-	allowSet := nameSet(policy.Allow)
-	denySet := nameSet(policy.Deny)
+	// The user-facing names normalize into capability families too (T8.4):
+	// allowing or denying "shell" addresses the same family as "bash".
+	family := func(names []string) map[string]struct{} {
+		set := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			set[policyFamily(normalizeToolName(n))] = struct{}{}
+		}
+		return set
+	}
+	allowSet := family(policy.Allow)
+	denySet := family(policy.Deny)
 	out := make([]agentcore.AgentTool, 0, len(tools))
 	for _, t := range tools {
-		name := normalizeToolName(t.Name())
+		name := policyFamily(normalizeToolName(t.Name()))
 		if len(allowSet) > 0 {
 			if _, ok := allowSet[name]; !ok {
 				continue

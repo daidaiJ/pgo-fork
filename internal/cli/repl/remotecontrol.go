@@ -21,6 +21,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/agenttool"
+	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/remotecontrol"
 	"github.com/smallnest/pigo/internal/shellguard"
 	"github.com/smallnest/pigo/internal/trust"
@@ -196,11 +197,22 @@ func beforeToolCall(deps replDeps, out io.Writer) agentcore.BeforeToolCallFunc {
 	}
 	// Shellguard (T2.1) runs AHEAD of the trust gate: a Hazardous verdict asks
 	// even in a trusted directory (allow-lists never waive it), and a Safe
-	// command falls through unchanged. Off mode installs nothing.
+	// command falls through unchanged. Off mode installs nothing. kind (T8.4)
+	// reports the live shell backend so a non-bash backend skips the analysis.
 	return agenttool.ChainBeforeToolCall(
-		agenttool.ShellguardSeam(deps.shellguard, askShellguard(deps.in, out, deps.confirmMu)),
+		agenttool.ShellguardSeam(deps.shellguard, shellKindOf(deps.surface), askShellguard(deps.in, out, deps.confirmMu)),
 		next,
 	)
+}
+
+// shellKindOf surfaces the live shell backend to the shellguard seam (T8.4:
+// a non-bash backend skips the static analysis); nil when no bash tool is in
+// the session, which the seam reads as "analyze as bash".
+func shellKindOf(surface *prompts.SurfaceDeps) func() string {
+	if surface == nil || surface.Bash == nil {
+		return nil
+	}
+	return surface.Bash.ShellKind
 }
 
 // askShellguard is the REPL's interactive shellguard approval callback: it

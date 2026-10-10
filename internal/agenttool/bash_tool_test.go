@@ -243,30 +243,47 @@ func TestResolveShell(t *testing.T) {
 	none := func(string) (string, error) { return "", fmt.Errorf("not found") }
 
 	tests := []struct {
-		name           string
-		explicit, goos string
-		lookPath       func(string) (string, error)
-		wantFlag       string
-		wantShellHas   string // substring the resolved shell must contain
+		name         string
+		explicit     string
+		goos         string
+		lookPath     func(string) (string, error)
+		wantPrefix   []string
+		wantShellHas string // substring the resolved shell must contain
 	}{
-		{"explicit honored on windows", "zsh", "windows", none, "-c", "zsh"},
-		{"explicit honored on linux", "fish", "linux", none, "-c", "fish"},
-		{"non-windows always bash", "", "linux", none, "-c", "bash"},
-		{"darwin always bash", "", "darwin", none, "-c", "bash"},
-		{"windows with bash", "", "windows", found("bash"), "-c", "bash"},
-		{"windows falls back to powershell", "", "windows", found("powershell"), "-Command", "powershell"},
-		{"windows falls back to cmd", "", "windows", none, "/C", "cmd"},
+		{"explicit honored on windows", "zsh", "windows", none, []string{"-c"}, "zsh"},
+		{"explicit honored on linux", "fish", "linux", none, []string{"-c"}, "fish"},
+		{"non-windows always bash", "", "linux", none, []string{"-c"}, "bash"},
+		{"darwin always bash", "", "darwin", none, []string{"-c"}, "bash"},
+		{"windows with bash", "", "windows", found("bash"), []string{"-c"}, "bash"},
+		{"windows falls back to powershell", "", "windows", found("powershell"), []string{"-Command"}, "powershell"},
+		{"windows falls back to cmd", "", "windows", none, []string{"/C"}, "cmd"},
+		// T8.4: an explicit interpreter gets its own flag form, the fix for
+		// the old always-"-c" bug that broke an explicit powershell.
+		{"explicit powershell infers -Command", "powershell", "windows", none, []string{"-Command"}, "powershell"},
+		{"explicit pwsh infers -Command", "pwsh", "windows", none, []string{"-Command"}, "pwsh"},
+		{"explicit cmd infers /C", "cmd.exe", "windows", none, []string{"/C"}, "cmd.exe"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			shell, flag := resolveShell(tc.explicit, tc.goos, tc.lookPath)
-			if flag != tc.wantFlag {
-				t.Errorf("flag = %q, want %q", flag, tc.wantFlag)
+			shell, prefix := resolveShell(tc.explicit, nil, tc.goos, tc.lookPath)
+			if strings.Join(prefix, " ") != strings.Join(tc.wantPrefix, " ") {
+				t.Errorf("prefix = %q, want %q", prefix, tc.wantPrefix)
 			}
 			if !strings.Contains(shell, tc.wantShellHas) {
 				t.Errorf("shell = %q, want to contain %q", shell, tc.wantShellHas)
 			}
 		})
+	}
+}
+
+// TestResolveShellExplicitArgsPassthrough: a pinned prefix (SetShellSpec)
+// wins over the inferred flag form — the /shell custom backend's path.
+func TestResolveShellExplicitArgsPassthrough(t *testing.T) {
+	shell, prefix := resolveShell("myshell", []string{"-x", "-y"}, "windows", func(string) (string, error) {
+		return "", fmt.Errorf("not found")
+	})
+	if shell != "myshell" || len(prefix) != 2 || prefix[0] != "-x" || prefix[1] != "-y" {
+		t.Fatalf("resolveShell passthrough = %q %v, want myshell [-x -y]", shell, prefix)
 	}
 }
 

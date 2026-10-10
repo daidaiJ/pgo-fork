@@ -86,6 +86,11 @@ const (
 	// IntentLSPServerToggle flips the project-layer LSP switch —
 	// /lsp enable|disable [server].
 	IntentLSPServerToggle
+	// IntentShellShow reports the shell backend face — bare /shell (the
+	// REPL's degraded projection of the TUI panel).
+	IntentShellShow
+	// IntentShellSwitch changes the shell backend — /shell <backend>.
+	IntentShellSwitch
 	// IntentStatusShow renders the runtime status report — /status.
 	IntentStatusShow
 	// IntentSessionShow renders the session summary — /session.
@@ -137,6 +142,10 @@ func (k IntentKind) String() string {
 		return "lsp-show"
 	case IntentLSPServerToggle:
 		return "lsp-server-toggle"
+	case IntentShellShow:
+		return "shell-show"
+	case IntentShellSwitch:
+		return "shell-switch"
 	case IntentStatusShow:
 		return "status-show"
 	case IntentSessionShow:
@@ -187,6 +196,8 @@ type Intent struct {
 	// the project switch speaks "enable", mirroring the server toggle).
 	LSPServer  string
 	LSPEnable  bool
+	// IntentShellSwitch: the backend name (bash|powershell|pwsh|cmd|wsl).
+	ShellBackend string
 	// IntentCompact: optional free-text user focus for the summarizer (grok
 	// Compact{user_context}). Reserved: the compactor takes no focus argument
 	// yet (spec deviation register), so Parse currently refuses arguments.

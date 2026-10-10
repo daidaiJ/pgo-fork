@@ -71,11 +71,15 @@ func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider
 	deps := prompts.SurfaceDeps{
 		MCP: opts.MCP,
 		LSP: opts.LSP,
+		Bash: opts.Bash,
 		LSPStore: func(enabled bool) error {
 			return run.SetProjectLSPEnabled(cwd, enabled)
 		},
 		LSPConfigured: func() bool {
 			return run.LSPProjectConfigured(cwd)
+		},
+		ShellStore: func(backend string) error {
+			return config.SetShellBackend(config.FileConfigPath(), backend)
 		},
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },

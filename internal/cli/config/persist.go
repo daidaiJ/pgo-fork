@@ -355,6 +355,43 @@ func SetMCPServerEnabled(path, server string, enabled bool) error {
 	})
 }
 
+// SetShellBackend writes the [shell] backend key (T8.4, the /shell switch's
+// write path): the section is created when absent, the key replaced when
+// present, comments inside the block preserved. Global config only — the
+// project layer carries no shell key (T8.4 user ruling).
+func SetShellBackend(path, backend string) error {
+	if path == "" {
+		return fmt.Errorf("shell: no config path")
+	}
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		return fmt.Errorf("shell: empty backend")
+	}
+	blocks, err := loadBlocks(path)
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range blocks {
+		if blocks[i].header != "" && blockName(blocks[i].header) == "shell" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		idx = len(blocks)
+		blocks = append(blocks, block{header: "[shell]"})
+	}
+	b := &blocks[idx]
+	quoted := `"` + strings.ReplaceAll(backend, `"`, `\"`) + `"`
+	if i := findKey(*b, "backend"); i >= 0 {
+		b.lines[i] = "backend = " + quoted
+	} else {
+		b.lines = append([]string{"backend = " + quoted}, b.lines...)
+	}
+	return saveFile(path, writeSections(blocks))
+}
+
 // patchMCPServer locates the [[mcp.servers]] entry whose `name` key equals
 // server and applies fn to its block. Unambiguous match required: no entry is
 // an error, and (because a user could name two entries the same — config

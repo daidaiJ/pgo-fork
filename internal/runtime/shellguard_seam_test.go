@@ -53,7 +53,7 @@ func TestShellguardHeadlessContinue(t *testing.T) {
 		},
 	}
 	cfg := newFauxRunCfg(p, bashStub())
-	seam, terminated := agenttool.ShellguardDenialSeam(shellguard.ModeAsk, true, nil)
+	seam, terminated := agenttool.ShellguardDenialSeam(shellguard.ModeAsk, nil, true, nil)
 	if seam == nil {
 		t.Fatal("seam not installed")
 	}
@@ -93,7 +93,7 @@ func TestShellguardHeadlessTerminate(t *testing.T) {
 	cfg := newFauxRunCfg(p, bashStub())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	seam, terminated := agenttool.ShellguardDenialSeam(shellguard.ModeAsk, false, cancel)
+	seam, terminated := agenttool.ShellguardDenialSeam(shellguard.ModeAsk, nil, false, cancel)
 	cfg.Batch.ToolExecutorConfig.BeforeToolCall = seam
 	agentCtx := &agentcore.AgentContext{Messages: agentcore.MessageList{agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("clean the dir")}}}}
 
@@ -123,7 +123,7 @@ func TestShellguardOffNoSeam(t *testing.T) {
 		},
 	}
 	cfg := newFauxRunCfg(p, bashStub())
-	if seam, _ := agenttool.ShellguardDenialSeam(shellguard.ModeOff, false, nil); seam != nil {
+	if seam, _ := agenttool.ShellguardDenialSeam(shellguard.ModeOff, nil, false, nil); seam != nil {
 		t.Fatal("off mode installed a seam")
 	}
 	agentCtx := &agentcore.AgentContext{Messages: agentcore.MessageList{agentcore.UserMessage{RoleField: agentcore.RoleUser, Content: agentcore.ContentList{agentcore.NewTextContent("clean")}}}}

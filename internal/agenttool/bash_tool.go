@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -69,15 +71,62 @@ func trimUTF8Suffix(s string) string {
 }
 
 // BashTool runs shell commands. Dir bounds the working directory (empty = the
-// process CWD). Shell selects the interpreter (empty = "bash -c").
+// process CWD). Shell selects the interpreter (empty = platform auto-detect);
+// ShellArgs is the argument prefix that makes Shell read the command from the
+// next argument (empty = infer the flag from the interpreter name). Both swap
+// live through SetShellSpec.
 type BashTool struct {
 	// Dir is the working directory for commands. Empty uses the process CWD.
 	Dir string
-	// Shell is the interpreter path. Empty defaults to "bash".
+	// Shell is the interpreter path. Empty defaults to platform auto-detect.
 	Shell string
+	// ShellArgs is the interpreter's command-reading flag prefix (T8.4: set
+	// with SetShellSpec; empty = inferred from the interpreter name).
+	ShellArgs []string
 	// Jobs holds background jobs launched with run_in_background. When nil,
 	// run_in_background is rejected (the front-end did not wire a store).
 	Jobs *BashJobStore
+
+	// kind pins the backend label ShellKind reports (set with SetShellSpec;
+	// empty = inferred from Shell). Guarded by mu.
+	mu   sync.Mutex
+	kind string
+}
+
+// SetShellSpec swaps the live shell backend (T8.4 /shell hot-switch): the
+// next command runs under it, while in-flight background jobs keep the shell
+// they resolved at start. An empty Program resets to platform auto-detect.
+func (t *BashTool) SetShellSpec(spec ShellSpec) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Shell = spec.Program
+	t.ShellArgs = spec.Args
+	t.kind = spec.Kind
+}
+
+// ShellKind reports the effective backend kind: the kind pinned by
+// SetShellSpec, else the kind inferred from the configured interpreter, else
+// "bash" (the auto-detect cascade's first choice — the shellguard seams and
+// the /shell listing read this label; on a bash-less Windows box the
+// effective fallback is powershell, a pre-T8.4 nuance the guard never
+// modeled).
+func (t *BashTool) ShellKind() string {
+	t.mu.Lock()
+	kind, shell := t.kind, t.Shell
+	t.mu.Unlock()
+	if kind != "" {
+		return kind
+	}
+	return inferShellKind(shell)
+}
+
+// resolvePrefix reads the current shell config under the lock and resolves it
+// to (program, argument prefix) for one exec.
+func (t *BashTool) resolvePrefix() (string, []string) {
+	t.mu.Lock()
+	shell, extra := t.Shell, t.ShellArgs
+	t.mu.Unlock()
+	return resolveShell(shell, extra, runtime.GOOS, shellLookPath)
 }
 
 // bashToolArgs is the decoded argument shape for BashTool.
@@ -110,8 +159,9 @@ func (t *BashTool) Description() string {
 		"Set run_in_background=true for long-running commands (dev servers, " +
 		"watchers): it returns immediately with a bash_id you drain with " +
 		"bash_output and stop with kill_bash. " +
-		"On Windows the command runs under bash if available (Git Bash/WSL), " +
-		"else PowerShell, else cmd — prefer portable commands."
+		"On Windows the command runs under the configured shell backend " +
+		"(config [shell] backend / PIGO_SHELL; default: bash if available, " +
+		"else PowerShell, then cmd) — prefer portable commands."
 }
 
 // Schema implements AgentTool.
@@ -137,29 +187,65 @@ func (t *BashTool) ExecutionMode() agentcore.ToolExecutionMode {
 // simulate a Windows box with or without bash installed.
 var shellLookPath = exec.LookPath
 
-// resolveShell picks the interpreter and the flag that makes it read the command
-// from the next argument. An explicit shell (BashTool.Shell) is always honored as
-// a POSIX-style "<shell> -c <command>".
+// resolveShell picks the interpreter and the argument prefix that makes it
+// read the command from the next argument. An explicit shell (BashTool.Shell)
+// is honored; its flag form is inferred from the interpreter name — the T8.4
+// fix for the old always-"-c" bug that broke an explicit powershell — unless
+// ShellArgs pins the prefix (SetShellSpec).
 //
 // On Windows with no explicit shell, the naive "bash -c" hardcode fails on stock
 // machines that have no bash on PATH — the model then retries bash blindly and
 // every call errors (issue #518). So we prefer a real bash when one is present
 // (Git Bash / WSL / MSYS), since commands are authored in bash syntax, and fall
 // back to PowerShell, then cmd, so a command still runs on a bare Windows box.
-func resolveShell(explicit, goos string, lookPath func(string) (string, error)) (shell, flag string) {
+// T8.4 kept this cascade bash-first (user ruling).
+func resolveShell(explicit string, extraArgs []string, goos string, lookPath func(string) (string, error)) (shell string, prefix []string) {
 	if explicit != "" {
-		return explicit, "-c"
+		if len(extraArgs) > 0 {
+			return explicit, extraArgs
+		}
+		switch inferShellKind(explicit) {
+		case ShellKindPowerShell, ShellKindPwsh:
+			return explicit, []string{"-Command"}
+		case ShellKindCmd:
+			return explicit, []string{"/C"}
+		case ShellKindWSL:
+			return explicit, []string{"--exec", "bash", "-c"}
+		default:
+			return explicit, []string{"-c"}
+		}
 	}
 	if goos == "windows" {
 		if p, err := lookPath("bash"); err == nil {
-			return p, "-c"
+			return p, []string{"-c"}
 		}
 		if p, err := lookPath("powershell"); err == nil {
-			return p, "-Command"
+			return p, []string{"-Command"}
 		}
-		return "cmd", "/C"
+		return "cmd", []string{"/C"}
 	}
-	return "bash", "-c"
+	return "bash", []string{"-c"}
+}
+
+// inferShellKind maps an interpreter path (or bare name) to its backend kind;
+// unrecognized programs default to the POSIX "-c" family.
+func inferShellKind(program string) string {
+	base := strings.ToLower(filepath.Base(program))
+	base = strings.TrimSuffix(base, ".exe")
+	switch base {
+	case "bash", "sh", "zsh", "dash", "ksh":
+		return ShellKindBash
+	case "powershell":
+		return ShellKindPowerShell
+	case "pwsh":
+		return ShellKindPwsh
+	case "cmd":
+		return ShellKindCmd
+	case "wsl":
+		return ShellKindWSL
+	default:
+		return ShellKindBash
+	}
 }
 
 // streamWriter forwards each written chunk to onUpdate as a growing partial
@@ -209,8 +295,9 @@ func (t *BashTool) Execute(ctx context.Context, id string, args json.RawMessage,
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	shell, flag := resolveShell(t.Shell, runtime.GOOS, shellLookPath)
-	cmd := exec.CommandContext(runCtx, shell, flag, a.Command)
+	shell, prefix := t.resolvePrefix()
+	cmdArgs := append(append(make([]string, 0, len(prefix)+1), prefix...), a.Command)
+	cmd := exec.CommandContext(runCtx, shell, cmdArgs...)
 	if t.Dir != "" {
 		cmd.Dir = t.Dir
 	}
@@ -294,8 +381,9 @@ func (t *BashTool) startBackground(a bashToolArgs) (agentcore.AgentToolResult, e
 		jobCtx, cancel = context.WithCancel(context.Background())
 	}
 
-	shell, flag := resolveShell(t.Shell, runtime.GOOS, shellLookPath)
-	cmd := exec.CommandContext(jobCtx, shell, flag, a.Command)
+	shell, prefix := t.resolvePrefix()
+	cmdArgs := append(append(make([]string, 0, len(prefix)+1), prefix...), a.Command)
+	cmd := exec.CommandContext(jobCtx, shell, cmdArgs...)
 	if t.Dir != "" {
 		cmd.Dir = t.Dir
 	}

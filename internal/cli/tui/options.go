@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
@@ -64,6 +65,10 @@ type Options struct {
 	// LSP is the workspace language server (T8.2, run.Env.LSP); nil when LSP
 	// is disabled. It backs the /lsp surface command and panel.
 	LSP *lsp.Manager
+	// Bash is the run's live bash tool (T8.4, run.Env.Bash); nil when tools
+	// are off or the policy removed it. It backs the /shell surface command
+	// and panel.
+	Bash *agenttool.BashTool
 
 	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil for
 	// direct declaration. Passed through from run.SetupEnv's Env.ToolPlan.

@@ -168,6 +168,16 @@ func (x *Executor) execute(it runtime.Intent) string {
 			return "lsp: config surface unavailable in this context"
 		}
 		return x.Surface.lspServerToggle(it.LSPEnable)
+	case runtime.IntentShellShow:
+		if x.Surface == nil {
+			return "shell: config surface unavailable in this context"
+		}
+		return x.Surface.shellList()
+	case runtime.IntentShellSwitch:
+		if x.Surface == nil {
+			return "shell: config surface unavailable in this context"
+		}
+		return x.Surface.shellSwitch(it.ShellBackend)
 	case runtime.IntentStatusShow:
 		if x.Status == nil {
 			return "(status unavailable: no active session)"

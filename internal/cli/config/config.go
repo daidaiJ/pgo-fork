@@ -115,6 +115,24 @@ type FileConfig struct {
 	// trusted project config.json < PIGO_LSP env) lives in internal/cli/run
 	// (ResolveLSPSettings), the manager in internal/lsp.
 	LSP LSPConfig `toml:"lsp"`
+	// Shell is the [shell] TOML table (T8.4): the default shell backend for
+	// the bash tool — global layer only (T8.4 user ruling: the project layer
+	// carries no shell key, so a checked-out repo cannot pick the interpreter
+	// commands run under). Pure config plumbing; the override chain
+	// (config > PIGO_SHELL env > platform detect) lives in internal/cli/run
+	// (ResolveShellSettings).
+	Shell ShellConfig `toml:"shell"`
+}
+
+// ShellConfig is the [shell] TOML table (T8.4). Backend is one of
+// bash|powershell|pwsh|cmd|wsl (empty or "auto" = platform detect — bash
+// first, the T8.4 ruling) or "custom", which requires Command (the program)
+// and optionally Args (the prefix before the command line, defaulting to the
+// interpreter's inferred flag form).
+type ShellConfig struct {
+	Backend string   `toml:"backend"`
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
 }
 
 // LSPConfig is the [lsp] TOML table (T8.2). Enabled defaults to false — the

@@ -174,3 +174,24 @@ func TestValidateToolPolicySkipsEmptyToolSet(t *testing.T) {
 		t.Errorf("ValidateToolPolicy(nil tools) = %v, want nil", err)
 	}
 }
+
+// TestApplyToolPolicyShellAliasFamily pins the T8.4 capability family: the
+// "shell" alias is the bash tool under a second name, so a deny of either
+// removes both and an allow of either admits both — one implementation
+// cannot be half-denied (a deny of bash that left the alias standing would
+// widen the boundary).
+func TestApplyToolPolicyShellAliasFamily(t *testing.T) {
+	all := toolSet("read", "bash", "shell")
+	if got := names(ApplyToolPolicy(all, NewToolPolicy(nil, []string{"bash"}))); strings.Join(got, ",") != "read" {
+		t.Errorf("deny bash left %q; the alias must fall with it", got)
+	}
+	if got := names(ApplyToolPolicy(all, NewToolPolicy(nil, []string{"shell"}))); strings.Join(got, ",") != "read" {
+		t.Errorf("deny shell left %q; bash must fall with it", got)
+	}
+	if got := names(ApplyToolPolicy(all, NewToolPolicy([]string{"bash"}, nil))); strings.Join(got, ",") != "bash,shell" {
+		t.Errorf("allow bash kept %q; the alias rides the same capability", got)
+	}
+	if got := names(ApplyToolPolicy(all, NewToolPolicy([]string{"shell"}, nil))); strings.Join(got, ",") != "bash,shell" {
+		t.Errorf("allow shell kept %q; bash rides the same capability", got)
+	}
+}

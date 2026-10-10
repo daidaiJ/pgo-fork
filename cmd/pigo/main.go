@@ -29,6 +29,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/headless"
@@ -196,6 +197,10 @@ type cliOptions struct {
 	// lspSet is the resolved LSP configuration (T8.2: global [lsp] table
 	// < trusted project switch < PIGO_LSP; resolved once in the main flow).
 	lspSet lsp.Settings
+	// shellSet is the resolved shell backend (T8.4: global [shell] table
+	// > PIGO_SHELL > platform detect; global layer only, resolved once in
+	// the main flow). The zero spec = platform auto-detect.
+	shellSet agenttool.ShellSpec
 	// modelProfiles is the [models."<id>"] profile table (T7.3 实测反馈),
 	// passed through to the front-ends so the /model switcher lists the
 	// config's model ids (grok 对齐). Empty when the config declares none.
@@ -357,6 +362,14 @@ func main() {
 		os.Exit(2)
 	}
 	opts.lspSet = lspSet
+	// Shell backend (T8.4): global-only layering, resolved once here for the
+	// same reason. An unknown backend name is a usage error (exit 2).
+	shellSet, err := run.ResolveShellSettings(cfg.Shell, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: %v\n", err)
+		os.Exit(2)
+	}
+	opts.shellSet = shellSet
 	cfgLoad.End()
 
 	// Validate the shellguard mode tiers now (flag > file > default off): a
@@ -672,6 +685,8 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		}
 		modeDispatch.End()
 		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	// Shell backend (T8.4): inject the resolved spec into the live bash tool.
+	run.SetBashShell(env.Tools, opts.shellSet)
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
@@ -733,6 +748,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				Plugins:           env.Plugins,
 				MCP:               env.MCP,
 				LSP:               env.LSP,
+				Bash:              env.Bash,
 				ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
@@ -770,6 +786,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			Plugins:           env.Plugins,
 			MCP:               env.MCP,
 			LSP:               env.LSP,
+			Bash:              env.Bash,
 			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
 			Models:            opts.modelProfiles,
@@ -800,6 +817,8 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 	}
 
 	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	// Shell backend (T8.4): inject the resolved spec into the live bash tool.
+	run.SetBashShell(env.Tools, opts.shellSet)
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
@@ -869,6 +888,8 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		return 2
 	}
 	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	// Shell backend (T8.4): inject the resolved spec into the live bash tool.
+	run.SetBashShell(env.Tools, opts.shellSet)
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)

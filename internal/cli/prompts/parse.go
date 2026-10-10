@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/runtime"
 )
 
@@ -198,5 +199,27 @@ func parseLSP(args string) (runtime.Intent, error) {
 		return runtime.Intent{Kind: runtime.IntentLSPServerToggle, LSPServer: server, LSPEnable: sub == "enable"}, nil
 	default:
 		return runtime.Intent{}, fmt.Errorf("lsp: unknown subcommand %q (want status | enable | disable)", sub)
+	}
+}
+
+// parseShell implements /shell's grammar (T8.4): bare (or "status") lists the
+// backend face; one argument switches to that backend (the panel's Space and
+// this parameter form share the same write+live-swap semantics). The backend
+// is validated here so a typo is a usage refusal, not a silent no-op.
+func parseShell(args string) (runtime.Intent, error) {
+	fields := strings.Fields(args)
+	switch len(fields) {
+	case 0:
+		return runtime.Intent{Kind: runtime.IntentShellShow}, nil
+	case 1:
+		if strings.EqualFold(fields[0], "status") {
+			return runtime.Intent{Kind: runtime.IntentShellShow}, nil
+		}
+		if _, err := agenttool.ShellSpecFor(fields[0]); err != nil {
+			return runtime.Intent{}, fmt.Errorf("shell: %v", err)
+		}
+		return runtime.Intent{Kind: runtime.IntentShellSwitch, ShellBackend: strings.ToLower(fields[0])}, nil
+	default:
+		return runtime.Intent{}, fmt.Errorf("shell: unexpected argument %q (usage: /shell [<backend>])", fields[1])
 	}
 }

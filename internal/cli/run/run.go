@@ -62,6 +62,11 @@ type Env struct {
 	// caller MUST Close it when the run ends (stops the server process).
 	LSP *lsp.Manager
 
+	// Bash is the run's live bash tool (T8.4), or nil when tools are off or
+	// the policy removed it. The /shell surface reads it for the listing and
+	// the hot switch; its configured backend already rides inside the tool.
+	Bash *agenttool.BashTool
+
 	// Memory is the persistent memory store opened once for the run (issue #481),
 	// or nil when persistent memory is disabled (memory.enabled=false), tools are
 	// disabled (--no-tools), or the store could not be opened (a non-fatal
@@ -406,6 +411,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 		Plugins:      mgr,
 		MCP:          mcpMgr,
 		LSP:          lspMgr,
+		Bash:         BashToolFrom(tools),
 		Memory:       memStore,
 		Schedule:     sched,
 		MaxContext:   maxCtx,
@@ -566,13 +572,17 @@ func BuiltinTools(cwd string, disabled bool) []agentcore.AgentTool {
 	// A single job store is shared by bash, bash_output and kill_bash so a
 	// background command launched by bash is visible to the drain/kill tools.
 	jobs := agenttool.NewBashJobStore()
+	// One BashTool instance backs both catalog names (T8.4 user ruling): the
+	// primary "bash" and the "shell" alias — one implementation, two entries.
+	bash := &agenttool.BashTool{Dir: cwd, Jobs: jobs}
 	return []agentcore.AgentTool{
 		&agenttool.ReadTool{Root: cwd, ExtraRoots: ReadableExtraRoots()},
 		&agenttool.WriteTool{Root: cwd, ExtraRoots: ReadableExtraRoots(), Snap: snap},
 		&agenttool.EditTool{Root: cwd, ExtraRoots: ReadableExtraRoots(), Snap: snap},
 		&agenttool.GrepTool{Root: cwd},
 		&agenttool.FindTool{Root: cwd},
-		&agenttool.BashTool{Dir: cwd, Jobs: jobs},
+		bash,
+		&agenttool.ShellAliasTool{Bash: bash},
 		&agenttool.BashOutputTool{Jobs: jobs},
 		&agenttool.BashKillTool{Jobs: jobs},
 		&agenttool.TodoTool{Store: agenttool.NewTodoStore()},

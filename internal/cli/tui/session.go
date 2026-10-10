@@ -396,8 +396,13 @@ func (s *runSession) buildConfig() runtime.RunConfig {
 	// Shellguard (T2.1): the TUI has no per-call confirmation channel, so
 	// ask and strict modes both deny flagged bash commands outright (fail
 	// closed). Off installs nothing. The seam runs ahead of the permission
-	// engine so a Safe command falls through unchanged.
-	if sg := agenttool.ShellguardSeam(s.shellguard, nil); sg != nil {
+	// engine so a Safe command falls through unchanged. kind (T8.4) reports
+	// the live shell backend so a non-bash backend skips the analysis.
+	var shellKind func() string
+	if s.surface.Bash != nil {
+		shellKind = s.surface.Bash.ShellKind
+	}
+	if sg := agenttool.ShellguardSeam(s.shellguard, shellKind, nil); sg != nil {
 		cfg.Batch.ToolExecutorConfig.BeforeToolCall = agenttool.ChainBeforeToolCall(sg, cfg.Batch.ToolExecutorConfig.BeforeToolCall)
 	}
 	return cfg
