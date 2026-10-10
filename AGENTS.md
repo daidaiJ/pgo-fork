@@ -45,10 +45,9 @@
       Del + Esc 冻结体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2
       /lsp 面板（含批 2 工具行 Space 翻转）；前置各自见规格（/lsp 需
       `[lsp] enabled` 或项目层开 + 目录受信；审批面板需 `-a=false` 或
-      /mode ask）
-- [ ] **T7.6 待拍板**：交互模式默认是否从 `--approve` 改 ask（D-C1 落地后
-      ask 第一次可用；规格 approval-modes.md §2.8）；D-C3 bash 只读白名单
-      （落地后 plan 模式 bash 只读调研自动受益）
+      /mode ask——交互默认维持 approve 已拍板）
+- [ ] **T7.6 缓落件**：D-C3 bash 只读白名单（落地后 plan 模式 bash 只读
+      调研自动受益）；plan 文件面随 dynamic-workflow（D-16）
 - [ ] **T7.3 面板族真机对表 grok**（/model 档案链式、/think 下拉、/skills
       //mcp 两级、slash 菜单 [skill] 标记、/resume 别名；前置 = config 先加
       `[models."<id>"]` 档案；清单 = `.handoff/handoff.md` §2.2）
