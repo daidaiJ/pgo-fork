@@ -5,6 +5,36 @@
 
 ## 🔄 Handoff 摘要
 
+### T8.3 输入排队机制补全（队列 pane + 中断冻结 + send-now 插队）— 已落地并推送
+
+- **当前状态：** 2026-10-11 落地（feat + docs 两段提交后推送 origin/dev）；
+  44 包 0 FAIL（`.gtmp/t83-fulltest.log`）；两份二进制已刷（第二份 = cp，
+  sha256 一致）。拍板四条全按最小建议当日落地；**第 8 期改判 ✅ 全部完成
+  （4/4，T8.2 批 2 为任务内余项不降级）**。队列 pane 无终端不可自验，真机
+  手感待用户（与 /lsp、/shell 面板同批约）。
+- **关键证据：** ①`internal/cli/tui/queuepane.go`（新）：`#N` + 首个非空行 +
+  灰 `( +N lines)` 后缀（截断保后缀，grok QueuePane 同构）、cap 3 行窗口、
+  ↑/↓ 选中（subagent 面板同手势：首 ↓ 落顶行 / 首 ↑ 落末行）+ Del 删除
+  （无选中 no-op）+ `popQueueFront`/`startQueued`；②`model.go`：`sendNow`/
+  `queueHeld`/`qpane` 字段 + runEndMsg 排空重写（**held 不排空** + send-now
+  先于 queued + **slash 项内联执行不卡死空闲队列**）+ interruptOrQuit 置
+  held、退出清双队列 + startPrompt 解冻单点 + handleKey 队列键分支（composer
+  空才有键，subagent 面板保持优先）+ `alt+enter` 分支 + 渲染双态（running 槽
+  spinner 行上 / held 态输入框上方，relayout 同步预留）+ keyBinds 四态；
+  ③`input.go`：InsertNewline 收窄为 shift+enter/ctrl+j——**Alt+Enter 转作
+  send-now**（无 Kitty 协议终端换行回退剩 Ctrl+J）；④**顺手修复两件**：入队/
+  插队先展开 paste/image 占位符（原样直存会带占位符字面量开跑）；slash 项
+  排空卡死。tui 包新增 7 钉（插队次序/冻结不偷跑/手动提交解冻/pane 行型+
+  删除/held 可见+退出清队/slash 不卡队/占位符展开）。
+- **拍板四条（2026-10-11 用户确认）**：①Esc 中断后队列冻结不偷跑（裸 Enter =
+  提升队首，新提交 = 先跑新 prompt 再恢复排空）；②send-now = Alt+Enter 入首批
+  （已排队项顺延保留，grok interjection 同构）；③pane 最小版只可见+可删
+  （重排/行内编辑/鼠标按钮缓）；④REPL 维持终端缓冲现状（降级口径）。
+- **详情指针：** 规格 + 偏差 = [wiki/port/queue-management.md](wiki/port/queue-management.md)
+  （收敛/分叉表 + §5 偏差登记）；任务 = [implementation-plan.md](wiki/port/implementation-plan.md)
+  T8.3 + [plan/phase-8.md](wiki/port/plan/phase-8.md)（期 ✅ 全部完成 4/4）；
+  卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11。
+
 ### T8.2 LSP 支持批 1（internal/lsp 内核 + overlay 编辑回灌 + /lsp + 配置分层）— 已落地并推送
 
 - **当前状态：** 2026-10-10 深夜 2 落地（feat + docs 两段提交后推送
@@ -227,6 +257,9 @@
   改造、修复批、原型文档批）/ §3.5 已拍板口径 / §4 待拍板清单 / §5 环境事实
 
 ### 未验证事项
+- [ ] **T8.3 TUI 队列 pane 真机手感**（`#N` 行型 / ↑↓ 选中 + Del 删除 /
+      Esc 中断后冻结不偷跑 + 裸 Enter 提升队首 / Alt+Enter send-now 插队
+      ——各终端的 Alt+Enter 序列形态；前置 = 无，纯 TUI 件）
 - [ ] **T8.4 TUI /shell 面板真机手感**（后端列表级联序 + `[current]` 标注 +
       Space 切换写全局 config + 下一条命令热切生效；前置 = 无，全局开关件）
 - [ ] **T8.2 TUI /lsp 面板真机手感**（server 行状态/诊断计数 + Enter 展开
@@ -263,8 +296,16 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-10 深夜 3：T8.4 /shell 切换 + 默认 shell 后端配置
-  落地**——config `[shell]` 表 + PIGO_SHELL 覆盖链（全局层 only）+ 热切缝
+- **当前阶段**：**2026-10-11：T8.3 输入排队机制补全落地（四条拍板当日收口，
+  第 8 期 ✅ 全部完成）**——队列 pane（`#N` + 首行 + `( +N lines)`，cap 3，
+  ↑/↓ 选中 + Del 删除，running 槽 / held 态双渲染）+ **Esc 中断后队列冻结
+  不偷跑**（裸 Enter 提升队首 / 新提交解冻；退出清队）+ **Alt+Enter send-now
+  插队**（InsertNewline 相应收窄为 shift+enter/ctrl+j）+ 顺手修复（入队占位
+  符展开 / slash 项排空卡死）；44 包 0 FAIL（`.gtmp/t83-fulltest.log`）；规格
+  = wiki/port/queue-management.md，任务 = implementation-plan T8.3（拍板四条
+  当日收口）。上一阶段：
+  **2026-10-10 深夜 3：T8.4 /shell 切换 + 默认 shell 后端配置落地**——config
+  `[shell]` 表 + PIGO_SHELL 覆盖链（全局层 only）+ 热切缝
   （修显式 Shell 恒 `-c` 坑）+ `shell` 别名（三处能力族归一）+ /shell 三投影
   + shellguard 非 bash 后端跳过；五条拍板当日收口（规格 =
   wiki/port/shell-switch.md，任务 = implementation-plan T8.4，期改 ✅3·⏳1）。
