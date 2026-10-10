@@ -5,6 +5,25 @@
 
 ## 🔄 Handoff 摘要
 
+### 实施计划分册拆分（索引 + 状态总览 + plan/ 分册）— done（wiki 侧，无代码改动）
+
+- **当前状态：** 2026-10-10 深夜完成（用户点名：按分期拆分 + 状态不清 + 部分
+  完成无登记）。`wiki/port/implementation-plan.md` 重写为**索引 + 状态总览**
+  （状态图例 ✅/🔶/⏳ + 每期完成度一行 + 当前最前沿）；任务详录拆为
+  **`wiki/port/plan/`**：`phase-1..8.md`（每任务 = 状态行 + 端/规格/规模 +
+  交付 + **余项显式登记**，期首「状态一览」表）+ `backlog.md`（待议/优化池
+  O1/观察池/负面清单 + 已升级件去向）。**无代码改动**；port/README 指针同步。
+- **对账要点：** 第 1–5 期 ✅ 收口（3/4/5/4/4）；第 6 期 8/10（**T6.3 usage
+  MVP、T6.6 韧性件原表无状态标记，本轮补 ⏳ 未开工**；T6.4 = 🔶 盘点 ✅/
+  精选 ⏳ 待拍板）；第 7 期 ✅ T7.7/T7.8、🔶 T7.3（四批已落地 / 余
+  S3–S7·S9 + 真机验收）与 T7.5（普查 + farewell ✅ / P1 清单 ⏳）、⏳
+  T7.1/T7.2（调研定案待实作）/T7.4/T7.6；第 8 期 ✅ T8.1、⏳ T8.2/T8.3
+  （T8.x 自第 7 期段移出独立成册）。任务内余项显式化：T6.1 `Repair(id)`
+  未接线、T6.10 截图回归待用户、T7.8 `/dump` TUI 面、T5.1 所有权校验
+  （→ T7.1 衔接）等。
+- **详情指针：** 索引 = [wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
+  （状态总览）；分册 = `wiki/port/plan/`（phase-1..8 + backlog）。
+
 ### T8.1 供应商配置统一批 — 已落地并推送
 
 - **当前状态：** 2026-10-10 晚落地（feat + docs 指针两段提交，**推送 origin/dev**）；
@@ -334,7 +353,9 @@
   ——新会话先读最新卡，再 `git log` + `git status` 核对现场，禁止凭记忆
   续写；更早脉络查 archive。
 - **施工权威**：[wiki/port/implementation-plan.md](wiki/port/implementation-plan.md)
-  （六期任务表，状态每期收口回填；第 1 期已清空）。
+  （**索引 + 状态总览**；任务详录按期拆分为分册 `plan/phase-1..8.md` +
+  `plan/backlog.md`，2026-10-10——状态图例 ✅/🔶/⏳，部分完成件列
+  「已完成/余项」清单）。
 - **施工纪律**：[wiki/port/design-principles.md](wiki/port/design-principles.md)
   （R1–R12，R11=多参照实现择优：能融合则融合、不能融合取相对最优并在规格
   登记互斥原因；R12=交互形态是命令的第一身份、非交互面只做降级投影；附录已
