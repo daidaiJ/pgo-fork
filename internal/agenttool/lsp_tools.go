@@ -23,10 +23,10 @@ import (
 
 // LSPToolNames lists the family in its canonical order (the deferred-tier
 // registration and the [lsp.gopls] tools filter both use these full names).
-var LSPToolNames = []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols"}
+var LSPToolNames = []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols", "lsp_implementations", "lsp_workspace_symbols"}
 
 // LSPTools materializes the tool family over mgr. filter carries the bare
-// names from [lsp.gopls] tools (empty = all five; entries match with or
+// names from [lsp.gopls] tools (empty = all seven; entries match with or
 // without the lsp_ prefix, case-insensitively; unknown entries are ignored).
 func LSPTools(mgr *lsp.Manager, filter []string) []agentcore.AgentTool {
 	if mgr == nil {
@@ -49,6 +49,8 @@ func LSPTools(mgr *lsp.Manager, filter []string) []agentcore.AgentTool {
 		&LSPReferencesTool{Mgr: mgr},
 		&LSPHoverTool{Mgr: mgr},
 		&LSPSymbolsTool{Mgr: mgr},
+		&LSPImplementationsTool{Mgr: mgr},
+		&LSPWorkspaceSymbolsTool{Mgr: mgr},
 	} {
 		if include(t.Name()) {
 			out = append(out, t)
@@ -477,4 +479,103 @@ func renderLocations(locations []lsp.Location) string {
 		fmt.Fprintf(&b, "\n  %s", loc.String())
 	}
 	return b.String()
+}
+
+// --- lsp_implementations ---
+
+// LSPImplementationsTool resolves implementations of the symbol at a
+// position (interface → implementors, method → overrides).
+type LSPImplementationsTool struct{ lspPositionTool }
+
+func (t *LSPImplementationsTool) Name() string { return "lsp_implementations" }
+
+func (t *LSPImplementationsTool) Description() string {
+	return "Find implementations of the symbol at a position (interface methods, overriding methods) via the language server."
+}
+
+func (t *LSPImplementationsTool) Schema() json.RawMessage {
+	return t.positionSchema("Optional: a substring of the symbol on that line, used to locate the column. Empty = column 0.")
+}
+
+func (t *LSPImplementationsTool) Execute(ctx context.Context, id string, args json.RawMessage, onUpdate agentcore.ToolUpdateFunc) (agentcore.AgentToolResult, error) {
+	a, full, bad := t.resolve(args)
+	if bad != nil {
+		return *bad, nil
+	}
+	locations, err := t.Mgr.Implementations(ctx, full, a.Line, a.Query)
+	if err != nil {
+		return lspFail(err), nil
+	}
+	return lspOk(renderLocations(locations)), nil
+}
+
+// --- lsp_workspace_symbols ---
+
+// LSPWorkspaceSymbolsTool searches the project-wide symbol index
+// (workspace/symbol): the whole-module "where does this live" query.
+type LSPWorkspaceSymbolsTool struct {
+	Mgr *lsp.Manager
+}
+
+func (t *LSPWorkspaceSymbolsTool) Name() string { return "lsp_workspace_symbols" }
+
+func (t *LSPWorkspaceSymbolsTool) Effect() agentcore.ToolEffect {
+	return agentcore.ToolEffect{ReadOnly: true, Scope: agentcore.ScopeWorkspace}
+}
+
+func (t *LSPWorkspaceSymbolsTool) ExecutionMode() agentcore.ToolExecutionMode {
+	return agentcore.ToolExecutionSequential
+}
+
+func (t *LSPWorkspaceSymbolsTool) Description() string {
+	return "Search the workspace's symbol index (functions, types, methods across the whole module) by fuzzy name, via the language server — " +
+		"the fastest way to locate where a symbol is declared in an unfamiliar codebase."
+}
+
+func (t *LSPWorkspaceSymbolsTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "query": {"type": "string", "description": "Symbol name fragment to search for (fuzzy match)."}
+  },
+  "required": ["query"],
+  "additionalProperties": false
+}`)
+}
+
+type lspWorkspaceSymbolsArgs struct {
+	Query string `json:"query"`
+}
+
+func (t *LSPWorkspaceSymbolsTool) Execute(ctx context.Context, id string, args json.RawMessage, onUpdate agentcore.ToolUpdateFunc) (agentcore.AgentToolResult, error) {
+	a, bad := decodeArgs[lspWorkspaceSymbolsArgs](args, "lsp_workspace_symbols")
+	if bad != nil {
+		return *bad, nil
+	}
+	if strings.TrimSpace(a.Query) == "" {
+		return errorResult("lsp_workspace_symbols: query is required"), nil
+	}
+	symbols, err := t.Mgr.WorkspaceSymbols(ctx, a.Query)
+	if err != nil {
+		return lspFail(err), nil
+	}
+	if len(symbols) == 0 {
+		return lspOk("no symbols matching " + a.Query), nil
+	}
+	const cap = 50
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d symbol(s) matching %q:", len(symbols), a.Query)
+	for i, s := range symbols {
+		if i == cap {
+			fmt.Fprintf(&b, "\n  … and %d more (narrow the query)", len(symbols)-cap)
+			break
+		}
+		loc := s.Location.String()
+		if s.Container != "" {
+			fmt.Fprintf(&b, "\n  %s %s (%s) — %s", s.KindName, s.Name, s.Container, loc)
+		} else {
+			fmt.Fprintf(&b, "\n  %s %s — %s", s.KindName, s.Name, loc)
+		}
+	}
+	return lspOk(b.String()), nil
 }

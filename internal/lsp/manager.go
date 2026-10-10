@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,11 +44,12 @@ type Settings struct {
 	Command     string
 	Args        []string
 	Idle        time.Duration
-	ToolFilter  []string   // bare tool names ("diagnostics"); empty = all
-	Extensions  []string   // file types the server overlays; empty = "go"
-	LanguageID  string     // didOpen languageId; empty = "go"
-	Prewarm     bool       // prewarm the server in the background at startup
-	IdleReclaim bool       // stop the server after Settings.Idle unused
+	ToolFilter  []string // bare tool names ("diagnostics"); empty = all
+	Extensions  []string // file types the server overlays; empty = "go"
+	LanguageID  string   // didOpen languageId; empty = "go"
+	Prewarm     bool     // prewarm the server in the background at startup
+	IdleReclaim bool     // stop the server after Settings.Idle unused
+	AutoInstall bool     // install the default command via `go install` when it is missing (config default true; zero-value constructors stay off)
 }
 
 // ErrDisabled is returned by the tool face when LSP is switched off.
@@ -60,7 +62,7 @@ type Manager struct {
 	dir string
 	st  Settings
 
-	mu    sync.Mutex
+	mu sync.Mutex
 	// startMu serializes start attempts so two concurrent first uses cannot
 	// both spawn a server (the loser would leak a process).
 	startMu sync.Mutex
@@ -68,6 +70,15 @@ type Manager struct {
 	on      bool // runtime switch (config enabled && not live-disabled)
 	janit   time.Time
 	close   bool
+	// pendingOverlays carries overlay docs harvested from a dropped server
+	// (crash, idle reclaim, disable) until the next successful start replays
+	// them — restart state restoration so queries after a rebuild still see
+	// the edited files.
+	pendingOverlays map[string]string
+	// lastStartErr is the most recent start failure (missing command, failed
+	// auto-install, failed handshake). Status reports it so /lsp can explain
+	// an [off] server; the next successful start clears it.
+	lastStartErr error
 }
 
 // NewManager builds the manager over dir. enabled=false managers are inert
@@ -84,7 +95,9 @@ func NewManager(st Settings, dir string) *Manager {
 		st.Idle = DefaultIdlePeriod
 	}
 	if len(st.Extensions) == 0 {
-		st.Extensions = []string{"go"}
+		// go.mod / go.work are first-class gopls documents (modfile
+		// diagnostics follow an edit); go.sum stays watcher-only.
+		st.Extensions = []string{"go", "mod", "work"}
 	}
 	if st.LanguageID == "" {
 		st.LanguageID = "go"
@@ -167,24 +180,42 @@ func (m *Manager) ensureStarted() (*Server, error) {
 			m.mu.Unlock()
 			return srv, nil
 		}
+		// Errored or exited: harvest what the dead process still knew before
+		// dropping it, so the rebuild below can replay the overlay state.
+		m.pendingOverlays = srv.overlaySnapshot()
 		m.srv = nil // errored: rebuild
 	}
 	m.mu.Unlock()
 
 	srv, err := m.start()
 	if err != nil {
+		m.mu.Lock()
+		m.lastStartErr = err
+		m.mu.Unlock()
 		return nil, err
 	}
 	m.mu.Lock()
 	m.srv = srv
+	m.lastStartErr = nil
 	m.mu.Unlock()
 	return srv, nil
 }
 
 func (m *Manager) start() (*Server, error) {
+	command := m.st.Command
+	if _, err := exec.LookPath(command); err != nil {
+		if !m.st.AutoInstall {
+			return nil, fmt.Errorf("lsp: %s not found in PATH — install it (go install golang.org/x/tools/gopls@latest) or point [lsp.gopls] command at it", command)
+		}
+		installed, ierr := autoInstall(command)
+		if ierr != nil {
+			return nil, fmt.Errorf("lsp: %s not found in PATH and auto-install failed: %w", command, ierr)
+		}
+		command = installed
+	}
 	cfg := ServerConfig{
 		Name:       m.st.Command,
-		Command:    m.st.Command,
+		Command:    command,
 		Args:       m.st.Args,
 		Dir:        m.dir,
 		Extensions: m.st.Extensions,
@@ -194,6 +225,7 @@ func (m *Manager) start() (*Server, error) {
 	defer cancel()
 	srv, err := NewServer(ctx, cfg)
 	if err == nil {
+		m.replayOverlays(srv)
 		return srv, nil
 	}
 	// Degrade: a gopls without -remote dies with "flag provided but not
@@ -202,11 +234,28 @@ func (m *Manager) start() (*Server, error) {
 		cfg.Args = []string{"serve"}
 		srv2, err2 := NewServer(ctx, cfg)
 		if err2 == nil {
+			m.replayOverlays(srv2)
 			return srv2, nil
 		}
 		return srv2, err2
 	}
 	return srv, err
+}
+
+// replayOverlays re-pushes harvested overlay docs into a freshly started
+// server (restart state restoration). Files deleted since the overlay was
+// captured are skipped — a ghost document would fight the on-disk truth.
+func (m *Manager) replayOverlays(srv *Server) {
+	m.mu.Lock()
+	pending := m.pendingOverlays
+	m.pendingOverlays = nil
+	m.mu.Unlock()
+	for path, text := range pending {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		srv.Overlay(path, text)
+	}
 }
 
 // classifyStartFailure reports whether the start failure looks like an
@@ -345,6 +394,26 @@ func (m *Manager) Symbols(ctx context.Context, path string) ([]Symbol, error) {
 	return srv.Symbols(ctx, path)
 }
 
+// WorkspaceSymbols queries the project-wide symbol index.
+func (m *Manager) WorkspaceSymbols(ctx context.Context, query string) ([]WorkspaceSymbol, error) {
+	srv, err := m.ready()
+	if err != nil {
+		return nil, err
+	}
+	m.touch()
+	return srv.WorkspaceSymbols(ctx, query)
+}
+
+// Implementations resolves implementations of the symbol at the position.
+func (m *Manager) Implementations(ctx context.Context, path string, line int, query string) ([]Location, error) {
+	srv, err := m.ready()
+	if err != nil {
+		return nil, err
+	}
+	m.touch()
+	return srv.Implementations(ctx, path, line, query)
+}
+
 // ready returns a ready server or the disabled/failed reason.
 func (m *Manager) ready() (*Server, error) {
 	m.mu.Lock()
@@ -375,12 +444,17 @@ type ServerStatus struct {
 }
 
 // Status reports the workspace's server state (one row: the configured
-// server, whether or not it is running).
+// server, whether or not it is running). A server that never started carries
+// the last start error (missing command, failed auto-install) so the /lsp
+// face can explain the [off] state.
 func (m *Manager) Status() []ServerStatus {
 	m.mu.Lock()
-	on, srv := m.on, m.srv
+	on, srv, lastErr := m.on, m.srv, m.lastStartErr
 	m.mu.Unlock()
 	st := ServerStatus{Name: m.st.Command, Enabled: on, State: StateOff}
+	if lastErr != nil {
+		st.Error = lastErr.Error()
+	}
 	if srv != nil {
 		st.State = srv.State()
 		st.ServerInfo = srv.ServerInfo()
@@ -393,10 +467,14 @@ func (m *Manager) Status() []ServerStatus {
 }
 
 // Stop shuts the server down (idle reclaim and run-end close share this).
+// The overlay state is harvested first so the next start replays it.
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	srv := m.srv
 	m.srv = nil
+	if srv != nil {
+		m.pendingOverlays = srv.overlaySnapshot()
+	}
 	m.janit = time.Now()
 	m.mu.Unlock()
 	if srv != nil {

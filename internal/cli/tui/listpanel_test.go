@@ -473,3 +473,31 @@ var errTestLSPStore = errorString("store closed")
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// Batch 2 (T8.2 ②): the [lsp.gopls] tools allow-list drives the tool rows'
+// face state — off rows carry the off marker and the next-session note,
+// filter members stay on.
+func TestGatherLSPRowsToolFaceState(t *testing.T) {
+	mgr := lsp.NewManager(lsp.Settings{Enabled: true}, t.TempDir())
+	s := &runSession{surface: prompts.SurfaceDeps{
+		LSP:          mgr,
+		LSPToolsList: func() []string { return []string{"hover"} },
+	}}
+	rows, note := gatherLSPRows(s)
+	if note != "" || len(rows) != 1 || len(rows[0].children) != len(agenttool.LSPToolNames) {
+		t.Fatalf("rows/note = %+v / %q", rows, note)
+	}
+	var hoverOn, otherOff bool
+	for _, c := range rows[0].children {
+		if c.title == "lsp_hover" {
+			hoverOn = !c.off
+			continue
+		}
+		if c.off && strings.Contains(c.desc, "已移出工具面") {
+			otherOff = true
+		}
+	}
+	if !hoverOn || !otherOff {
+		t.Fatalf("tool face state: hoverOn=%v otherOff=%v (children=%+v)", hoverOn, otherOff, rows[0].children)
+	}
+}

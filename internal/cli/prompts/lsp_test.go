@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallnest/pigo/internal/agenttool"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/runtime"
 )
 
@@ -65,4 +67,97 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+// Batch 2 (T8.2 ②): the /lsp tool grammar and the per-tool face switch.
+
+func TestParseLSPToolToggle(t *testing.T) {
+	cases := []struct {
+		args string
+		want runtime.Intent
+	}{
+		{"tool enable hover", runtime.Intent{Kind: runtime.IntentLSPToolToggle, LSPTool: "hover", LSPEnable: true}},
+		{"tool disable lsp_hover", runtime.Intent{Kind: runtime.IntentLSPToolToggle, LSPTool: "lsp_hover"}},
+	}
+	for _, tc := range cases {
+		got, err := parseLSP(tc.args)
+		if err != nil {
+			t.Errorf("parseLSP(%q): %v", tc.args, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseLSP(%q) = %+v, want %+v", tc.args, got, tc.want)
+		}
+	}
+	for _, bad := range []string{"tool", "tool enable", "tool frobnicate hover", "tool enable hover extra"} {
+		if _, err := parseLSP(bad); err == nil {
+			t.Errorf("parseLSP(%q) = nil error, want a usage refusal", bad)
+		}
+	}
+}
+
+func TestLSPToolToggle(t *testing.T) {
+	var stored [][]string
+	deps := &SurfaceDeps{
+		LSPToolsList:  func() []string { return nil }, // all on
+		LSPToolsStore: func(tools []string) error { stored = append(stored, tools); return nil },
+	}
+	msg := deps.LSPToolToggle("lsp_hover", false)
+	if !containsAll(msg, "lsp_hover disabled", "next session") {
+		t.Fatalf("disable msg = %q", msg)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("store calls = %d", len(stored))
+	}
+	if len(stored[0]) != len(agenttool.LSPToolNames)-1 {
+		t.Fatalf("stored list = %v (want the family minus one)", stored[0])
+	}
+	for _, name := range stored[0] {
+		if name == "hover" || name == "lsp_hover" {
+			t.Fatalf("disabled tool still stored: %v", stored[0])
+		}
+	}
+	msg = deps.LSPToolToggle("hover", true)
+	if !containsAll(msg, "hover enabled") {
+		t.Fatalf("enable msg = %q", msg)
+	}
+	// Refusal: disabling the last enabled tool would flip an empty filter
+	// back to "all on".
+	deps2 := &SurfaceDeps{
+		LSPToolsList:  func() []string { return []string{"hover"} },
+		LSPToolsStore: func([]string) error { return nil },
+	}
+	if msg := deps2.LSPToolToggle("hover", false); !containsAll(msg, "refusing", "last enabled") {
+		t.Fatalf("last-tool refusal = %q", msg)
+	}
+	// Unknown tool names carry the family in the note.
+	if msg := deps.LSPToolToggle("frobnicate", true); !containsAll(msg, "unknown tool") {
+		t.Fatalf("unknown tool msg = %q", msg)
+	}
+	// Read-only surfaces refuse without a store.
+	if msg := (&SurfaceDeps{}).LSPToolToggle("hover", true); !containsAll(msg, "config writes unavailable") {
+		t.Fatalf("nil store msg = %q", msg)
+	}
+}
+
+func TestLSPToolRowsFromFamily(t *testing.T) {
+	deps := &SurfaceDeps{LSP: lsp.NewManager(lsp.Settings{Enabled: false}, t.TempDir())}
+	rows := deps.LSPToolRows()
+	if len(rows) != len(agenttool.LSPToolNames) {
+		t.Fatalf("rows = %v, want the %d-name family", rows, len(agenttool.LSPToolNames))
+	}
+	if rows := (&SurfaceDeps{}).LSPToolRows(); rows != nil {
+		t.Fatal("nil manager must yield nil rows")
+	}
+}
+
+func TestLSPListShowsToolFaceState(t *testing.T) {
+	deps := &SurfaceDeps{
+		LSP:          lsp.NewManager(lsp.Settings{Enabled: false}, t.TempDir()),
+		LSPToolsList: func() []string { return []string{"hover"} },
+	}
+	msg := deps.lspList()
+	if !containsAll(msg, "lsp_diagnostics [off", "lsp_hover\n") {
+		t.Fatalf("listing = %q", msg)
+	}
 }

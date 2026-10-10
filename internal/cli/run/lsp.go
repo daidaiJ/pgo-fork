@@ -35,6 +35,7 @@ func ResolveLSPSettings(tomlLSP config.LSPConfig) (lsp.Settings, error) {
 		ToolFilter:  tomlLSP.Gopls.Tools,
 		Prewarm:     true,
 		IdleReclaim: true,
+		AutoInstall: tomlLSP.Gopls.AutoInstall == nil || *tomlLSP.Gopls.AutoInstall,
 	}
 	// Project layer (trusted only): {"lsp": {"enabled": bool}}. An untrusted
 	// directory contributes nothing — a checked-out repo must not be able to

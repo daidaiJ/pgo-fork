@@ -8,11 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/smallnest/pigo/internal/testenv"
 )
 
 // The fake language server runs as a helper process of this test binary
@@ -23,12 +26,35 @@ import (
 
 const fakeServerEnv = "GO_LSP_FAKE_SERVER"
 
+// fakeLogEnv names a file the fake server appends one line per observed
+// didOpen/didChange/pull request to — the server-side observation channel
+// the replay/pull tests read back.
+const fakeLogEnv = "GO_LSP_FAKE_LOG"
+
+// fakePullEnv makes the fake server answer textDocument/diagnostic with a
+// full report instead of the default MethodNotFound.
+const fakePullEnv = "GO_LSP_FAKE_PULL"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeServerEnv) == "1" {
 		runFakeServer()
 		return
 	}
-	os.Exit(m.Run())
+	os.Exit(testenv.Main(m))
+}
+
+// fakeLog appends one event line to the observation log (no-op without it).
+func fakeLog(line string) {
+	p := os.Getenv(fakeLogEnv)
+	if p == "" {
+		return
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(f, line)
+	f.Close()
 }
 
 // framedRead reads one Content-Length framed message.
@@ -110,10 +136,13 @@ func runFakeServer() {
 			}
 			var p struct {
 				TextDocument struct {
-					URI string `json:"uri"`
+					URI        string `json:"uri"`
+					LanguageID string `json:"languageId"`
+					Version    int    `json:"version"`
 				} `json:"textDocument"`
 			}
 			json.Unmarshal(msg.Params, &p)
+			fakeLog(fmt.Sprintf("%s %s version=%d lang=%s", msg.Method, p.TextDocument.URI, p.TextDocument.Version, p.TextDocument.LanguageID))
 			framedWrite(os.Stdout, map[string]any{
 				"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
 				"params": map[string]any{
@@ -129,7 +158,7 @@ func runFakeServer() {
 					},
 				},
 			})
-		case msg.Method == "textDocument/definition":
+		case msg.Method == "textDocument/definition" || msg.Method == "textDocument/implementation":
 			var p struct {
 				TextDocument struct {
 					URI string `json:"uri"`
@@ -142,6 +171,43 @@ func runFakeServer() {
 					{"uri": p.TextDocument.URI, "range": map[string]any{"start": map[string]any{"line": 9, "character": 5}, "end": map[string]any{"line": 9, "character": 8}}},
 				},
 			})
+		case msg.ID != nil && msg.Method == "workspace/symbol":
+			var p struct {
+				Query string `json:"query"`
+			}
+			json.Unmarshal(msg.Params, &p)
+			framedWrite(os.Stdout, map[string]any{
+				"jsonrpc": "2.0", "id": *msg.ID,
+				"result": []map[string]any{
+					{
+						"name": p.Query + "Fn", "kind": 12, "containerName": "pkg",
+						"location": map[string]any{
+							"uri":   "file:///fake/probe/x.go",
+							"range": map[string]any{"start": map[string]any{"line": 2, "character": 5}, "end": map[string]any{"line": 2, "character": 9}},
+						},
+					},
+				},
+			})
+		case msg.ID != nil && msg.Method == "textDocument/diagnostic":
+			fakeLog("pull")
+			if os.Getenv(fakePullEnv) == "1" {
+				framedWrite(os.Stdout, map[string]any{
+					"jsonrpc": "2.0", "id": *msg.ID,
+					"result": map[string]any{
+						"kind": "full",
+						"items": []map[string]any{
+							{
+								"range":    map[string]any{"start": map[string]any{"line": 1, "character": 0}, "end": map[string]any{"line": 1, "character": 3}},
+								"severity": 2,
+								"source":   "pull",
+								"message":  "pulled problem",
+							},
+						},
+					},
+				})
+			} else {
+				framedWrite(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": *msg.ID, "error": map[string]any{"code": -32601, "message": "no pull"}})
+			}
 		case msg.ID != nil:
 			framedWrite(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": *msg.ID, "error": map[string]any{"code": -32601, "message": "unknown"}})
 		case msg.Method == "exit":
@@ -444,4 +510,218 @@ func TestDiagnosticsCount(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("diagnostics never arrived")
+}
+
+// --- batch 2 (T8.2 ②) ---
+
+// fakeServerConfigWith builds the fake-server config with extra extensions
+// (the mod/work overlay tests need a server that handles those file types).
+func fakeServerConfigWith(t *testing.T, dir string, ext []string) ServerConfig {
+	cfg := fakeServerConfig(t, dir)
+	cfg.Extensions = ext
+	return cfg
+}
+
+func TestServerWorkspaceSymbols(t *testing.T) {
+	s := newFakeServer(t)
+	syms, err := s.WorkspaceSymbols(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("workspace/symbol: %v", err)
+	}
+	if len(syms) != 1 {
+		t.Fatalf("symbols = %v", syms)
+	}
+	sy := syms[0]
+	if sy.Name != "targetFn" || sy.KindName != "function" || sy.Container != "pkg" {
+		t.Fatalf("symbol = %+v", sy)
+	}
+	if !strings.HasSuffix(sy.Location.Path, "x.go") || sy.Location.Line != 2 {
+		t.Fatalf("location = %+v", sy.Location)
+	}
+}
+
+func TestServerImplementations(t *testing.T) {
+	s := newFakeServer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.go")
+	s.Overlay(path, "package a\n\nvar target = 1\n")
+	locs, err := s.Implementations(context.Background(), path, 3, "target")
+	if err != nil {
+		t.Fatalf("implementation: %v", err)
+	}
+	if len(locs) != 1 || locs[0].Path != path || locs[0].Line != 9 {
+		t.Fatalf("locations = %v", locs)
+	}
+}
+
+// TestServerPullWriteOffAfterMethodNotFound: a server that answers
+// textDocument/diagnostic with MethodNotFound is written off after one ask —
+// the log shows exactly one pull request across two queries.
+func TestServerPullWriteOffAfterMethodNotFound(t *testing.T) {
+	dir := testenv.Dir(t)
+	logPath := filepath.Join(dir, "fake.log")
+	t.Setenv(fakeLogEnv, logPath)
+	cfg := fakeServerConfig(t, dir)
+	s, err := NewServer(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(s.Stop)
+	path := filepath.Join(dir, "never.go")
+	for i := 0; i < 2; i++ {
+		if diags := s.Diagnostics(path, 250*time.Millisecond); len(diags) != 0 {
+			t.Fatalf("diagnostics = %v", diags)
+		}
+	}
+	// Both queries waited silently (no overlay, no publish); exactly one pull
+	// must have fired — the second is short-circuited by the write-off.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if n := countLines(logPath, "pull"); n >= 1 {
+			if n != 1 {
+				t.Fatalf("pull requests = %d, want exactly 1 (write-off)", n)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no pull request logged")
+}
+
+// TestServerPullFallbackAnswers: a pull-mode server's textDocument/diagnostic
+// report lands in the store when the push wait finds nothing fresh.
+func TestServerPullFallbackAnswers(t *testing.T) {
+	dir := testenv.Dir(t)
+	t.Setenv(fakePullEnv, "1")
+	cfg := fakeServerConfig(t, dir)
+	s, err := NewServer(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(s.Stop)
+	path := filepath.Join(dir, "quiet.go")
+	diags := s.Diagnostics(path, 300*time.Millisecond)
+	list, ok := diags[path]
+	if !ok || len(list) != 1 {
+		t.Fatalf("diagnostics = %v", diags)
+	}
+	if list[0].Message != "pulled problem" || list[0].Severity != 2 {
+		t.Fatalf("diagnostic = %+v", list[0])
+	}
+}
+
+// TestManagerHarvestReplayAfterStop: Stop harvests the overlay docs and the
+// rebuilt server replays them (the fake server's log gains a second didOpen
+// for the same file).
+func TestManagerHarvestReplayAfterStop(t *testing.T) {
+	dir := testenv.Dir(t)
+	logPath := filepath.Join(dir, "fake.log")
+	t.Setenv(fakeServerEnv, "1")
+	t.Setenv(fakeLogEnv, logPath)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("no test executable: %v", err)
+	}
+	path := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(path, []byte("package a\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(Settings{Enabled: true, Command: exe, Args: []string{"-test.run=TestFakeServerEntry"}}, dir)
+	t.Cleanup(func() { m.Close() })
+
+	m.Overlay(path, "package a\n\nfunc F() {}\n")
+	waitForLogCount(t, logPath, "textDocument/didOpen", 1, 10*time.Second)
+	m.Stop() // idle-reclaim shape: harvest before the drop
+
+	// The next use rebuilds; the harvested doc is replayed as a fresh didOpen.
+	m.Overlay(path, "package a\n\nfunc G() {}\n")
+	waitForLogCount(t, logPath, "textDocument/didOpen", 2, 10*time.Second)
+}
+
+// TestServerModOverlayLanguageID: mod/work overlays open with the go.mod /
+// go.work languageId, not the server default.
+func TestServerModOverlayLanguageID(t *testing.T) {
+	dir := testenv.Dir(t)
+	logPath := filepath.Join(dir, "fake.log")
+	t.Setenv(fakeLogEnv, logPath)
+	cfg := fakeServerConfigWith(t, dir, []string{"go", "mod", "work"})
+	s, err := NewServer(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(s.Stop)
+	mod := filepath.Join(dir, "go.mod")
+	s.Overlay(mod, "module probe\n")
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, l := range readLines(logPath) {
+			if strings.HasPrefix(l, "textDocument/didOpen") && strings.HasSuffix(strings.Fields(l)[1], "go.mod") && strings.Contains(l, "lang=go.mod") {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no didOpen with lang=go.mod logged")
+}
+
+// --- auto-install units ---
+
+func TestAutoInstallCustomCommandRefused(t *testing.T) {
+	if _, err := autoInstall("mylangserver"); err == nil || !strings.Contains(err.Error(), "auto-install only covers") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAutoInstallExistingTarget(t *testing.T) {
+	bin := testenv.Dir(t)
+	name := "gopls"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	target := filepath.Join(bin, name)
+	if err := os.WriteFile(target, []byte("#!fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := cacheBinDir
+	cacheBinDir = func() (string, error) { return bin, nil }
+	t.Cleanup(func() { cacheBinDir = old })
+	got, err := autoInstall("gopls")
+	if err != nil {
+		t.Fatalf("autoInstall: %v", err)
+	}
+	if got != target {
+		t.Fatalf("got %q, want %q", got, target)
+	}
+}
+
+// --- log helpers ---
+
+func readLines(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return strings.Split(string(data), "\n")
+}
+
+func countLines(path, prefix string) int {
+	n := 0
+	for _, l := range readLines(path) {
+		if strings.HasPrefix(l, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func waitForLogCount(t *testing.T, path, prefix string, want int, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if countLines(path, prefix) >= want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("log %s never reached %d lines with prefix %q (have %d)", path, want, prefix, countLines(path, prefix))
 }

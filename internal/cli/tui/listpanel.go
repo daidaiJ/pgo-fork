@@ -323,8 +323,8 @@ func gatherShellRows(s *runSession) ([]listRow, string) {
 // gatherLSPRows maps the LSP manager's status to the panel's two-level rows
 // (T8.2, /mcp panel alignment): the configured server row carries its state,
 // live diagnostics load and serverInfo; expanding it shows the deferred tool
-// family (informational rows — the LSP tools are default-deferred, claimed
-// via search_tools, with no per-tool config switch in this batch).
+// family with each row's face state — off rows are excluded from the global
+// [lsp.gopls] tools allow-list (batch 2 per-tool switches).
 func gatherLSPRows(s *runSession) ([]listRow, string) {
 	if s == nil {
 		return nil, "(LSP 面板不可用：无活动会话)"
@@ -335,6 +335,13 @@ func gatherLSPRows(s *runSession) ([]listRow, string) {
 			note += "\n(项目层已有 lsp 段：目录未信任时不生效)"
 		}
 		return nil, note
+	}
+	filter := map[string]bool{}
+	if s.surface.LSPToolsList != nil {
+		for _, t := range s.surface.LSPToolsList() {
+			bare := strings.ToLower(strings.TrimSpace(t))
+			filter[strings.TrimPrefix(bare, "lsp_")] = true
+		}
 	}
 	out := make([]listRow, 0)
 	for _, st := range s.surface.LSP.Status() {
@@ -356,8 +363,13 @@ func gatherLSPRows(s *runSession) ([]listRow, string) {
 		}
 		row := listRow{title: st.Name, desc: desc, tag: tag, off: !st.Enabled, server: st.Name}
 		for _, name := range s.surface.LSPToolRows() {
+			off := len(filter) > 0 && !filter[strings.TrimPrefix(strings.ToLower(name), "lsp_")]
+			desc := "search_tools 认领后进声明面"
+			if off {
+				desc = "已移出工具面（config [lsp.gopls] tools；下会话生效）"
+			}
 			row.children = append(row.children, listRow{
-				title: name, desc: "search_tools 认领后进声明面", tag: "[deferred]",
+				title: name, desc: desc, tag: "[deferred]", off: off,
 				server: st.Name, tool: name,
 			})
 		}

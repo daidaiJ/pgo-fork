@@ -46,6 +46,13 @@ type SurfaceDeps struct {
 	// LSPConfigured reports whether the project layer carries an lsp section
 	// (informational for the listing); nil = unknown.
 	LSPConfigured func() bool
+	// LSPToolsList reads the global [lsp.gopls] tools allow-list (nil/empty =
+	// all tools on); nil makes the listing show every tool as on.
+	LSPToolsList func() []string
+	// LSPToolsStore persists the [lsp.gopls] tools allow-list to the global
+	// config.toml (config.SetLSPTools); nil makes /lsp tool enable|disable
+	// refuse (read-only surface).
+	LSPToolsStore func(tools []string) error
 	// Bash is the run's live bash tool (T8.4); nil when tools are off or the
 	// policy removed it. The /shell listing reads its backend; the switch
 	// swaps it live (the next command runs under the new backend).
@@ -95,8 +102,8 @@ func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 	})
 	reg.AddBuiltin(runtime.SlashCommand{
 		Name:         "lsp",
-		ArgumentHint: "[enable|disable [server]]",
-		Description:  "LSP server state and diagnostics counts; enable/disable writes the project switch",
+		ArgumentHint: "[status | enable|disable [server] | tool enable|disable <name>]",
+		Description:  "LSP server state and diagnostics counts; enable/disable writes the project switch, tool enable|disable writes the tool face",
 		Projection:   runtime.ProjLSPPanel,
 		Parse:        parseLSP,
 	})
@@ -547,7 +554,20 @@ func (d *SurfaceDeps) lspList() string {
 			fmt.Fprintf(&b, "\n    error: %s", st.Error)
 		}
 	}
-	b.WriteString("\n  tools: lsp_diagnostics, lsp_definition, lsp_references, lsp_hover, lsp_symbols (deferred — search_tools claims them)")
+	b.WriteString("\n  tools (deferred — search_tools claims them):")
+	filter := map[string]bool{}
+	if d.LSPToolsList != nil {
+		for _, t := range d.LSPToolsList() {
+			filter[normalizeLSPToolName(t)] = true
+		}
+	}
+	for _, name := range agenttool.LSPToolNames {
+		mark := ""
+		if len(filter) > 0 && !filter[normalizeLSPToolName(name)] {
+			mark = " [off — config [lsp.gopls] tools]"
+		}
+		fmt.Fprintf(&b, "\n    %s%s", name, mark)
+	}
 	return b.String()
 }
 
@@ -578,12 +598,78 @@ func (d *SurfaceDeps) lspServerToggle(enable bool) string {
 func (d *SurfaceDeps) LSPServerToggle(enable bool) string { return d.lspServerToggle(enable) }
 
 // LSPToolRows returns the deferred tool family rows for the /lsp panel's
-// tool level (the panel-facing data face; empty when LSP is off).
+// tool level (the panel-facing data face; empty when LSP is off). The names
+// come from agenttool.LSPToolNames — the same single source the deferred
+// registration and the [lsp.gopls] tools filter use.
 func (d *SurfaceDeps) LSPToolRows() []string {
 	if d.LSP == nil {
 		return nil
 	}
-	return []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols"}
+	return append([]string{}, agenttool.LSPToolNames...)
+}
+
+// lspToolToggle writes the global [lsp.gopls] tools allow-list with name
+// flipped (the per-tool face switch; the deferred plan bakes the filter at
+// startup, so the change lands on the next session). Disabling the last
+// enabled tool is refused: an empty filter means "all tools".
+func (d *SurfaceDeps) lspToolToggle(name string, enable bool) string {
+	bare := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), "lsp_")
+	known := false
+	for _, n := range agenttool.LSPToolNames {
+		if strings.TrimPrefix(n, "lsp_") == bare {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return fmt.Sprintf("lsp: unknown tool %q (family: %s)", name, strings.Join(agenttool.LSPToolNames, ", "))
+	}
+	var current []string
+	if d.LSPToolsList != nil {
+		current = d.LSPToolsList()
+	}
+	filter := map[string]bool{}
+	for _, t := range current {
+		filter[strings.TrimPrefix(strings.ToLower(strings.TrimSpace(t)), "lsp_")] = true
+	}
+	if len(current) == 0 {
+		for _, n := range agenttool.LSPToolNames {
+			filter[strings.TrimPrefix(n, "lsp_")] = true
+		}
+	}
+	if enable {
+		filter[bare] = true
+	} else {
+		delete(filter, bare)
+	}
+	if len(filter) == 0 {
+		return fmt.Sprintf("lsp: refusing to disable %s — it is the last enabled tool (an empty filter means all tools)", name)
+	}
+	next := make([]string, 0, len(filter))
+	for _, n := range agenttool.LSPToolNames {
+		if filter[strings.TrimPrefix(n, "lsp_")] {
+			next = append(next, strings.TrimPrefix(n, "lsp_"))
+		}
+	}
+	if d.LSPToolsStore == nil {
+		return "lsp: config writes unavailable in this context (read-only surface)"
+	}
+	if err := d.LSPToolsStore(next); err != nil {
+		return fmt.Sprintf("lsp: tool switch failed: %v", err)
+	}
+	return fmt.Sprintf("lsp: %s %s — written to config.toml [lsp.gopls] tools; takes effect on the next session", name, map[bool]string{true: "enabled", false: "disabled"}[enable])
+}
+
+// LSPToolToggle is the panel-facing wrapper of the /lsp tool enable|disable
+// path.
+func (d *SurfaceDeps) LSPToolToggle(name string, enable bool) string {
+	return d.lspToolToggle(name, enable)
+}
+
+// normalizeLSPToolName folds a filter entry to its bare family name
+// ("lsp_hover"/"Hover" → "hover"), matching agenttool's filter semantics.
+func normalizeLSPToolName(s string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "lsp_")
 }
 
 // shellList renders the shell face (T8.4): the selectable backends with the

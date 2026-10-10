@@ -181,3 +181,29 @@ func TestLSPProjectConfigured(t *testing.T) {
 		t.Fatal("a config without lsp must not be reported")
 	}
 }
+
+// AutoInstall maps the nil-default-true config pointer: absent = install on
+// demand, explicit false = fail fast on a missing command.
+func TestResolveLSPSettingsAutoInstall(t *testing.T) {
+	isolateTrust(t)
+	st, err := ResolveLSPSettings(config.LSPConfig{})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !st.AutoInstall {
+		t.Fatal("absent auto_install must default to true")
+	}
+	falsy := false
+	st, err = ResolveLSPSettings(config.LSPConfig{Gopls: config.LSPServerConfig{AutoInstall: &falsy}})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if st.AutoInstall {
+		t.Fatal("auto_install = false must survive the resolve")
+	}
+	truly := true
+	st, _ = ResolveLSPSettings(config.LSPConfig{Gopls: config.LSPServerConfig{AutoInstall: &truly}})
+	if !st.AutoInstall {
+		t.Fatal("auto_install = true must survive the resolve")
+	}
+}

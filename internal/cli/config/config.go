@@ -151,11 +151,14 @@ type LSPConfig struct {
 // LSPServerConfig is the [lsp.gopls] TOML table: the command/args to launch
 // (defaults live in internal/lsp: gopls -remote=auto serve, the daemon path)
 // and the optional tools list restricting which lsp_* tools materialize
-// (bare names: "diagnostics", "definition", ...; empty = all).
+// (bare names: "diagnostics", "definition", ...; empty = all). AutoInstall
+// is nil-default-true: a missing command is installed via `go install` into
+// the pigo cache bin; set false to fail fast instead.
 type LSPServerConfig struct {
-	Command string   `toml:"command"`
-	Args    []string `toml:"args"`
-	Tools   []string `toml:"tools"`
+	Command     string   `toml:"command"`
+	Args        []string `toml:"args"`
+	Tools       []string `toml:"tools"`
+	AutoInstall *bool    `toml:"auto_install"`
 }
 
 // UnmarshalTOML decodes the config with the overloaded "provider" key routed

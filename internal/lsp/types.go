@@ -70,6 +70,16 @@ type Symbol struct {
 	Children  []Symbol
 }
 
+// WorkspaceSymbol is one workspace/symbol hit: a project-wide symbol with
+// its real file location (the flat SymbolInformation wire shape).
+type WorkspaceSymbol struct {
+	Name      string
+	Kind      int
+	KindName  string
+	Container string
+	Location  Location
+}
+
 func symbolKindName(kind int) string {
 	// LSP 3.17 SymbolKind values 1-26; the common ones named, the rest numeric.
 	names := map[int]string{
@@ -256,4 +266,64 @@ type hierSymbolNode struct {
 	Range          wireRange        `json:"range"`
 	SelectionRange wireRange        `json:"selectionRange"`
 	Children       []hierSymbolNode `json:"children"`
+}
+
+// decodeDocumentDiagnosticReport flattens the textDocument/diagnostic result
+// (3.17): a FullDocumentDiagnosticReport {"kind":"full","items":[…]} (the
+// relatedDocuments member is ignored), the legacy bare Diagnostic[] shape,
+// or "unchanged" (nothing new — the caller keeps what it has). ok is false
+// when the body carries no usable item list.
+func decodeDocumentDiagnosticReport(raw json.RawMessage) ([]Diagnostic, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var full struct {
+		Kind  string           `json:"kind"`
+		Items []wireDiagnostic `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &full); err == nil && full.Kind == "full" {
+		out := make([]Diagnostic, 0, len(full.Items))
+		for _, w := range full.Items {
+			out = append(out, w.flatten())
+		}
+		return out, true
+	}
+	var legacy []wireDiagnostic
+	if err := json.Unmarshal(raw, &legacy); err == nil && legacy != nil {
+		out := make([]Diagnostic, 0, len(legacy))
+		for _, w := range legacy {
+			out = append(out, w.flatten())
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// decodeWorkspaceSymbols flattens the workspace/symbol result: always the
+// flat SymbolInformation[] shape (workspace symbols carry real file
+// locations, so the location is kept, unlike decodeSymbols' flat branch).
+func decodeWorkspaceSymbols(raw json.RawMessage) []WorkspaceSymbol {
+	if len(raw) == 0 {
+		return nil
+	}
+	var flat []struct {
+		Name          string       `json:"name"`
+		Kind          int          `json:"kind"`
+		ContainerName string       `json:"containerName"`
+		Location      wireLocation `json:"location"`
+	}
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return nil
+	}
+	out := make([]WorkspaceSymbol, 0, len(flat))
+	for _, f := range flat {
+		out = append(out, WorkspaceSymbol{
+			Name:      f.Name,
+			Kind:      f.Kind,
+			KindName:  symbolKindName(f.Kind),
+			Container: f.ContainerName,
+			Location:  Location{Path: URIToPath(f.Location.URI), Line: f.Location.Range.Start.Line, Character: f.Location.Range.Start.Character},
+		})
+	}
+	return out
 }

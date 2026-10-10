@@ -197,8 +197,17 @@ func parseLSP(args string) (runtime.Intent, error) {
 			server = fields[1]
 		}
 		return runtime.Intent{Kind: runtime.IntentLSPServerToggle, LSPServer: server, LSPEnable: sub == "enable"}, nil
+	case "tool":
+		if len(fields) != 3 {
+			return runtime.Intent{}, fmt.Errorf("lsp: usage /lsp tool enable|disable <name> (family: %s)", strings.Join(agenttool.LSPToolNames, ", "))
+		}
+		dir := strings.ToLower(fields[1])
+		if dir != "enable" && dir != "disable" {
+			return runtime.Intent{}, fmt.Errorf("lsp: unknown tool subcommand %q (want enable | disable)", fields[1])
+		}
+		return runtime.Intent{Kind: runtime.IntentLSPToolToggle, LSPTool: fields[2], LSPEnable: dir == "enable"}, nil
 	default:
-		return runtime.Intent{}, fmt.Errorf("lsp: unknown subcommand %q (want status | enable | disable)", sub)
+		return runtime.Intent{}, fmt.Errorf("lsp: unknown subcommand %q (want status | enable | disable | tool)", sub)
 	}
 }
 

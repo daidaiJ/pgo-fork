@@ -120,3 +120,20 @@ func TestLSPErrorBlock(t *testing.T) {
 		t.Fatalf("capped block = %q", got)
 	}
 }
+
+// The batch-2 family additions share the family's argument discipline:
+// implementations is a position tool, workspace_symbols requires a query.
+func TestLSPNewToolArgValidation(t *testing.T) {
+	mgr := lsp.NewManager(lsp.Settings{Enabled: false}, t.TempDir())
+	impl := &LSPImplementationsTool{lspPositionTool{Mgr: mgr, name: "lsp_implementations"}}
+	if text := lspText(t, runLSP(t, impl, `{"line": 3}`)); !strings.Contains(text, "path is required") {
+		t.Fatalf("implementations missing path: %q", text)
+	}
+	ws := &LSPWorkspaceSymbolsTool{Mgr: mgr}
+	if text := lspText(t, runLSP(t, ws, `{}`)); !strings.Contains(text, "query is required") {
+		t.Fatalf("workspace_symbols missing query: %q", text)
+	}
+	if text := lspText(t, runLSP(t, ws, `{"query": "   "}`)); !strings.Contains(text, "query is required") {
+		t.Fatalf("workspace_symbols blank query: %q", text)
+	}
+}

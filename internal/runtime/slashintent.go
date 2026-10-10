@@ -86,6 +86,9 @@ const (
 	// IntentLSPServerToggle flips the project-layer LSP switch —
 	// /lsp enable|disable [server].
 	IntentLSPServerToggle
+	// IntentLSPToolToggle flips one lsp_* tool's slot in the global
+	// [lsp.gopls] tools allow-list — /lsp tool enable|disable <name>.
+	IntentLSPToolToggle
 	// IntentShellShow reports the shell backend face — bare /shell (the
 	// REPL's degraded projection of the TUI panel).
 	IntentShellShow
@@ -142,6 +145,8 @@ func (k IntentKind) String() string {
 		return "lsp-show"
 	case IntentLSPServerToggle:
 		return "lsp-server-toggle"
+	case IntentLSPToolToggle:
+		return "lsp-tool-toggle"
 	case IntentShellShow:
 		return "shell-show"
 	case IntentShellSwitch:
@@ -194,8 +199,11 @@ type Intent struct {
 	// IntentLSPServerToggle: the optional server name (empty = the one
 	// configured server) and the toggle direction (LSPEnable, true = enable —
 	// the project switch speaks "enable", mirroring the server toggle).
-	LSPServer  string
-	LSPEnable  bool
+	LSPServer string
+	LSPEnable bool
+	// IntentLSPToolToggle: the lsp_* tool name (bare or full) and the toggle
+	// direction (LSPEnable, true = re-admit into the [lsp.gopls] tools list).
+	LSPTool string
 	// IntentShellSwitch: the backend name (bash|powershell|pwsh|cmd|wsl).
 	ShellBackend string
 	// IntentCompact: optional free-text user focus for the summarizer (grok

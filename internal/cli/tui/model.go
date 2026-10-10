@@ -2035,12 +2035,13 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 		regather = func() ([]listRow, string) { return gatherSkillRows(m.session) }
 	} else if kind == "lsp" {
 		// The LSP panel (T8.2): Space on the server row flips the project
-		// switch (trust-gated write + live apply); tool rows are informational
-		// (default-deferred family, no per-tool switch in this batch).
+		// switch (trust-gated write + live apply); Space on a tool row flips
+		// its slot in the global [lsp.gopls] tools allow-list (batch 2; the
+		// deferred plan bakes the filter at startup, so it lands next session).
 		p = &m.lspP
 		apply = func(r listRow) string {
 			if r.tool != "" {
-				return r.tool + ": deferred — call search_tools to load it (per-tool switches come with a later batch)"
+				return m.session.surface.LSPToolToggle(r.tool, r.off)
 			}
 			return m.session.surface.LSPServerToggle(!r.off)
 		}

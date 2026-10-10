@@ -392,6 +392,52 @@ func SetShellBackend(path, backend string) error {
 	return saveFile(path, writeSections(blocks))
 }
 
+// SetLSPTools writes the [lsp.gopls] tools allow-list (the deferred lsp_*
+// tool-family filter) to the global config, preserving comments and every
+// other key. A missing [lsp.gopls] table is created. A missing config file
+// is an error (the same refuse-to-create rule SetShellBackend inherits), and
+// an empty list is refused: an empty filter means "all tools", so writing it
+// for "disable the last tool" would silently re-enable everything.
+func SetLSPTools(path string, tools []string) error {
+	if path == "" {
+		return fmt.Errorf("lsp: no config path")
+	}
+	if len(tools) == 0 {
+		return fmt.Errorf("lsp: empty tools list (an empty filter means all tools — disable would be lost)")
+	}
+	quoted := make([]string, 0, len(tools))
+	for _, t := range tools {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return fmt.Errorf("lsp: empty tool name")
+		}
+		quoted = append(quoted, `"`+strings.ReplaceAll(t, `"`, `\"`)+`"`)
+	}
+	blocks, err := loadBlocks(path)
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range blocks {
+		if blocks[i].header != "" && blockName(blocks[i].header) == "lsp.gopls" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		idx = len(blocks)
+		blocks = append(blocks, block{header: "[lsp.gopls]"})
+	}
+	b := &blocks[idx]
+	line := "tools = [" + strings.Join(quoted, ", ") + "]"
+	if i := findKey(*b, "tools"); i >= 0 {
+		b.lines[i] = line
+	} else {
+		b.lines = append(b.lines, line)
+	}
+	return saveFile(path, writeSections(blocks))
+}
+
 // patchMCPServer locates the [[mcp.servers]] entry whose `name` key equals
 // server and applies fn to its block. Unambiguous match required: no entry is
 // an error, and (because a user could name two entries the same — config

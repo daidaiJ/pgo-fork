@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,10 +54,19 @@ type Server struct {
 	diags     map[string][]Diagnostic
 	// diagGen counts publishes per URI so a diagnostics waiter can detect a
 	// fresh publish after a didChange without holding the lock.
-	diagGen  map[string]int
-	sterrMu  sync.Mutex
-	stderr   []string // ring of the process's last stderr lines
-	stopOnce sync.Once
+	diagGen map[string]int
+	// pull capability state: advertised comes from initializeResult, rejected
+	// is set after the server answers textDocument/diagnostic with
+	// MethodNotFound (grok pull.rs: the advertised capability is not enough —
+	// only the server's own rejection writes it off). pullMu skips concurrent
+	// pull attempts so a burst of queries spends one round trip, not five.
+	pullAdvertised bool
+	pullRejected   bool
+	pullMu         sync.Mutex
+	pullRunning    bool
+	sterrMu        sync.Mutex
+	stderr         []string // ring of the process's last stderr lines
+	stopOnce       sync.Once
 	// mailbox serializes overlay notifications so didChange versions reach
 	// the wire in the order they were assigned.
 	mailbox chan func()
@@ -214,8 +224,16 @@ func (s *Server) initialize(ctx context.Context) error {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		} `json:"serverInfo"`
+		Capabilities *struct {
+			DiagnosticProvider json.RawMessage `json:"diagnosticProvider"`
+		} `json:"capabilities"`
 	}
 	json.Unmarshal(raw, &res)
+	if res.Capabilities != nil && len(res.Capabilities.DiagnosticProvider) > 0 && string(res.Capabilities.DiagnosticProvider) != "null" {
+		s.mu.Lock()
+		s.pullAdvertised = true
+		s.mu.Unlock()
+	}
 	if res.ServerInfo != nil {
 		ver := strings.TrimSpace(res.ServerInfo.Name + " " + res.ServerInfo.Version)
 		// Some builds pack the full build-info JSON into Version (gopls
@@ -347,7 +365,7 @@ func (s *Server) Overlay(path, text string) {
 	version := doc.version
 	s.mu.Unlock()
 	uri := PathToURI(path)
-	lang := s.cfg.LanguageID
+	lang := languageIDFor(path, s.cfg.LanguageID)
 	s.mailbox <- func() {
 		if !ok {
 			s.c.Notify("textDocument/didOpen", map[string]any{
@@ -382,6 +400,35 @@ func (s *Server) handles(path string) bool {
 	return false
 }
 
+// languageIDFor maps a path's extension to the didOpen languageId. Mod/work
+// files are first-class gopls documents (modfile diagnostics); the fallback
+// covers plain text files.
+func languageIDFor(path, fallback string) string {
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(path), ".")) {
+	case "mod":
+		return "go.mod"
+	case "work":
+		return "go.work"
+	default:
+		return fallback
+	}
+}
+
+// overlaySnapshot copies the overlay document store (path → text) — the
+// manager harvests it before dropping a server so a rebuild (crash, idle
+// reclaim, disable) can re-push state the new process would otherwise never
+// learn (grok replay_tracked_documents, harvested from memory rather than
+// re-read from disk).
+func (s *Server) overlaySnapshot() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]string, len(s.docs))
+	for p, d := range s.docs {
+		out[p] = d.text
+	}
+	return out
+}
+
 func (s *Server) mailLoop() {
 	for fn := range s.mailbox {
 		fn()
@@ -393,9 +440,15 @@ func (s *Server) mailLoop() {
 // (or since the last Overlay), it polls until a fresh generation arrives or
 // the wait elapses — the tool face uses this so a query right after an edit
 // sees the just-pushed state instead of the empty pre-publish snapshot.
+// A wait that found nothing fresh falls back to one textDocument/diagnostic
+// pull for push-silent servers (grok pull.rs; gopls pushes, so against it the
+// fallback costs one rejected round trip, ever). Workspace-wide queries
+// (path == "") only sleep: the pull method is per-document.
 func (s *Server) Diagnostics(path string, wait time.Duration) map[string][]Diagnostic {
 	if path != "" {
-		s.awaitDiagnostics(path, wait)
+		if !s.awaitDiagnostics(path, wait) {
+			s.pullDiagnostics(context.Background(), path, wait)
+		}
 	} else if wait > 0 {
 		time.Sleep(wait) // workspace-wide query: give in-flight publishes a beat
 	}
@@ -418,12 +471,12 @@ func (s *Server) Diagnostics(path string, wait time.Duration) map[string][]Diagn
 
 // awaitDiagnostics polls until path's diagnostic generation moves past the
 // baseline captured at entry (a publish after this moment), or the wait
-// elapses. A server that never publishes for a clean file leaves the
-// baseline unmoved — the wait bounds the tool call, the empty result is the
-// honest answer.
-func (s *Server) awaitDiagnostics(path string, wait time.Duration) {
+// elapses. It reports whether a fresh publish landed. A server that never
+// publishes for a clean file leaves the baseline unmoved — the wait bounds
+// the tool call, the empty result is the honest answer.
+func (s *Server) awaitDiagnostics(path string, wait time.Duration) bool {
 	if wait <= 0 {
-		return
+		return false
 	}
 	deadline := time.Now().Add(wait)
 	s.mu.Lock()
@@ -435,9 +488,63 @@ func (s *Server) awaitDiagnostics(path string, wait time.Duration) {
 		moved := s.diagGen[path] > base
 		s.mu.Unlock()
 		if moved {
-			return
+			return true
 		}
 	}
+	return false
+}
+
+// pullDiagnostics issues one textDocument/diagnostic round trip and merges
+// the report into the store as a fresh generation (so repeated queries
+// answer from the store until the next push/wait cycle). Skipped when the
+// server already rejected the method (MethodNotFound is the only conclusive
+// write-off — grok pull.rs asks even unadvertised capability once) or when a
+// pull is already in flight; ctx carries the response deadline only.
+func (s *Server) pullDiagnostics(ctx context.Context, path string, wait time.Duration) {
+	s.mu.Lock()
+	rejected := s.pullRejected
+	s.mu.Unlock()
+	if rejected {
+		return
+	}
+	s.pullMu.Lock()
+	if s.pullRunning {
+		s.pullMu.Unlock()
+		return
+	}
+	s.pullRunning = true
+	s.pullMu.Unlock()
+	defer func() {
+		s.pullMu.Lock()
+		s.pullRunning = false
+		s.pullMu.Unlock()
+	}()
+
+	if wait <= 0 {
+		wait = DiagnosticsWait
+	}
+	pctx, cancel := context.WithTimeout(ctx, wait+2*time.Second)
+	defer cancel()
+	raw, err := s.c.Call(pctx, "textDocument/diagnostic", map[string]any{
+		"textDocument": map[string]any{"uri": PathToURI(path)},
+	})
+	if err != nil {
+		var re *rpcError
+		if errors.As(err, &re) && re.Code == codeMethodNotFound {
+			s.mu.Lock()
+			s.pullRejected = true
+			s.mu.Unlock()
+		}
+		return
+	}
+	diags, ok := decodeDocumentDiagnosticReport(raw)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.diags[path] = diags
+	s.diagGen[path]++
+	s.mu.Unlock()
 }
 
 // DiagnosticsCount returns the total diagnostic count across all files.
@@ -579,6 +686,29 @@ func (s *Server) Symbols(ctx context.Context, path string) ([]Symbol, error) {
 		return nil, err
 	}
 	return decodeSymbols(raw), nil
+}
+
+// WorkspaceSymbols queries the project-wide symbol index (workspace/symbol):
+// the retrieval face for "where does this live" across the whole module.
+func (s *Server) WorkspaceSymbols(ctx context.Context, query string) ([]WorkspaceSymbol, error) {
+	raw, err := s.c.Call(ctx, "workspace/symbol", map[string]any{"query": query})
+	if err != nil {
+		return nil, err
+	}
+	return decodeWorkspaceSymbols(raw), nil
+}
+
+// Implementations resolves the implementations of the symbol at (1-based)
+// line, optionally locating the column via query.
+func (s *Server) Implementations(ctx context.Context, path string, line int, query string) ([]Location, error) {
+	pos, err := s.position(path, line, query)
+	if err != nil {
+		return nil, err
+	}
+	return s.locations(ctx, "textDocument/implementation", map[string]any{
+		"textDocument": map[string]any{"uri": PathToURI(path)},
+		"position":     pos,
+	})
 }
 
 // Stop shuts the process down (shutdown/exit, then kill on a 3s grace).
