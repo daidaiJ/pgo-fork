@@ -10,14 +10,15 @@
 ## 🔄 现场速览
 
 - **当前阶段**：**T6.3 供应商套餐余量已并入 /usage（一把 sk 可查的两家）**
-  （2026-10-10 晚；feat `daaf54b`，47 包 0 FAIL，两份二进制已刷）。交付 =
-  新叶子包 `internal/usage`（`Window`/`Snapshot` + 每供应商一文件注册表 +
-  归一化硬规则 1–7）+ 两家 source（opencode-go、commandcode，fixture 表驱动）
-  + OpenCode 凭据发现（`CredentialStore` 第五层，社区路线）+ `/usage` 的 grok
-  形态额度段（30 格条 + floored% + 重置倒计时）；commandcode 已真 key 实测。
+  （2026-10-10 晚；feat `daaf54b` + 面板形态 `f432dfa`，47 包 0 FAIL，两份
+  二进制已刷）。交付 = 新叶子包 `internal/usage`（`Window`/`Snapshot` +
+  每供应商一文件注册表 + 归一化硬规则 1–7）+ 两家 source（opencode-go、
+  commandcode，fixture 表驱动）+ OpenCode 凭据发现（`CredentialStore` 第五层）
+  + **`/usage` 打开 grok 形态三 tab overlay 的「用量上限」tab**（`ProjUsagePanel`；
+  探测走 tea.Cmd 异步；REPL 投影同一份文本）；commandcode 已真 key 实测。
   权威 = [wiki/port/provider-usage.md](wiki/port/provider-usage.md) §5（落地
-  记录 + 偏差 D-1~D-8 + 实测留档 + 缓落件）。最新交接卡 =
-  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（晚）。
+  记录 + 偏差 D-1~D-8 + 实测留档）+ §5.6（面板形态 + 真机反馈两修）；最新
+  交接卡 = [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（晚）。
 - **接手者第一步**：从待排期池取件——T6.6（供应商韧性 S 件族）、T7.2、
   MCP 默认 deferred 补齐（D-11）、dynamic-workflow（候选 C + 硬路由）、T7.3
   余切片 S5–S7·S9、T7.4；或按 provider-usage.md §5.4 续做 T6.3 缓落件；或等
@@ -28,7 +29,7 @@
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
-| 10-10 晚 | T6.3 供应商套餐余量并入 /usage（`internal/usage` 叶子包 + opencode-go/commandcode 两家 source + OpenCode 凭据发现 + grok 形态额度条） | `daaf54b` | provider-usage.md §5 |
+| 10-10 晚 | T6.3 供应商套餐余量并入 /usage（`internal/usage` 叶子包 + opencode-go/commandcode 两家 source + OpenCode 凭据发现 + **grok 三 tab overlay 的「用量上限」tab**） | `daaf54b`+`f432dfa` | provider-usage.md §5/§5.6 |
 | 10-11 深夜 2 | 会话用量记帐 + /usage + /stats（O1 + T7.3c S3/S4：statline 叶子包 + 会话 ledger + 子代理归账 + 状态行会话累计 + `↻`/`miss`） | `9c7e8fb` | usage-ledger.md |
 | 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0`+`8c0d8f8` | subagent-resume.md §6 |
 | 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
@@ -71,14 +72,16 @@
       （清单 = `wiki/port/usage-ledger.md` §5）；缓落件 = 状态行可配置项面 /
       `pigo usage --json` / 费用估算 / process 子代理与 `/btw` 侧线程归账
       （`usage-ledger.md` §6）
-- [ ] **T6.3 供应商余量真机验收 + 缓落件**：`/usage` 的 plan quota 段真机手感
-      （会话块之后、条与百分比对齐、无 source 时不留空行；REPL 管道已实测，
-      TUI 待用户）；缓落件 = `pigo usage --json` 只读出口、`[usage.sources.<id>]`
+- [ ] **T6.3 供应商余量真机验收 + 缓落件**：`/usage` 打开的 overlay
+      「用量上限」tab 真机手感（Tab/Shift+Tab 切 tab、条与百分比对齐、探测
+      未落地时的 `查询中…` 行、无 source 时 tab 保持安静）；REPL 文本投影已
+      实测；缓落件 = `pigo usage --json` 只读出口、`[usage.sources.<id>]`
       第二凭据段、§3 五家完整版（zai/moonshot/minimax/volcengine/dashscope，
       含 AK/SK 签名与两步链）、commandcode `sandboxMinutes` 泳道与月度百分比、
-      同屏多 provider、opencode-go 真 key 实测留档、凭据发现矩阵其余家
-      （清单 = `wiki/port/provider-usage.md` §5.4；前置手法 = 同文 §5.2，隔离
-      `PIGO_HOME` + REPL 管道 + **原生 Windows 路径形态**）
+      同屏多 provider、opencode-go 真 key 实测留档、凭据发现矩阵其余家、
+      `/stats` 是否并成面板 tab（清单 = `wiki/port/provider-usage.md` §5.4/§5.6；
+      前置手法 = 同文 §5.2，隔离 `PIGO_HOME` + REPL 管道 + **原生 Windows
+      路径形态**）
 - [ ] **T8.2 缓落件**：call hierarchy 缓；lsp_rename 多 root/多 server 路由
       （多语言 server 前提）；auto-install 冷装路径未真机走通（单测钉边界）；
       watched_files 重开条件 = 多语言 server 出现（D-12）
@@ -127,6 +130,12 @@
   旧版本导致「实测跑的是旧二进制」）。
 - dev 分支本地开发，**2026-10-09 起按用户指示推送 `origin/dev`**（daidaiJ/pgo-fork
   fork 仓）；上游同步 / PR 策略已拍板（2026-10-11）：维持现状，只推 origin/dev。
+- **流式看门狗口径（2026-10-10 用户问「思考超过 5 分钟」时核实）**：
+  `PIGO_STREAM_IDLE_TIMEOUT`（默认 5m）是**静默**看门狗——任何一行到达即重置
+  （含 keep-alive）；`stall`（idle×1.2）只在事件刷出时重置。**持续吐 token 的
+  长思考不会被切断**；`stream aborted` 是 ctx 取消（用户中断）。取证看
+  `<PIGO_HOME>/sessions/<id>.usage.jsonl` 的 `durationMs/ttftMs/err`（详见
+  `wiki/port/pitfalls.md` §流式看门狗）。
 - **管道核验要派发非只读工具（如 `task`）时**：headless `-p` **不吃
   `--approve`**（`--approve` 只喂 `trust.EstablishTrust`，仅 REPL 调用），
   headless 走 `trustMgr.IsTrusted(cwd)`（`$PIGO_HOME/trust.json`）——隔离
