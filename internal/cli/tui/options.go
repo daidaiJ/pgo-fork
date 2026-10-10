@@ -84,6 +84,12 @@ type Options struct {
 	// the /model switcher lists these ids and a switch rebuilds the provider
 	// from the profile. Nil/empty keeps the preset-catalog fallback.
 	Models map[string]config.ModelProfile
+	// ProviderConfigs is the config's [provider."<id>"] connection face
+	// (T8.1) a profile's provider reference inherits from at switch time;
+	// Proxy is the startup connection's egress proxy (reused by bare-model
+	// switches). Nil/empty keep the defaults.
+	ProviderConfigs map[string]config.ProviderSpec
+	Proxy           string
 	// ContextWindow / MaxOutputTokens are the startup profile's explicit
 	// overrides (0 = derive from the provider catalog, as before).
 	ContextWindow   int

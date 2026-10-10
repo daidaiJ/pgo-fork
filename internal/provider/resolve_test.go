@@ -36,18 +36,20 @@ func TestResolveProviderPresetCatalog(t *testing.T) {
 	}
 }
 
-// TestResolveProviderPrefixAndDefault verifies the prefix rules and the
-// OpenRouter default for ids not in the catalog.
+// TestResolveProviderPrefixAndDefault verifies the prefix rules and the T8.1
+// resolution edges: a declared --base-url rides a generic custom driver, and
+// an unknown id with nothing configured fails closed (the OpenRouter
+// catch-all is retired).
 func TestResolveProviderPrefixAndDefault(t *testing.T) {
 	cases := []struct {
 		model    string
 		baseURL  string
 		wantName string
 	}{
-		{"ollama/some-local-model", "", "ollama"}, // ollama/ prefix
-		{"nvidia/some-nim-model", "", "nvidia"},   // nvidia/ prefix
-		{"some-unknown-model", "", "openrouter"},  // default
-		{"m", "http://host:11434/v1", "ollama"},   // ollama port
+		{"ollama/some-local-model", "", "ollama"},               // ollama/ prefix
+		{"nvidia/some-nim-model", "", "nvidia"},                 // nvidia/ prefix
+		{"m", "http://host:11434/v1", "ollama"},                 // ollama port
+		{"some-unknown-model", "https://gw.local/v1", "custom"}, // declared endpoint
 	}
 	for _, c := range cases {
 		_, name, err := ResolveProvider(c.model, c.baseURL, "", "", os.Getenv)
@@ -58,6 +60,11 @@ func TestResolveProviderPrefixAndDefault(t *testing.T) {
 		if name != c.wantName {
 			t.Errorf("ResolveProvider(%q, %q) = %q, want %q", c.model, c.baseURL, name, c.wantName)
 		}
+	}
+	// Unknown id, nothing configured: an explicit error, never a silent
+	// OpenRouter reroute (T8.1 user decision).
+	if _, _, err := ResolveProvider("some-unknown-model", "", "", "", os.Getenv); err == nil || !strings.Contains(err.Error(), "unknown model id") {
+		t.Errorf("ResolveProvider(some-unknown-model) err = %v, want the unknown-model-id refusal", err)
 	}
 }
 
@@ -270,7 +277,8 @@ func TestResolveProviderModelNameInference(t *testing.T) {
 
 // TestResolveProviderInferencePrecedence verifies that model-name inference does
 // not override explicit flags and does not fire when a --base-url is given, and
-// that unknown/ambiguous names still fall back to OpenRouter.
+// that unknown/ambiguous names fail closed (T8.1: the OpenRouter catch-all is
+// retired).
 func TestResolveProviderInferencePrecedence(t *testing.T) {
 	// Explicit --provider wins over an inferable model name.
 	if _, name, err := ResolveProvider("claude-opus-4-8", "", "", "deepseek", os.Getenv); err != nil || name != "deepseek" {
@@ -280,14 +288,15 @@ func TestResolveProviderInferencePrecedence(t *testing.T) {
 	if _, name, err := ResolveProvider("claude-opus-4-8", "https://example.com/v1", "openai", "", os.Getenv); err != nil || name != "openai" {
 		t.Errorf("protocol=openai overrides inference = (%q, %v), want (openai, nil)", name, err)
 	}
-	// A --base-url signals a custom endpoint: inference is skipped, default applies.
-	if _, name, err := ResolveProvider("claude-opus-4-8", "https://gw.local/v1", "", "", os.Getenv); err != nil || name != "openrouter" {
-		t.Errorf("inference skipped with base-url = (%q, %v), want (openrouter, nil)", name, err)
+	// A --base-url signals a declared custom endpoint: inference is skipped and
+	// the id rides it verbatim as the generic custom driver.
+	if _, name, err := ResolveProvider("claude-opus-4-8", "https://gw.local/v1", "", "", os.Getenv); err != nil || name != "custom" {
+		t.Errorf("inference skipped with base-url = (%q, %v), want (custom, nil)", name, err)
 	}
-	// Ambiguous/unknown names still default to OpenRouter.
+	// Ambiguous/unknown names with nothing configured fail closed.
 	for _, m := range []string{"llama-3.3-70b", "totally-unknown-model"} {
-		if _, name, err := ResolveProvider(m, "", "", "", os.Getenv); err != nil || name != "openrouter" {
-			t.Errorf("ResolveProvider(%q) = (%q, %v), want (openrouter, nil)", m, name, err)
+		if _, _, err := ResolveProvider(m, "", "", "", os.Getenv); err == nil || !strings.Contains(err.Error(), "unknown model id") {
+			t.Errorf("ResolveProvider(%q) err = %v, want the unknown-model-id refusal", m, err)
 		}
 	}
 }

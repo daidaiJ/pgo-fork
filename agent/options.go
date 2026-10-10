@@ -10,6 +10,7 @@ type config struct {
 	protocol           string
 	provider           string
 	apiKey             string
+	proxy              string
 	systemPrompt       string
 	appendSystemPrompt []string
 	thinking           string
@@ -29,8 +30,9 @@ type config struct {
 type Option func(*config)
 
 // WithModel sets the model id, which also selects the provider the way the pigo
-// CLI does (e.g. "claude-opus-4-8" → Anthropic, "openrouter/free" → OpenRouter).
-// The default is "openrouter/free".
+// CLI does (e.g. "claude-opus-4-8" → Anthropic, "openai/gpt-4o" → OpenRouter).
+// There is no default: an unset model fails closed with a configuration
+// pointer (T8.1).
 func WithModel(model string) Option {
 	return func(c *config) { c.model = model }
 }
@@ -59,6 +61,13 @@ func WithProvider(name string) Option {
 // variable is used (e.g. ANTHROPIC_API_KEY, OPENROUTER_API_KEY).
 func WithAPIKey(key string) Option {
 	return func(c *config) { c.apiKey = key }
+}
+
+// WithProxy routes the session's provider requests through the named egress
+// proxy URL (T8.1). Empty (the default) keeps the standard transport
+// behavior.
+func WithProxy(proxy string) Option {
+	return func(c *config) { c.proxy = proxy }
 }
 
 // WithSystemPrompt replaces pigo's built-in base instruction with prompt. Use

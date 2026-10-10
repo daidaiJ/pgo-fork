@@ -36,6 +36,14 @@ type ModelProfile struct {
 	// Credential is a named credential reference (issue #568) used when
 	// APIKey is empty; the literal secret lives in .credentials.yaml.
 	Credential string `toml:"credential"`
+	// EnvKey names the environment variable holding the key (T8.1): the
+	// profile tier of the built-in providers' spec env vars. Precedence
+	// within the profile: APIKey > Credential > EnvKey.
+	EnvKey string `toml:"env_key"`
+	// Proxy is the egress proxy URL (T8.1) this profile's requests ride;
+	// empty inherits the referenced [provider] section's proxy (a profile
+	// that sets its own wins). Empty keeps the default transport.
+	Proxy string `toml:"proxy"`
 	// ContextWindow overrides the model's catalog window (0 = derive).
 	ContextWindow int `toml:"context_window"`
 	// MaxOutputTokens overrides the model's output cap (0 = derive).
@@ -62,6 +70,8 @@ func (p *ModelProfile) UnmarshalTOML(data any) error {
 	p.Protocol = tomlString(table, "protocol")
 	p.APIKey = tomlString(table, "api_key")
 	p.Credential = tomlString(table, "credential")
+	p.EnvKey = tomlString(table, "env_key")
+	p.Proxy = tomlString(table, "proxy")
 	p.ContextWindow = tomlInt(table, "context_window")
 	p.MaxOutputTokens = tomlInt(table, "max_output_tokens")
 	p.ThinkingLevel = tomlString(table, "thinking_level")
@@ -74,7 +84,8 @@ func (p *ModelProfile) UnmarshalTOML(data any) error {
 func (p ModelProfile) Empty() bool {
 	return p.Model == "" && p.Name == "" && p.Description == "" &&
 		p.BaseURL == "" && p.Provider == "" && p.Protocol == "" &&
-		p.APIKey == "" && p.Credential == "" && p.ContextWindow == 0 &&
+		p.APIKey == "" && p.Credential == "" && p.EnvKey == "" &&
+		p.Proxy == "" && p.ContextWindow == 0 &&
 		p.MaxOutputTokens == 0 && p.ThinkingLevel == ""
 }
 

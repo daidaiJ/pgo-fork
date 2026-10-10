@@ -22,7 +22,7 @@
 // # Model, provider, credentials
 //
 // The model id selects the provider the same way the pigo CLI does:
-// "claude-opus-4-8" resolves to Anthropic, "openrouter/free" to OpenRouter,
+// "claude-opus-4-8" resolves to Anthropic, "openai/gpt-4o" to OpenRouter,
 // and so on. Point at any OpenAI- or Anthropic-compatible endpoint with
 // [WithBaseURL] + [WithProtocol], or a named provider from your config with
 // [WithProvider]. The API key comes from [WithAPIKey] or, if unset, the

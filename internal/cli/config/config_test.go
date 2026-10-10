@@ -9,25 +9,35 @@ import (
 	"github.com/smallnest/pigo/internal/testenv"
 )
 
-func TestFileConfigPath_XDGOverride(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdgroot")
-	got := FileConfigPath()
-	want := filepath.Join("/tmp/xdgroot", "pigo", "config.toml")
-	if got != want {
+// TestFileConfigPath_PIGOHome pins the unified path (T8.1): the config lives
+// in the pigo home, like every other piece of pigo state.
+func TestFileConfigPath_PIGOHome(t *testing.T) {
+	t.Setenv("PIGO_HOME", "D:/custom/pigo-home")
+	if got, want := FileConfigPath(), filepath.Join("D:/custom/pigo-home", "config.toml"); got != want {
 		t.Fatalf("FileConfigPath() = %q, want %q", got, want)
 	}
 }
 
 func TestFileConfigPath_DefaultHome(t *testing.T) {
+	t.Setenv("PIGO_HOME", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("no home dir")
 	}
 	got := FileConfigPath()
-	want := filepath.Join(home, ".config", "pigo", "config.toml")
+	want := filepath.Join(home, ".pigo", "config.toml")
 	if got != want {
 		t.Fatalf("FileConfigPath() = %q, want %q", got, want)
+	}
+}
+
+// TestLegacyFileConfigPath pins the read-only fallback location an upgraded
+// install's config is migrated from.
+func TestLegacyFileConfigPath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdgroot")
+	if got, want := legacyFileConfigPath(), filepath.Join("/tmp/xdgroot", "pigo", "config.toml"); got != want {
+		t.Fatalf("legacyFileConfigPath() = %q, want %q", got, want)
 	}
 }
 
@@ -174,5 +184,85 @@ func TestLoadFileConfig_DreamTableAbsent(t *testing.T) {
 	// ints zero (→ defaults downstream). Parsing must not error.
 	if cfg.Dream.Enabled != nil || cfg.Dream.IntervalDays != 0 || cfg.Dream.RecentSessions != 0 {
 		t.Errorf("absent dream table = %+v, want zero-value", cfg.Dream)
+	}
+}
+
+// TestLoadUserConfig_MigratesLegacy pins the unification semantics (T8.1):
+// with only the legacy XDG file present, the config loads from it, a copy is
+// migrated to the canonical path, and the returned path names the legacy
+// file so the caller can warn. The next load resolves canonically.
+func TestLoadUserConfig_MigratesLegacy(t *testing.T) {
+	root := testenv.Dir(t)
+	t.Setenv("PIGO_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", root)
+	// Isolate the home both ways so the canonical path lands in the test root
+	// instead of the real ~/.pigo (os.UserHomeDir reads USERPROFILE on
+	// Windows and HOME elsewhere).
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("HOME", root)
+	legacy := filepath.Join(root, "pigo", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("model = \"legacy-model\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, path, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig: %v", err)
+	}
+	if path != legacy || cfg.Model != "legacy-model" {
+		t.Fatalf("LoadUserConfig = (%+v, %q), want the legacy file", cfg, path)
+	}
+	// The canonical copy now exists and carries the same content.
+	canonical := FileConfigPath()
+	data, err := os.ReadFile(canonical)
+	if err != nil || string(data) != "model = \"legacy-model\"\n" {
+		t.Fatalf("canonical copy = %q, %v; want the migrated config", data, err)
+	}
+	// The next load resolves canonically: no legacy path, no warning case.
+	if _, path, _ = LoadUserConfig(); path != canonical {
+		t.Fatalf("second LoadUserConfig path = %q, want the canonical %q", path, canonical)
+	}
+}
+
+// TestLoadUserConfig_PIGOHomeNeverReadsLegacy pins the isolation rule: with
+// PIGO_HOME set, only the canonical path is consulted — the host's XDG tree
+// is out of scope (the dual-path defect this closes).
+func TestLoadUserConfig_PIGOHomeNeverReadsLegacy(t *testing.T) {
+	root := testenv.Dir(t)
+	t.Setenv("PIGO_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	legacy := filepath.Join(root, "pigo", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("model = \"host-model\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, path, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig: %v", err)
+	}
+	if path != "" || cfg.Model != "" {
+		t.Fatalf("LoadUserConfig = (%+v, %q), want nothing (the legacy file is out of scope under PIGO_HOME)", cfg, path)
+	}
+}
+
+// TestLoadUserConfig_CanonicalWins pins the resolution order once both files
+// exist: the canonical path is the single truth.
+func TestLoadUserConfig_CanonicalWins(t *testing.T) {
+	root := testenv.Dir(t)
+	t.Setenv("PIGO_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	if err := os.WriteFile(FileConfigPath(), []byte("model = \"canonical\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, path, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig: %v", err)
+	}
+	if path != FileConfigPath() || cfg.Model != "canonical" {
+		t.Fatalf("LoadUserConfig = (%+v, %q), want the canonical file", cfg, path)
 	}
 }

@@ -134,7 +134,7 @@ func TestCwdChdirRootsEnv(t *testing.T) {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
 
-	env, err := run.SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, run.ToolPolicy{})
+	env, err := run.SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, run.ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -183,7 +183,7 @@ func changedSet(names ...string) func(string) bool {
 }
 
 func TestApplyFileConfig_FillsUnsetFlags(t *testing.T) {
-	opts := cliOptions{model: "openrouter/free", outputFmt: "text"}
+	opts := cliOptions{model: "openai/gpt-4o", outputFmt: "text"}
 	cfg := config.FileConfig{
 		Model:         "claude-opus-4-8",
 		BaseURL:       "https://example.com",
@@ -243,9 +243,9 @@ func TestApplyFileConfig_CLIWins(t *testing.T) {
 }
 
 func TestApplyFileConfig_EmptyConfigNoChange(t *testing.T) {
-	opts := cliOptions{model: "openrouter/free", outputFmt: "text"}
+	opts := cliOptions{model: "openai/gpt-4o", outputFmt: "text"}
 	applyFileConfig(&opts, config.FileConfig{}, changedSet())
-	if opts.model != "openrouter/free" || opts.outputFmt != "text" {
+	if opts.model != "openai/gpt-4o" || opts.outputFmt != "text" {
 		t.Fatalf("empty config should not change opts, got %+v", opts)
 	}
 	if opts.baseURL != "" || opts.provider != "" || opts.noTools {

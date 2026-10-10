@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go"
@@ -64,6 +65,12 @@ func NewOpenAIResponsesProvider(name, baseURL string, models []Model) *responses
 
 func (d *responsesDriver) Name() string    { return d.name }
 func (d *responsesDriver) Models() []Model { return d.models }
+
+// setHTTPClient injects the HTTP client the SDK rides (the T8.1 proxy seam);
+// the option joins clientOpts ahead of test-injected ones.
+func (d *responsesDriver) setHTTPClient(c *http.Client) {
+	d.clientOpts = append([]option.RequestOption{option.WithHTTPClient(c)}, d.clientOpts...)
+}
 
 // StreamCompletion issues a streaming Responses API call and surfaces the result
 // on an AssistantMessageEventStream: a start event, incremental text events as

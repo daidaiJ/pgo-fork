@@ -94,7 +94,9 @@ type Env struct {
 // value is literal text) and layered onto the end of the prompt (mirrors pi's
 // --append-system-prompt). apiKey is the resolved credential (CLI --api-key or
 // config.toml) used as the override for sub-agent credential resolution so
-// dispatched task children authenticate the same way the parent does. policy is
+// dispatched task children authenticate the same way the parent does. proxy is
+// the config resolution's egress proxy URL (T8.1: model-level > provider-level;
+// empty keeps the default transport) the provider's requests ride. policy is
 // the --allowed-tools/--disallowed-tools boundary; it is validated against the
 // fully assembled tool set and then applied, so an unknown tool name is a usage
 // error rather than a silently ineffective boundary. toolsCfg carries the
@@ -102,7 +104,7 @@ type Env struct {
 // uncapable model falls back to direct declaration before any request is
 // built. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, policy ToolPolicy) (env Env, err error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, policy ToolPolicy) (env Env, err error) {
 	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
 	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
 	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
@@ -112,7 +114,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey string, noTools, no
 
 	cwd, _ := os.Getwd()
 	providerSpan := spans.Begin("startup.setup_env.provider")
-	prov, resolvedName, err := provider.ResolveProvider(model, baseURL, protocol, providerName, os.Getenv)
+	prov, resolvedName, err := provider.ResolveProviderWithProxy(model, baseURL, protocol, providerName, os.Getenv, proxy)
 	providerSpan.End()
 	if err != nil {
 		return Env{}, err

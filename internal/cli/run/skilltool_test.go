@@ -29,7 +29,7 @@ func TestSetupEnvMaterializesSkillTools(t *testing.T) {
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 	writeSkillFile(t, skillsDir, "secret", "---\nname: secret\ndescription: hidden skill\ndisable-model-invocation: true\n---\nSlash only.")
 
-	env, err := SetupEnv("openrouter/free", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestSetupEnvNoToolsSkipsSkillTools(t *testing.T) {
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 
-	env, err := SetupEnv("openrouter/free", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -63,24 +63,24 @@ func TestSetupEnvNoToolsSkipsSkillTools(t *testing.T) {
 }
 
 func TestSkillChildRunConfigInheritsByDefault(t *testing.T) {
-	parentProv, parentName, err := provider.ResolveProvider("openrouter/free", "", "", "", os.Getenv)
+	parentProv, parentName, err := provider.ResolveProvider("openai/gpt-4o", "", "", "", os.Getenv)
 	if err != nil {
 		t.Fatalf("ResolveProvider: %v", err)
 	}
 	parentCreds := provider.NewCredentialStore(nil)
 	sk := &runtime.Skill{Frontmatter: runtime.SkillFrontmatter{Name: "r"}}
-	factory := skillChildRunConfig(sk, "openrouter/free", "", "", parentProv, parentName, "key", parentCreds, nil, config.ToolsConfig{})
+	factory := skillChildRunConfig(sk, "openai/gpt-4o", "", "", parentProv, parentName, "key", parentCreds, nil, config.ToolsConfig{})
 	cfg, err := factory(ChildToolSet("/tmp", ToolPolicy{}))
 	if err != nil {
 		t.Fatalf("factory = %v, want nil", err)
 	}
-	if cfg.Model != "openrouter/free" || cfg.Provider != parentName {
+	if cfg.Model != "openai/gpt-4o" || cfg.Provider != parentName {
 		t.Errorf("child run = %q/%q, want parent inherit", cfg.Model, cfg.Provider)
 	}
 }
 
 func TestSkillChildRunConfigResolvesPinnedModel(t *testing.T) {
-	parentProv, parentName, err := provider.ResolveProvider("openrouter/free", "", "", "", os.Getenv)
+	parentProv, parentName, err := provider.ResolveProvider("openai/gpt-4o", "", "", "", os.Getenv)
 	if err != nil {
 		t.Fatalf("ResolveProvider: %v", err)
 	}
@@ -88,13 +88,13 @@ func TestSkillChildRunConfigResolvesPinnedModel(t *testing.T) {
 	parentCreds.SetOverride(parentName, "parent-key")
 	// Same provider family, different model id: the pinned model rides the same
 	// provider and keeps the parent credential override.
-	sk := &runtime.Skill{Frontmatter: runtime.SkillFrontmatter{Name: "r", Model: "openrouter/free"}}
+	sk := &runtime.Skill{Frontmatter: runtime.SkillFrontmatter{Name: "r", Model: "openai/gpt-4o"}}
 	factory := skillChildRunConfig(sk, "other/model", "", "", parentProv, parentName, "parent-key", parentCreds, nil, config.ToolsConfig{})
 	cfg, err := factory(ChildToolSet("/tmp", ToolPolicy{}))
 	if err != nil {
 		t.Fatalf("factory = %v, want nil", err)
 	}
-	if cfg.Model != "openrouter/free" {
+	if cfg.Model != "openai/gpt-4o" {
 		t.Errorf("child model = %q, want the frontmatter pin", cfg.Model)
 	}
 	if cfg.Provider != parentName {
@@ -106,7 +106,7 @@ func TestSkillChildRunConfigResolvesPinnedModel(t *testing.T) {
 }
 
 func TestSkillChildRunConfigFailsOnUnresolvableModel(t *testing.T) {
-	parentProv, parentName, err := provider.ResolveProvider("openrouter/free", "", "", "", os.Getenv)
+	parentProv, parentName, err := provider.ResolveProvider("openai/gpt-4o", "", "", "", os.Getenv)
 	if err != nil {
 		t.Fatalf("ResolveProvider: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSkillChildRunConfigFailsOnUnresolvableModel(t *testing.T) {
 	// An explicit protocol without a base URL cannot resolve any model: the
 	// factory must return the error (D-7 envelope upstream), never silently
 	// degrade to the parent provider/model.
-	factory := skillChildRunConfig(sk, "openrouter/free", "", "openai", parentProv, parentName, "key", provider.NewCredentialStore(nil), nil, config.ToolsConfig{})
+	factory := skillChildRunConfig(sk, "openai/gpt-4o", "", "openai", parentProv, parentName, "key", provider.NewCredentialStore(nil), nil, config.ToolsConfig{})
 	cfg, err := factory(ChildToolSet("/tmp", ToolPolicy{}))
 	if err == nil {
 		t.Fatal("factory = nil error, want a resolution failure")

@@ -215,14 +215,16 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 	}
 
 	live := &cli.LiveConfig{
-		Model:         opts.Model,
-		ProviderName:  opts.ProviderName,
-		Provider:      opts.Provider,
-		BaseURL:       opts.BaseURL,
-		Protocol:      opts.Protocol,
-		ThinkingLevel: opts.ThinkingLevel,
-		MaxContext:    opts.MaxContext,
-		ModelProfiles: opts.Models,
+		Model:           opts.Model,
+		ProviderName:    opts.ProviderName,
+		Provider:        opts.Provider,
+		BaseURL:         opts.BaseURL,
+		Protocol:        opts.Protocol,
+		ThinkingLevel:   opts.ThinkingLevel,
+		MaxContext:      opts.MaxContext,
+		ModelProfiles:   opts.Models,
+		ProviderConfigs: opts.ProviderConfigs,
+		Proxy:           opts.Proxy,
 		// A startup config profile's explicit window/output-cap declarations
 		// win over the catalog-derived values (0 = derive, as before).
 		ContextWindow:   cli.SeedContextWindow(opts.Provider, opts.Model, opts.MaxContext, opts.ContextWindow),

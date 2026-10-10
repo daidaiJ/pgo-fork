@@ -37,13 +37,25 @@ import (
 //     (e.g. "claude-*", "deepseek-*") selects its first-party built-in provider
 //     via ResolveNamedProvider (see InferProviderFromModel).
 //  6. A bare provider name with no preset models is an error naming the
-//     mismatch, rather than a silent OpenRouter fallback that fails later with
+//     mismatch, rather than a silent fallback that fails later with
 //     a misleading missing-API-key error.
-//  7. Everything else → OpenRouter, the reference OpenAI-compatible gateway.
+//  7. An explicitly configured base URL is a declared endpoint: the model id
+//     rides it verbatim as a generic OpenAI-compatible driver named "custom"
+//     (T8.1).
+//  8. Unknown model id with nothing configured: an explicit error (T8.1) —
+//     the OpenRouter catch-all is retired, per user decision (the heuristic
+//     fallback was a bad design; resolution follows the configured provider
+//     and model id, grok alignment).
 //
 // An unknown protocol value is an error, surfaced to the caller for exit-code
 // mapping rather than silently falling back.
 func ResolveProvider(model, baseURL, protocol, providerName string, env func(string) string) (Provider, string, error) {
+	// 0. No model at all: fail closed with the configuration pointer (T8.1) —
+	//    the retired default id was the openrouter catch-all itself.
+	if strings.TrimSpace(model) == "" {
+		return nil, "", fmt.Errorf("no model configured: set model = \"<id>\" (or a [models] profile) in config.toml, or pass --model")
+	}
+
 	// Explicit --provider selects a built-in provider from the registry and
 	// wins over both --protocol inference and model-id heuristics.
 	if strings.TrimSpace(providerName) != "" {
@@ -78,7 +90,7 @@ func ResolveProvider(model, baseURL, protocol, providerName string, env func(str
 		// fall through to heuristic resolution
 	}
 
-	// 0.5 A bare provider name (e.g. "zai", "deepseek") is a common shorthand for
+	// 0. A bare provider name (e.g. "zai", "deepseek") is a common shorthand for
 	//     "that provider's default model" (issue #564): /model zai and --model zai
 	//     previously fell through to OpenRouter with the literal id "zai", failing
 	//     there with a misleading "openrouter: missing API key". Substitute the
@@ -128,14 +140,25 @@ func ResolveProvider(model, baseURL, protocol, providerName string, env func(str
 			return ResolveNamedProvider(name, model, baseURL, protocol, env)
 		}
 	}
-	// 5. Default: OpenRouter — but a bare built-in provider name that reached this
-	//    point names a provider with no preset models (e.g. a special-auth
-	//    gateway). Silently routing it to OpenRouter would fail later with a
-	//    confusing missing-API-key error, so surface the mismatch instead.
+	// 5. A bare provider name with no preset models is an error naming the
+	//    mismatch, rather than a silent fallback that fails later with
+	//    a misleading missing-API-key error.
 	if name := strings.ToLower(strings.TrimSpace(model)); IsProviderName(name) {
 		return nil, "", fmt.Errorf("%q names a provider, not a model id; pass a model id (see /models) or select it with --provider %s", model, name)
 	}
-	return NewOpenRouterProvider(baseURL, []Model{{Provider: "openrouter", ID: model, SupportsImages: true}}), "openrouter", nil
+	// 6. An explicitly configured base URL is a declared endpoint (T8.1): the
+	//    model id rides it verbatim as a generic OpenAI-compatible driver
+	//    (grok's api_backend default chat), instead of the id being hijacked
+	//    by an OpenRouter-branded driver.
+	if strings.TrimSpace(baseURL) != "" {
+		return newOpenAICompat(openAICompatPreset{name: "custom", requiresAuth: true}, baseURL,
+			[]Model{{Provider: "custom", ID: model, SupportsImages: true}}), "custom", nil
+	}
+	// 7. Unknown model id with nothing configured: fail closed (T8.1) — the
+	//    OpenRouter catch-all is retired. A typo silently switching to an
+	//    OpenRouter-hosted id (the "model switched to nosuch" defect) becomes
+	//    an explicit error naming the four resolution paths.
+	return nil, "", fmt.Errorf("unknown model id %q: add a [models.%q] profile or a [provider] section in config.toml, pick a preset (see /models), or pass --base-url/--provider", model, model)
 }
 
 // presetWindow returns the catalog's declared context window for a model id

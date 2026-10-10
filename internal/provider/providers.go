@@ -71,10 +71,17 @@ type openAICompatDriver struct {
 	requiresAuth bool
 	// extraHeaders are attached to every request (e.g. OpenRouter attribution).
 	extraHeaders map[string]string
+	// client is the HTTP client the stream rides (setHTTPClient injection,
+	// T8.1 proxy wiring). Nil = http.DefaultClient (the transport default).
+	client *http.Client
 }
 
 func (d *openAICompatDriver) Name() string    { return d.name }
 func (d *openAICompatDriver) Models() []Model { return d.models }
+
+// setHTTPClient injects the HTTP client the stream rides (the T8.1 proxy
+// seam); nil restores the transport default.
+func (d *openAICompatDriver) setHTTPClient(c *http.Client) { d.client = c }
 
 // StreamCompletion builds the OpenAI Chat Completions request and streams it.
 func (d *openAICompatDriver) StreamCompletion(ctx context.Context, req CompletionRequest) (*AssistantMessageEventStream, error) {
@@ -104,7 +111,7 @@ func (d *openAICompatDriver) StreamCompletion(ctx context.Context, req Completio
 		}
 		return httpReq, nil
 	}
-	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewOpenAIDecoder()})
+	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewOpenAIDecoder(), Client: d.client})
 }
 
 // encodeOpenAIRequest serializes a CompletionRequest into an OpenAI Chat
@@ -288,10 +295,17 @@ type anthropicCompatDriver struct {
 	pathFor func(model string) string
 	// authHeader sets provider auth on the request (never logs the value).
 	authHeader func(req *http.Request, apiKey string)
+	// client is the HTTP client the stream rides (setHTTPClient injection,
+	// T8.1 proxy wiring). Nil = http.DefaultClient (the transport default).
+	client *http.Client
 }
 
 func (d *anthropicCompatDriver) Name() string    { return d.name }
 func (d *anthropicCompatDriver) Models() []Model { return d.models }
+
+// setHTTPClient injects the HTTP client the stream rides (the T8.1 proxy
+// seam); nil restores the transport default.
+func (d *anthropicCompatDriver) setHTTPClient(c *http.Client) { d.client = c }
 
 // StreamCompletion builds the Anthropic Messages request and streams it,
 // decoding with AnthropicDecoder.
@@ -322,7 +336,7 @@ func (d *anthropicCompatDriver) StreamCompletion(ctx context.Context, req Comple
 		}
 		return httpReq, nil
 	}
-	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewAnthropicDecoder()})
+	return StreamRequest(ctx, TransportConfig{NewRequest: newReq, Decoder: NewAnthropicDecoder(), Client: d.client})
 }
 
 // encodeAnthropicRequest serializes a CompletionRequest into an Anthropic

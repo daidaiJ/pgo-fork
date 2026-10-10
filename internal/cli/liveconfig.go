@@ -59,6 +59,17 @@ type LiveConfig struct {
 	// config declares no profiles (the preset catalog + fetched ids stay the
 	// fallback face). Seeded at startup; keys never rendered into logs.
 	ModelProfiles map[string]config.ModelProfile
+	// ProviderConfigs is the config.toml [provider."<id>"] face (T8.1): the
+	// connection sections a profile's provider reference inherits from
+	// (per-field) when a mid-session switch re-resolves the connection. Nil
+	// when the config declares no sections; never logged.
+	ProviderConfigs map[string]config.ProviderSpec
+	// Proxy is the startup connection's egress proxy URL (T8.1): the resolved
+	// model profile's proxy, else its provider's. A bare-model /model switch
+	// re-resolves with it so the new driver keeps riding the proxy; a profile
+	// switch recomputes it from the profile/provider face. Empty = the
+	// default transport.
+	Proxy string
 }
 
 // ProfileFor resolves a model profile by id (exact → case-insensitive → wire

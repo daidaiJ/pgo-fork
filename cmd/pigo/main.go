@@ -68,8 +68,8 @@ type cliOptions struct {
 	// registry (mirrors pi's provider selection): provider.ResolveProvider then builds the
 	// matching wire driver using the provider's default base URL, protocol, and
 	// API-key env var, ignoring the model-id heuristics.
-	provider     string
-	outputFmt    string
+	provider  string
+	outputFmt string
 	// shellguardMode is the bash-command static safety analysis mode
 	// (T2.1): "off" | "ask" | "strict", resolved flag > [shellguard] mode >
 	// "off" (shellguard is an opt-in advanced feature). Validated by
@@ -196,6 +196,14 @@ type cliOptions struct {
 	// passed through to the front-ends so the /model switcher lists the
 	// config's model ids (grok 对齐). Empty when the config declares none.
 	modelProfiles map[string]config.ModelProfile
+	// providerConfigs is the [provider."<id>"] face (T8.1) carried to the
+	// front-ends so a /model switch re-resolves the profile's provider
+	// inheritance. Nil when the config declares no sections.
+	providerConfigs map[string]config.ProviderSpec
+	// proxy is the config resolution's egress proxy URL (T8.1): the model
+	// profile's proxy, else its referenced provider's. Empty keeps the
+	// default transport. Threaded to SetupEnv and the front-ends.
+	proxy string
 	// profileWindow / profileMaxTokens are the startup profile's explicit
 	// context_window / max_output_tokens overrides; 0 = derive from the
 	// provider catalog as before.
@@ -252,7 +260,7 @@ func main() {
 	parseSpan := spans.Begin("startup.flag_parse")
 	var opts cliOptions
 	flag.StringVarP(&opts.prompt, "print", "p", "", "prompt to run in headless print mode")
-	flag.StringVarP(&opts.model, "model", "m", "openrouter/free", "model id to run against (a well-known model name like claude-opus-4-8 or deepseek-chat auto-selects its provider when --provider/--protocol/--base-url are unset)")
+	flag.StringVarP(&opts.model, "model", "m", "", "model id to run against; resolved from config.toml ([models] profiles / model key) or this flag — unknown ids fail instead of falling back to a gateway (T8.1)")
 	flag.StringVarP(&opts.baseURL, "base-url", "u", "", "override provider base URL (e.g. local Ollama)")
 	flag.StringVarP(&opts.apiKey, "api-key", "k", "", "API key for the resolved provider (overrides env/config; else <PROVIDER>_API_KEY)")
 	flag.StringVarP(&opts.protocol, "protocol", "P", "", "force wire protocol for a custom endpoint: openai | anthropic (default: inferred from model id)")
@@ -310,14 +318,25 @@ func main() {
 		}
 	}
 
-	// Overlay ~/.config/pigo/config.toml: file values replace built-in defaults,
-	// but any flag the user set on the command line still wins (CLI > file >
-	// default). A malformed file warns but does not abort — defaults apply.
+	// Overlay the user config (T8.1: canonical path = $PIGO_HOME/config.toml
+	// else ~/.pigo/config.toml; a pre-unification XDG file is read as a
+	// fallback and migrated — LoadUserConfig copies it — with a warning).
+	// File values replace built-in defaults, but any flag the user set on the
+	// command line still wins (CLI > file > default). A malformed file warns
+	// but does not abort — defaults apply.
 	cfgLoad := spans.Begin("startup.config_load")
-	cfg, cfgErr := config.LoadFileConfig(config.FileConfigPath())
+	cfg, cfgPath, cfgErr := config.LoadUserConfig()
 	if cfgErr != nil {
 		fmt.Fprintf(os.Stderr, "pigo: %v\n", cfgErr)
 	} else {
+		if cfgPath != "" && cfgPath != config.FileConfigPath() {
+			fmt.Fprintf(os.Stderr, "pigo: config loaded from legacy path %s (copied to %s); the old file can be moved or deleted\n", cfgPath, config.FileConfigPath())
+		}
+		// Provider-section warnings fire once at startup, grok's
+		// lenient-parse alignment: a bad section is skipped, never fatal.
+		for _, w := range cfg.ValidateProviders() {
+			fmt.Fprintf(os.Stderr, "pigo: config: %s\n", w)
+		}
 		applyFileConfig(&opts, cfg, flag.CommandLine.Changed)
 		// [models."<id>"] profiles (T7.3 实测反馈): when the resolved model
 		// names a profile it becomes the startup model (its base_url/keys/
@@ -409,6 +428,36 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 	}
 	if cfg.Provider != "" && !changed("provider") {
 		opts.provider = cfg.Provider
+		// T8.1: a top-level provider naming a usable [provider] section is a
+		// config connection — its fields fill the slots the top-level config
+		// and the flags left unset, and the proxy rides the section. The
+		// section otherwise stays a built-in family hint (old semantics); the
+		// reference itself is not passed to ResolveProvider as a family name
+		// when it is a config connection (the connection is fully expressed
+		// by base_url/protocol/credentials).
+		if spec, ok := cfg.ProviderFor(cfg.Provider); ok {
+			opts.provider = ""
+			if spec.BaseURL != "" && opts.baseURL == "" && !changed("base-url") {
+				opts.baseURL = spec.BaseURL
+			}
+			if spec.Protocol != "" && opts.protocol == "" && !changed("protocol") {
+				opts.protocol = spec.Protocol
+			}
+			if spec.APIKey != "" && opts.apiKey == "" && !changed("api-key") {
+				opts.apiKey = spec.APIKey
+			}
+			if opts.apiKey == "" && spec.Credential != "" && !changed("api-key") {
+				opts.credentialRef = spec.Credential
+			}
+			if opts.apiKey == "" && spec.EnvKey != "" {
+				if v := os.Getenv(spec.EnvKey); v != "" {
+					opts.apiKey = v
+				}
+			}
+			if spec.Proxy != "" {
+				opts.proxy = spec.Proxy
+			}
+		}
 	}
 	if cfg.ThinkingLevel != "" && !changed("thinking-level") {
 		opts.thinkingLevel = cfg.ThinkingLevel
@@ -470,42 +519,66 @@ func applyFileConfig(opts *cliOptions, cfg config.FileConfig, changed func(strin
 }
 
 // applyModelProfile resolves the [models."<id>"] profile face (T7.3 实测反馈,
-// grok 的 [model."<id>"] 对齐). It always carries the profile set onto opts so
-// the /model switcher lists the config's model ids; when the resolved model
-// string names a profile, that profile becomes the startup model — its
-// base_url/protocol/provider/api-key/thinking_level fill the unset,
-// flag-unshadowed slots, and its explicit context_window / max_output_tokens
-// ride along as overrides. Runs right after applyFileConfig and BEFORE
-// CanonicalizeModel, so a profile id (user-chosen) is matched verbatim and
-// only the wire id it resolves to gets canonicalized.
+// grok 的 [model."<id>"] 对齐; T8.1 inheritance). It always carries the profile
+// set onto opts so the /model switcher lists the config's model ids; when the
+// resolved model string names a profile, that profile's CONNECTION face — the
+// profile's own fields over the referenced [provider] section's per-field
+// inheritance — fills the unset, flag-unshadowed slots (base_url, protocol,
+// credentials, proxy, thinking_level), and its explicit context_window /
+// max_output_tokens ride along as overrides. Runs right after applyFileConfig
+// and BEFORE CanonicalizeModel, so a profile id (user-chosen) is matched
+// verbatim and only the wire id it resolves to gets canonicalized.
 func applyModelProfile(opts *cliOptions, cfg config.FileConfig, changed func(string) bool) {
 	opts.modelProfiles = cfg.Models
+	opts.providerConfigs = cfg.Providers
 	key, profile, ok := cfg.ProfileFor(opts.model)
 	if !ok {
 		return
 	}
+	// T8.1: the connection face is the profile resolved against the
+	// [provider] sections (per-field inheritance); the profile's explicit
+	// fields win, unset fields ride the referenced provider.
+	conn, connOK := cfg.ResolveModelConnection(key)
+	if !connOK {
+		conn = config.ModelConnection{}
+	}
 	opts.model = profile.WireModel(key)
-	if profile.BaseURL != "" && !changed("base-url") {
-		opts.baseURL = profile.BaseURL
+	if conn.BaseURL != "" && !changed("base-url") {
+		opts.baseURL = conn.BaseURL
 	}
-	if profile.Protocol != "" && !changed("protocol") {
-		opts.protocol = profile.Protocol
+	if conn.Protocol != "" && !changed("protocol") {
+		opts.protocol = conn.Protocol
 	}
-	if profile.Provider != "" && !changed("provider") {
-		opts.provider = profile.Provider
+	if conn.APIKey != "" && !changed("api-key") {
+		// A direct api_key wins over a reference and over the env var (the
+		// same precedence the top-level config uses, issue #568).
+		opts.apiKey = conn.APIKey
 	}
-	if profile.APIKey != "" && !changed("api-key") {
-		// A direct api_key in the profile wins over a reference (the same
-		// precedence the top-level config uses, issue #568).
-		opts.apiKey = profile.APIKey
-	} else if profile.Credential != "" && opts.apiKey == "" && !changed("api-key") {
-		opts.credentialRef = profile.Credential
+	if opts.apiKey == "" && conn.Credential != "" && !changed("api-key") {
+		opts.credentialRef = conn.Credential
 	}
-	if profile.ThinkingLevel != "" && !changed("thinking-level") {
-		opts.thinkingLevel = profile.ThinkingLevel
+	if opts.apiKey == "" && conn.EnvKey != "" {
+		if v := os.Getenv(conn.EnvKey); v != "" {
+			opts.apiKey = v
+		}
 	}
-	opts.profileWindow = profile.ContextWindow
-	opts.profileMaxTokens = profile.MaxOutputTokens
+	if conn.ThinkingLevel != "" && !changed("thinking-level") {
+		opts.thinkingLevel = conn.ThinkingLevel
+	}
+	// The provider reference drives resolution: a config connection is fully
+	// expressed by its base_url/protocol/credentials (the reference itself is
+	// not a built-in family name), while a built-in family hint keeps the old
+	// heuristic path.
+	if conn.ProviderRef != "" && !changed("provider") {
+		if conn.UsedConfigProvider {
+			opts.provider = ""
+		} else {
+			opts.provider = conn.ProviderRef
+		}
+	}
+	opts.proxy = conn.Proxy
+	opts.profileWindow = conn.ContextWindow
+	opts.profileMaxTokens = conn.MaxOutputTokens
 }
 
 // dispatch runs the resolved command and returns a process exit code, writing
@@ -585,7 +658,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			return 2
 		}
 		modeDispatch.End()
-		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
@@ -641,17 +714,19 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				Shellguard:        sgMode,
 				Skills:            env.Skills,
 				ToolPlan:          env.ToolPlan,
-					Plugins:           env.Plugins,
-					MCP:               env.MCP,
-					ConfigPrompts:     opts.configPrompts,
+				Plugins:           env.Plugins,
+				MCP:               env.MCP,
+				ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
 				MaxContext:        env.MaxContext,
 				Models:            opts.modelProfiles,
+				ProviderConfigs:   opts.providerConfigs,
+				Proxy:             opts.proxy,
 				ContextWindow:     opts.profileWindow,
 				MaxOutputTokens:   opts.profileMaxTokens,
 				Permissions:       opts.permsCfg,
-				})
+			})
 			exitTotal.End()
 			if err != nil {
 				fmt.Fprintf(errOut, "pigo: %v\n", err)
@@ -680,6 +755,8 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
 			Models:            opts.modelProfiles,
+			ProviderConfigs:   opts.providerConfigs,
+			Proxy:             opts.proxy,
 			ContextWindow:     opts.profileWindow,
 			MaxOutputTokens:   opts.profileMaxTokens,
 			ConfigPrompts:     opts.configPrompts,
@@ -704,7 +781,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		return 2
 	}
 
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
@@ -770,7 +847,7 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		fmt.Fprintf(errOut, "pigo: --github-review requires a webhook secret in $%s\n", opts.githubWebhookSecretEnv)
 		return 2
 	}
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)

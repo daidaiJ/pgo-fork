@@ -36,7 +36,10 @@ type Session struct {
 // See the package documentation for the default tool, skill, and memory
 // behavior — in particular, that tools are enabled and auto-executed by default.
 func New(opts ...Option) (*Session, error) {
-	c := config{model: "openrouter/free"}
+	// No default model (T8.1): the retired "openrouter/free" default was the
+	// openrouter catch-all itself. A caller without a model fails closed at
+	// resolution with the configuration pointer.
+	c := config{}
 	for _, o := range opts {
 		o(&c)
 	}
@@ -58,7 +61,7 @@ func New(opts ...Option) (*Session, error) {
 	// were passed. It also validates the tool policy against the real tool set,
 	// so an unknown tool name is reported as an error.
 	env, err := run.SetupEnv(
-		c.model, c.baseURL, c.protocol, c.provider, c.apiKey,
+		c.model, c.baseURL, c.protocol, c.provider, c.apiKey, c.proxy,
 		c.noTools, !c.skills, c.systemPrompt, c.appendSystemPrompt, c.memory,
 		cliconfig.MaxContext{}, cliconfig.ToolsConfig{}, cliconfig.MCPConfig{}, policy,
 	)

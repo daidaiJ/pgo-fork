@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -80,13 +81,20 @@ func (x *Executor) execute(it runtime.Intent) string {
 		if x.Live == nil {
 			return "models: live config unavailable"
 		}
-		if listing := profileListing(x.Live); listing != "" {
-			if it.Filter != "" {
-				return presetListing(it.Filter)
-			}
-			return listing + "\n\n" + presetListing("")
+		if it.Filter != "" {
+			return presetListing(it.Filter)
 		}
-		return presetListing(it.Filter)
+		// The config faces come first (T8.1 providers, then the T7.3
+		// profiles), the preset catalog stays the catalog fallback.
+		var parts []string
+		if s := providerListing(x.Live); s != "" {
+			parts = append(parts, s)
+		}
+		if s := profileListing(x.Live); s != "" {
+			parts = append(parts, s)
+		}
+		parts = append(parts, presetListing(""))
+		return strings.Join(parts, "\n\n")
 	case runtime.IntentModelsFetch:
 		return fetchModelCatalog(x.Live, x.Creds)
 	case runtime.IntentThinkShow:
@@ -238,9 +246,9 @@ func (x *Executor) modelSwitch(id, effort string) string {
 	// An id from the fetched online catalog (issue #566) stays on the
 	// gateway that served it: resolve with the live provider name explicit
 	// instead of the heuristic chain, which could route a gateway-specific
-	// id to OpenRouter.
+	// id elsewhere. The live connection's proxy (T8.1) rides along.
 	if providerName := live.ProviderName; len(live.FetchedModels) > 0 && slices.Contains(live.FetchedModels, id) {
-		prov, name, err := provider.ResolveProvider(id, live.BaseURL, live.Protocol, providerName, os.Getenv)
+		prov, name, err := provider.ResolveProviderWithProxy(id, live.BaseURL, live.Protocol, providerName, os.Getenv, live.Proxy)
 		if err != nil {
 			return fmt.Sprintf("model: cannot switch to %q: %v", id, err)
 		}
@@ -255,7 +263,7 @@ func (x *Executor) modelSwitch(id, effort string) string {
 		return applyEffort(fmt.Sprintf("model switched to %s (provider: %s, from fetched catalog)", id, name))
 	}
 	model := provider.CanonicalizeModel(id)
-	prov, providerName, err := provider.ResolveProvider(model, live.BaseURL, live.Protocol, "", os.Getenv)
+	prov, providerName, err := provider.ResolveProviderWithProxy(model, live.BaseURL, live.Protocol, "", os.Getenv, live.Proxy)
 	if err != nil {
 		return fmt.Sprintf("model: cannot switch to %q: %v", id, err)
 	}

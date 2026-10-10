@@ -106,6 +106,12 @@ type Options struct {
 	// the /model switcher lists these ids and a switch rebuilds the provider
 	// from the profile. Nil/empty keeps the preset-catalog fallback.
 	Models map[string]config.ModelProfile
+	// ProviderConfigs is the config's [provider."<id>"] connection face
+	// (T8.1) a profile's provider reference inherits from at switch time;
+	// Proxy is the startup connection's egress proxy (reused by bare-model
+	// switches). Nil/empty keep the defaults.
+	ProviderConfigs map[string]config.ProviderSpec
+	Proxy           string
 	// ContextWindow / MaxOutputTokens are the startup profile's explicit
 	// overrides (0 = derive from the provider catalog, as before).
 	ContextWindow   int
@@ -194,14 +200,16 @@ func Run(opts Options) error {
 	// takes effect on the next turn; header is updated so the switch is persisted
 	// with the session.
 	live := &cli.LiveConfig{
-		Model:         opts.Model,
-		ProviderName:  opts.ProviderName,
-		Provider:      opts.Provider,
-		BaseURL:       opts.BaseURL,
-		Protocol:      opts.Protocol,
-		ThinkingLevel: opts.ThinkingLevel,
-		MaxContext:    opts.MaxContext,
-		ModelProfiles: opts.Models,
+		Model:           opts.Model,
+		ProviderName:    opts.ProviderName,
+		Provider:        opts.Provider,
+		BaseURL:         opts.BaseURL,
+		Protocol:        opts.Protocol,
+		ThinkingLevel:   opts.ThinkingLevel,
+		MaxContext:      opts.MaxContext,
+		ModelProfiles:   opts.Models,
+		ProviderConfigs: opts.ProviderConfigs,
+		Proxy:           opts.Proxy,
 		// The effective window follows the selected model's catalog window
 		// (fallback DefaultContextWindow), lowered by an explicit
 		// [compaction] max_context — re-derived on /model switches. The

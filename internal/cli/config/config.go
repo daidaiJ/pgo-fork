@@ -1,13 +1,16 @@
-// Package config implements pigo's optional user config file at
-// ~/.config/pigo/config.toml (honoring $XDG_CONFIG_HOME when set) plus the
-// provider-agnostic base-url env-var name derivation. Values in the file
-// replace pigo's built-in defaults, but an explicit command-line flag always
-// wins over the file:
+// Package config implements pigo's optional user config file, managed under
+// the pigo home directory ($PIGO_HOME, else ~/.pigo — T8.1 path unification)
+// plus the provider-agnostic base-url env-var name derivation. Values in the
+// file replace pigo's built-in defaults, but an explicit command-line flag
+// always wins over the file:
 //
 //	command-line flag > config.toml > built-in default
 //
 // A missing file is not an error (defaults apply); a malformed file is surfaced
-// to the caller so it can warn rather than silently ignore user intent.
+// to the caller so it can warn rather than silently ignore user intent. An
+// install upgraded from the pre-unification XDG location
+// (~/.config/pigo/config.toml) keeps working: the legacy file is read as a
+// fallback and migrated (copied) to the canonical path once, with a warning.
 //
 // The package is intentionally free of any cliOptions/run-assembly concern: it
 // only loads and decodes the file and derives env-var names. Overlaying a
@@ -95,7 +98,76 @@ type FileConfig struct {
 	// plumbing; startup resolution lives in cmd/pigo (applyModelProfile) and
 	// the session switch in internal/cli/prompts (/model action).
 	Models map[string]ModelProfile `toml:"models"`
+	// Providers is the [provider."<id>"] connection table (T8.1, spec
+	// provider-config.md §4.1): named connection bundles — base_url,
+	// protocol, credentials (api_key/credential/env_key) and the egress
+	// proxy — that [models] profiles reference and inherit from per-field.
+	// Grok 的 [model_providers.<id>] 对齐。Pure config plumbing; the
+	// inheritance resolution lives in providers.go (ResolveModelConnection).
+	//
+	// The map and the top-level Provider hint share the TOML key "provider":
+	// TOML itself rejects a file that carries both shapes, and UnmarshalTOML
+	// below routes the key by shape (string → hint, table → sections).
+	Providers map[string]ProviderSpec `toml:"provider"`
 }
+
+// UnmarshalTOML decodes the config with the overloaded "provider" key routed
+// by shape: a scalar is the top-level provider family hint (existing
+// configs), a table of tables is the [provider."<id>"] section (T8.1). The
+// generic decode runs over the remaining keys through a plain alias type —
+// the alias does not carry this method, so no recursion — and everything
+// else keeps its tag-driven mapping.
+func (c *FileConfig) UnmarshalTOML(data any) error {
+	table, ok := data.(map[string]any)
+	if !ok {
+		return nil
+	}
+	trimmed := make(map[string]any, len(table))
+	for k, v := range table {
+		if k != "provider" {
+			trimmed[k] = v
+		}
+	}
+	if len(trimmed) > 0 {
+		blob, err := toml.Marshal(trimmed)
+		if err != nil {
+			return fmt.Errorf("re-encode config: %w", err)
+		}
+		var plain fileConfigPlain
+		if err := toml.Unmarshal(blob, &plain); err != nil {
+			return err
+		}
+		*c = FileConfig(plain)
+	}
+	raw, ok := table["provider"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		c.Provider = v
+		return nil
+	case map[string]any:
+		for id, entry := range v {
+			var spec ProviderSpec
+			if err := spec.UnmarshalTOML(entry); err != nil {
+				return fmt.Errorf("provider %q: %w", id, err)
+			}
+			if c.Providers == nil {
+				c.Providers = map[string]ProviderSpec{}
+			}
+			c.Providers[id] = spec
+		}
+		return nil
+	default:
+		return fmt.Errorf("provider: expected a string hint or [provider.\"<id>\"] tables, got %T", raw)
+	}
+}
+
+// fileConfigPlain is the decode-only alias of FileConfig: same fields and
+// tags, no methods, so the generic toml decode inside UnmarshalTOML cannot
+// recurse into the custom router.
+type fileConfigPlain FileConfig
 
 // SkillsConfig is the [skills] TOML table (T6.9). Disabled names skills that
 // stay on disk but leave every face — prompt ads, skill-as-tool
@@ -236,11 +308,27 @@ type DreamConfig struct {
 	RecentSessions int   `toml:"recent_sessions"`
 }
 
-// FileConfigPath returns the path to the user config file:
-// $XDG_CONFIG_HOME/pigo/config.toml, or ~/.config/pigo/config.toml by default.
-// It returns "" when neither can be resolved, so the caller treats the file as
-// absent.
+// FileConfigPath returns the canonical path to the user config file:
+// $PIGO_HOME/config.toml, else ~/.pigo/config.toml (T8.1 path unification —
+// the same home the session store, trust, permissions, memory, plugins and
+// the credential file already use). It returns "" when neither can be
+// resolved, so the caller treats the file as absent. Reads may still fall
+// back to the legacy XDG location (LoadUserConfig); writes go here
+// unconditionally, so the config-write paths never fork the user's file.
 func FileConfigPath() string {
+	if dir := os.Getenv("PIGO_HOME"); dir != "" {
+		return filepath.Join(dir, "config.toml")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".pigo", "config.toml")
+}
+
+// legacyFileConfigPath returns the pre-unification XDG config location — the
+// read-only fallback for installs upgraded before the path unification.
+func legacyFileConfigPath() string {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "pigo", "config.toml")
 	}
@@ -249,6 +337,47 @@ func FileConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".config", "pigo", "config.toml")
+}
+
+// LoadUserConfig loads the user's config with the unified-path semantics: the
+// canonical path first; when it is absent and PIGO_HOME is unset, the legacy
+// XDG location is read as a fallback and a copy is migrated to the canonical
+// path (one-time, best-effort) so reads and the config-write paths share one
+// file from then on. PIGO_HOME set means isolated/installation-managed: only
+// the canonical path is consulted, never the host's XDG tree. The returned
+// path is the file the config was actually loaded from ("" = none found) —
+// the caller warns when it is the legacy path.
+func LoadUserConfig() (FileConfig, string, error) {
+	path := FileConfigPath()
+	if path != "" {
+		if _, err := os.Stat(path); err == nil {
+			cfg, err := LoadFileConfig(path)
+			return cfg, path, err
+		}
+	}
+	// With PIGO_HOME set the install is isolated or explicitly relocated:
+	// the host's XDG tree is out of scope (the dual-path defect this closes).
+	if os.Getenv("PIGO_HOME") != "" {
+		return FileConfig{}, "", nil
+	}
+	legacy := legacyFileConfigPath()
+	if legacy == "" {
+		return FileConfig{}, "", nil
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return FileConfig{}, "", nil
+	}
+	// Migrate a copy so the next launch (and the config-write paths) resolve
+	// to the canonical location; a failure leaves the fallback working and
+	// the caller's warning points at the legacy path every run until fixed.
+	if path != "" {
+		if data, readErr := os.ReadFile(legacy); readErr == nil {
+			_ = os.MkdirAll(filepath.Dir(path), 0o755)
+			_ = os.WriteFile(path, data, 0o644)
+		}
+	}
+	cfg, err := LoadFileConfig(legacy)
+	return cfg, legacy, err
 }
 
 // LoadFileConfig reads and decodes config.toml. A missing file (or an empty

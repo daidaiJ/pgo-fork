@@ -202,22 +202,42 @@ func RegisterPluginCommands(reg *runtime.SlashRegistry, mgr *plugin.Manager) {
 // so severity is visible. Returns "" when there are none.
 
 // switchToProfile rebuilds the live provider from one [models."<id>"] config
-// profile: the profile's base_url/protocol/provider win over the session's
-// (unset fields fall through), its api_key/credential becomes the credential
-// override for the resolved provider, and the compaction window/output cap/
+// profile: the connection face is the profile resolved against the
+// [provider."<id>"] sections (T8.1 per-field inheritance — the profile's own
+// fields win, unset fields ride the referenced provider), remaining unset
+// fields fall through to the session's, the resolved api_key/credential/
+// env_key becomes the credential override, the egress proxy (model >
+// provider) rides the rebuilt driver, and the compaction window/output cap/
 // effort follow the profile's declarations. An explicit effort argument wins
 // over the profile's thinking_level. Returns the transcript feedback.
 func switchToProfile(live *cli.LiveConfig, creds *provider.CredentialStore, key string, prof config.ModelProfile, effort string) string {
 	wire := prof.WireModel(key)
-	baseURL := prof.BaseURL
+	// T8.1: resolve the profile against the live [provider] face via the
+	// same tested inheritance the startup path uses.
+	inherit := config.FileConfig{
+		Models:    map[string]config.ModelProfile{key: prof},
+		Providers: live.ProviderConfigs,
+	}
+	conn, _ := inherit.ResolveModelConnection(key)
+	familyHint := conn.ProviderRef
+	if conn.UsedConfigProvider {
+		// A config connection is fully expressed by its inherited fields;
+		// the reference id is not a built-in family name.
+		familyHint = ""
+	}
+	baseURL := conn.BaseURL
 	if baseURL == "" {
 		baseURL = live.BaseURL
 	}
-	protocol := prof.Protocol
+	protocol := conn.Protocol
 	if protocol == "" {
 		protocol = live.Protocol
 	}
-	prov, name, err := provider.ResolveProvider(wire, baseURL, protocol, prof.Provider, os.Getenv)
+	proxy := conn.Proxy
+	if proxy == "" {
+		proxy = live.Proxy
+	}
+	prov, name, err := provider.ResolveProviderWithProxy(wire, baseURL, protocol, familyHint, os.Getenv, proxy)
 	if err != nil {
 		return fmt.Sprintf("model: cannot switch to profile %q: %v", key, err)
 	}
@@ -225,7 +245,8 @@ func switchToProfile(live *cli.LiveConfig, creds *provider.CredentialStore, key 
 	live.ProviderName = name
 	live.Provider = prov
 	live.BaseURL = baseURL
-	if apiKey := profileAPIKey(prof); apiKey != "" && creds != nil {
+	live.Proxy = proxy
+	if apiKey := connectionAPIKey(conn); apiKey != "" && creds != nil {
 		creds.SetOverride(name, apiKey)
 	}
 	// The window follows the profile's explicit declaration when it has one;
@@ -243,22 +264,50 @@ func switchToProfile(live *cli.LiveConfig, creds *provider.CredentialStore, key 
 	return fmt.Sprintf("model switched to %s (provider: %s, config profile %s)", wire, name, key)
 }
 
-// profileAPIKey resolves the profile's credential: the literal api_key wins,
-// otherwise the named reference is read from $PIGO_HOME/.credentials.yaml
-// (issue #568). An unresolvable reference yields "" so the switch keeps the
-// session's existing credential rather than failing the switch.
-func profileAPIKey(prof config.ModelProfile) string {
-	if prof.APIKey != "" {
-		return prof.APIKey
+// connectionAPIKey resolves a model connection's credential: the literal
+// api_key wins, then the named reference is read from $PIGO_HOME/
+// .credentials.yaml (issue #568), then the env_key variable. An unresolvable
+// reference yields "" so the switch keeps the session's existing credential
+// rather than failing the switch.
+func connectionAPIKey(conn config.ModelConnection) string {
+	if conn.APIKey != "" {
+		return conn.APIKey
 	}
-	if prof.Credential == "" {
+	if conn.Credential != "" {
+		key, err := provider.ResolveCredentialReference(provider.CredentialFilePath(), conn.Credential)
+		if err == nil {
+			return key
+		}
 		return ""
 	}
-	key, err := provider.ResolveCredentialReference(provider.CredentialFilePath(), prof.Credential)
-	if err != nil {
+	if conn.EnvKey != "" {
+		return os.Getenv(conn.EnvKey)
+	}
+	return ""
+}
+
+// providerListing renders the config [provider."<id>"] section of /models
+// (T8.1): one line per usable section (id — base_url, proxy tagged), the
+// connection face a [models] profile references and inherits from. Empty
+// when the config declares none.
+func providerListing(live *cli.LiveConfig) string {
+	if live == nil || len(live.ProviderConfigs) == 0 {
 		return ""
 	}
-	return key
+	ids := config.FileConfig{Providers: live.ProviderConfigs}.ProviderIDs()
+	if len(ids) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("config providers (a [models] profile references one and inherits its connection):")
+	for _, id := range ids {
+		p := live.ProviderConfigs[id]
+		fmt.Fprintf(&b, "\n  %s  — %s", id, p.BaseURL)
+		if p.Proxy != "" {
+			b.WriteString("  (proxy)")
+		}
+	}
+	return b.String()
 }
 
 // profileListing renders the config-profile section of /models: one line per

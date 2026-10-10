@@ -32,14 +32,14 @@ func contains(set []string, name string) bool {
 // advertised and the model id resolves to the openrouter provider.
 func TestNewDefaults(t *testing.T) {
 	hermetic(t)
-	sess, err := agent.New(agent.WithModel("openrouter/free"))
+	sess, err := agent.New(agent.WithModel("openai/gpt-4o"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer sess.Close()
 
-	if got := sess.Model(); got != "openrouter/free" {
-		t.Errorf("Model() = %q, want %q", got, "openrouter/free")
+	if got := sess.Model(); got != "openai/gpt-4o" {
+		t.Errorf("Model() = %q, want %q", got, "openai/gpt-4o")
 	}
 	if got := sess.Provider(); got != "openrouter" {
 		t.Errorf("Provider() = %q, want %q", got, "openrouter")
@@ -56,7 +56,7 @@ func TestNewDefaults(t *testing.T) {
 func TestWithToolsAllowlist(t *testing.T) {
 	hermetic(t)
 	sess, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithTools("read", "grep"),
 	)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestWithToolsAllowlist(t *testing.T) {
 func TestDenyWinsOverAllow(t *testing.T) {
 	hermetic(t)
 	sess, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithTools("read", "bash"),
 		agent.WithDisallowedTools("bash"),
 	)
@@ -95,7 +95,7 @@ func TestDenyWinsOverAllow(t *testing.T) {
 func TestWithoutTools(t *testing.T) {
 	hermetic(t)
 	sess, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithoutTools(),
 	)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestWithoutTools(t *testing.T) {
 func TestUnknownToolIsError(t *testing.T) {
 	hermetic(t)
 	_, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithTools("raed"),
 	)
 	if err == nil {
@@ -125,7 +125,7 @@ func TestUnknownToolIsError(t *testing.T) {
 func TestInvalidThinkingLevelIsError(t *testing.T) {
 	hermetic(t)
 	_, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithThinkingLevel("supersonic"),
 	)
 	if err == nil {
@@ -138,7 +138,7 @@ func TestValidThinkingLevels(t *testing.T) {
 	hermetic(t)
 	for _, level := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"} {
 		sess, err := agent.New(
-			agent.WithModel("openrouter/free"),
+			agent.WithModel("openai/gpt-4o"),
 			agent.WithThinkingLevel(level),
 		)
 		if err != nil {
@@ -153,7 +153,7 @@ func TestValidThinkingLevels(t *testing.T) {
 // plugin manager or memory store, and is safe to call.
 func TestCloseHermetic(t *testing.T) {
 	hermetic(t)
-	sess, err := agent.New(agent.WithModel("openrouter/free"), agent.WithoutTools())
+	sess, err := agent.New(agent.WithModel("openai/gpt-4o"), agent.WithoutTools())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -178,7 +178,7 @@ func publicEchoTool(name string) agent.Tool {
 func TestWithoutToolsKeepsOnlyExplicitCustomTools(t *testing.T) {
 	hermetic(t)
 	sess, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithoutTools(),
 		agent.WithCustomTools(publicEchoTool("piflow_echo")),
 	)
@@ -195,7 +195,7 @@ func TestWithoutToolsKeepsOnlyExplicitCustomTools(t *testing.T) {
 func TestCustomToolCannotShadowEnabledBuiltin(t *testing.T) {
 	hermetic(t)
 	_, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithCustomTools(publicEchoTool("READ")),
 	)
 	if err == nil {
@@ -206,7 +206,7 @@ func TestCustomToolCannotShadowEnabledBuiltin(t *testing.T) {
 func TestCustomToolNamesAreUniqueCaseInsensitively(t *testing.T) {
 	hermetic(t)
 	_, err := agent.New(
-		agent.WithModel("openrouter/free"),
+		agent.WithModel("openai/gpt-4o"),
 		agent.WithoutTools(),
 		agent.WithCustomTools(publicEchoTool("lookup"), publicEchoTool("LOOKUP")),
 	)
@@ -238,7 +238,7 @@ func TestInvalidCustomToolsFailConstruction(t *testing.T) {
 			tool := publicEchoTool("lookup")
 			tc.edit(&tool)
 			_, err := agent.New(
-				agent.WithModel("openrouter/free"),
+				agent.WithModel("openai/gpt-4o"),
 				agent.WithoutTools(),
 				agent.WithCustomTools(tool),
 			)
