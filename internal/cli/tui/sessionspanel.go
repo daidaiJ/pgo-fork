@@ -192,18 +192,11 @@ func (p sessionsPanel) view(theme Theme, width, height int) string {
 		{"Esc", "关闭"},
 	}))
 
-	box := panelBox(theme, b.String(), bodyW)
-	lines := strings.Split(box, "\n")
+	lines := strings.Split(panelBox(theme, b.String(), bodyW), "\n")
 	if height > 0 && len(lines) > height {
 		lines = lines[:height]
 	}
-	pad := (width - inner) / 2
-	if pad > 0 {
-		for i, l := range lines {
-			lines[i] = strings.Repeat(" ", pad) + l
-		}
-	}
-	return strings.Join(lines, "\n")
+	return centerPanel(strings.Join(lines, "\n"), width)
 }
 
 // sessionRowText renders one entry as a single plain line: title (or id),

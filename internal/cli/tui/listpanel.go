@@ -138,11 +138,13 @@ func (p *listPanel) moveDown() {
 }
 
 // view renders the modal in the sessionsPanel grammar: rounded panelBox,
-// title row, filter echo when typing, a scrolled row window, note line. Each
-// row is the grok shape (T7.3 实测反馈): 名称 + 一部分描述 — the description
-// is clipped to the row's remaining width so a long blurb never wraps the
-// panel (the full text stays on /skills info <name>); tool rows are indented
-// under their server.
+// title row, filter echo when typing, a scrolled row window, note line, all
+// horizontally centered like every other overlay (centerPanel — /skills, /mcp,
+// /lsp, /shell and /mode previously sat flush left while /context and /sessions
+// were centered). Each row is the grok shape (T7.3 实测反馈): 名称 + 一部分描述
+// — the description is clipped to the row's remaining width so a long blurb
+// never wraps the panel (the full text stays on /skills info <name>); tool rows
+// are indented under their server.
 func (p listPanel) view(theme Theme, width, height int) string {
 	inner := width - 4
 	if inner > 96 {
@@ -174,7 +176,7 @@ func (p listPanel) view(theme Theme, width, height int) string {
 		} else {
 			b.WriteString(theme.System.Render("(无匹配行)") + "\n")
 		}
-		return panelBox(theme, strings.TrimRight(b.String(), "\n"), bodyW)
+		return centerPanel(panelBox(theme, strings.TrimRight(b.String(), "\n"), bodyW), width)
 	}
 	start := 0
 	if len(vis) > maxListRows {
@@ -211,7 +213,7 @@ func (p listPanel) view(theme Theme, width, height int) string {
 	if p.note != "" {
 		b.WriteString(theme.System.Render(p.note) + "\n")
 	}
-	return panelBox(theme, strings.TrimRight(b.String(), "\n"), bodyW)
+	return centerPanel(panelBox(theme, strings.TrimRight(b.String(), "\n"), bodyW), width)
 }
 
 // clipDesc truncates a row description to the width left inside the panel

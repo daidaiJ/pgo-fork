@@ -121,16 +121,30 @@ func (p contextPanel) render(theme Theme, d contextData, width, height int) stri
 	}
 	bodyW := inner - 2
 	body := p.body(theme, d, bodyW)
-	box := panelBox(theme, body, bodyW)
-	lines := strings.Split(box, "\n")
+	lines := strings.Split(panelBox(theme, body, bodyW), "\n")
 	if height > 0 && len(lines) > height {
 		lines = lines[:height]
 	}
-	pad := (width - inner) / 2
-	if pad > 0 {
-		for i, l := range lines {
-			lines[i] = strings.Repeat(" ", pad) + l
-		}
+	return centerPanel(strings.Join(lines, "\n"), width)
+}
+
+// centerPanel pads every line of an overlay box so the panel sits horizontally
+// centered in the transcript region — one placement rule for every overlay
+// (/context, /usage, /sessions, and the /skills //mcp /lsp /shell /mode list
+// panels), which is what grok's modals do. A box as wide as the terminal (or
+// wider) is returned unchanged.
+func centerPanel(box string, width int) string {
+	lines := strings.Split(box, "\n")
+	if len(lines) == 0 || width <= 0 {
+		return box
+	}
+	pad := (width - uiW(lines[0])) / 2
+	if pad <= 0 {
+		return box
+	}
+	prefix := strings.Repeat(" ", pad)
+	for i, l := range lines {
+		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
 }

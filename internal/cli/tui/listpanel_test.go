@@ -13,6 +13,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/smallnest/pigo/internal/cli/ui"
+
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/prompts"
@@ -499,5 +501,52 @@ func TestGatherLSPRowsToolFaceState(t *testing.T) {
 	}
 	if !hoverOn || !otherOff {
 		t.Fatalf("tool face state: hoverOn=%v otherOff=%v (children=%+v)", hoverOn, otherOff, rows[0].children)
+	}
+}
+
+// TestListPanelIsCentered covers the 2026-10-10 real-terminal report that the
+// /skills and /lsp overlays sat flush left while /context and /sessions were
+// centered: every panel now goes through one placement rule (centerPanel).
+func TestListPanelIsCentered(t *testing.T) {
+	p := listPanel{open: true, title: "技能", rows: []listRow{
+		{title: "weather", desc: "Get current weather and forecasts", tag: "[manual]"},
+		{title: "handoff", desc: "会话交接器：把当前会话的工作进度固化", tag: "[manual]"},
+	}, note: "共 2 个技能"}
+	const width = 80
+	out := stripANSI(p.view(DefaultTheme(), width, 20))
+	lines := strings.Split(out, "\n")
+	first := lines[0]
+	left := len(first) - len(strings.TrimLeft(first, " "))
+	if left <= 0 {
+		t.Fatalf("panel is flush left, want a centered margin: %q", first)
+	}
+	boxW := ui.Width(strings.TrimRight(first, " ")) - left
+	right := width - left - boxW
+	if right < 0 || right-left > 1 || left-right > 1 {
+		t.Errorf("panel margins are not centered: left=%d right=%d\n%s", left, right, out)
+	}
+	// Every line shares the same left margin, so the box stays a rectangle.
+	pad := strings.Repeat(" ", left)
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if !strings.HasPrefix(l, pad) {
+			t.Errorf("line %d lost the left margin: %q", i, l)
+		}
+	}
+}
+
+// TestCenterPanelLeavesWideBoxesAlone keeps the guard: a box that already fills
+// the terminal (or is wider) is returned untouched rather than indented.
+func TestCenterPanelLeavesWideBoxesAlone(t *testing.T) {
+	if got := centerPanel("abc", 3); got != "abc" {
+		t.Errorf("centerPanel(3-wide box, width 3) = %q, want unchanged", got)
+	}
+	if got := centerPanel("abc", 0); got != "abc" {
+		t.Errorf("centerPanel with no width = %q, want unchanged", got)
+	}
+	if got := centerPanel("abc", 7); got != "  abc" {
+		t.Errorf("centerPanel(abc, 7) = %q, want two leading spaces", got)
 	}
 }
