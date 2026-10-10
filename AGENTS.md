@@ -58,7 +58,10 @@
 - [ ] **TUI 面板真机手感一批约**：T7.6 审批面（Shift+Tab 环 + 三态标签 +
       待审批面板 Esc·a·s + /mode 面板 mid-run）、T8.3 队列 pane（↑↓ 选中 +
       Del + Esc 冻结体感 + Alt+Enter 各终端序列）、T8.4 /shell 面板、T8.2
-      /lsp 面板（含批 2 工具行 Space 翻转）；前置各自见规格（/lsp 需
+      /lsp 面板（含批 2 工具行 Space 翻转）、`/usage` 打开的 overlay
+      「用量上限」tab（Tab/Shift+Tab + 条对齐 + `查询中…` 行）、**流式思考块
+      折叠**（Ctrl+T / 双击三态、提示文案、回合结束后用户展开态保留——规格 =
+      `tui-mouse-fold-todo.md` §7）；前置各自见规格（/lsp 需
       `[lsp] enabled` 或项目层开 + 目录受信；审批面板需 `-a=false` 或
       /mode ask——交互默认维持 approve 已拍板）
 - [ ] **T7.6 缓落件**：D-C3 bash 只读白名单（落地后 plan 模式 bash 只读
