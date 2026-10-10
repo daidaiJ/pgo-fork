@@ -9,22 +9,24 @@
 
 ## 🔄 现场速览
 
-- **当前阶段**：**T7.1 子智能体中断续接已落地（切片 1 底座 + 切片 2 超窗，
-  P1 一次收口）**（2026-10-11 深夜；feat `f6938b0`，44 包 0 FAIL，两份
-  二进制已刷）。交付 = 会话旁挂 transcript sidecar + `task` 工具 `resume`
-  参数（前缀重放 + T5.2 标注 + 超窗蒸馏）、failed 信封 `resume_hint`、前端
-  `BindSession`；权威 = [wiki/port/subagent-resume.md](wiki/port/subagent-resume.md)
-  §6（落地记录）+ §5（方案）。最新交接卡 = [wiki/port/handoff.md](wiki/port/handoff.md)
-  2026-10-11（深夜）。
-- **接手者第一步**：从待排期池取件——T7.2、O1（与 S3/S4 合并）、MCP 默认
-  deferred 补齐（D-11）、dynamic-workflow（候选 C + 硬路由）、T6.3、T6.6、
-  T7.4；或等用户 TUI 真机验收反馈（清单 = `wiki/port/tui-slash-ux.md` §14 +
-  各面板）。
+- **当前阶段**：**会话用量记帐 + /usage + /stats 已落地（O1 + T7.3c S3/S4
+  合并批）**（2026-10-11 深夜；feat `9c7e8fb`，45 包 0 FAIL，两份二进制已刷）。
+  交付 = 新叶子包 `internal/statline`（纯聚合 + `<id>.usage.jsonl` ledger）+
+  runtime 循环唯一记账点 + 子代理归账父会话 + 状态行改会话累计口径（补
+  `↻ n` / `miss n` 零时隐藏）+ `/usage` / `/stats [day|week|all]` 契约命令；
+  权威 = [wiki/port/usage-ledger.md](wiki/port/usage-ledger.md)（§3 形态 +
+  §4 偏差 D-1~D-8 + §6 缓落件）。最新交接卡 =
+  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（深夜 2）。
+- **接手者第一步**：从待排期池取件——T7.2、MCP 默认 deferred 补齐（D-11）、
+  T6.3（`/usage` 命名合并约定见 usage-ledger.md D-6）、T6.6、dynamic-workflow
+  （候选 C + 硬路由）、T7.3 余切片 S5–S7·S9；或等用户 TUI 真机验收反馈
+  （清单 = `wiki/port/tui-slash-ux.md` §14 + 各面板 + usage-ledger.md §5）。
 
 ### 近期批次速览（细节 = wiki 卡/分册，勿在此展开）
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
+| 10-11 深夜 2 | 会话用量记帐 + /usage + /stats（O1 + T7.3c S3/S4：statline 叶子包 + 会话 ledger + 子代理归账 + 状态行会话累计 + `↻`/`miss`） | `9c7e8fb` | usage-ledger.md |
 | 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0`+`8c0d8f8` | subagent-resume.md §6 |
 | 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
 | 10-11 深夜 | T7.6+D-C1 审批三态（Shift+Tab 环 + /mode + plan 门 + 本地审批面板 + B5 lsp_rename） | `a62589c`+`a04748e`/`9020d49` | approval-modes.md |
@@ -60,6 +62,12 @@
 - [ ] **T7.3 面板族真机对表 grok**（/model 档案链式、/think 下拉、/skills
       //mcp 两级、slash 菜单 [skill] 标记、/resume 别名；前置 = config 先加
       `[models."<id>"]` 档案；清单 = `wiki/port/tui-slash-ux.md` §14）
+- [ ] **本批 usage 面真机验收（O1+T7.3c）**：状态行会话累计（跨 run 不归零、
+      恢复会话首帧即显示累计）+ `↻ n` / `miss n` 零时隐藏 + `/usage` 与状态行
+      数值一致 + `/stats [day|week|all]` 窗口与按模型聚合 + 子代理开销计入
+      （清单 = `wiki/port/usage-ledger.md` §5）；缓落件 = 状态行可配置项面 /
+      `pigo usage --json` + provider quota 段（随 T6.3）/ 费用估算 / process
+      子代理与 `/btw` 侧线程归账（`usage-ledger.md` §6）
 - [ ] **T8.2 缓落件**：call hierarchy 缓；lsp_rename 多 root/多 server 路由
       （多语言 server 前提）；auto-install 冷装路径未真机走通（单测钉边界）；
       watched_files 重开条件 = 多语言 server 出现（D-12）
