@@ -9,23 +9,26 @@
 
 ## 🔄 现场速览
 
-- **当前阶段**：**会话用量记帐 + /usage + /stats 已落地（O1 + T7.3c S3/S4
-  合并批）**（2026-10-11 深夜；feat `9c7e8fb`，45 包 0 FAIL，两份二进制已刷）。
-  交付 = 新叶子包 `internal/statline`（纯聚合 + `<id>.usage.jsonl` ledger）+
-  runtime 循环唯一记账点 + 子代理归账父会话 + 状态行改会话累计口径（补
-  `↻ n` / `miss n` 零时隐藏）+ `/usage` / `/stats [day|week|all]` 契约命令；
-  权威 = [wiki/port/usage-ledger.md](wiki/port/usage-ledger.md)（§3 形态 +
-  §4 偏差 D-1~D-8 + §6 缓落件）。最新交接卡 =
-  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-11（深夜 2）。
-- **接手者第一步**：从待排期池取件——T7.2、MCP 默认 deferred 补齐（D-11）、
-  T6.3（`/usage` 命名合并约定见 usage-ledger.md D-6）、T6.6、dynamic-workflow
-  （候选 C + 硬路由）、T7.3 余切片 S5–S7·S9；或等用户 TUI 真机验收反馈
-  （清单 = `wiki/port/tui-slash-ux.md` §14 + 各面板 + usage-ledger.md §5）。
+- **当前阶段**：**T6.3 供应商套餐余量已并入 /usage（一把 sk 可查的两家）**
+  （2026-10-10 晚；feat `daaf54b`，47 包 0 FAIL，两份二进制已刷）。交付 =
+  新叶子包 `internal/usage`（`Window`/`Snapshot` + 每供应商一文件注册表 +
+  归一化硬规则 1–7）+ 两家 source（opencode-go、commandcode，fixture 表驱动）
+  + OpenCode 凭据发现（`CredentialStore` 第五层，社区路线）+ `/usage` 的 grok
+  形态额度段（30 格条 + floored% + 重置倒计时）；commandcode 已真 key 实测。
+  权威 = [wiki/port/provider-usage.md](wiki/port/provider-usage.md) §5（落地
+  记录 + 偏差 D-1~D-8 + 实测留档 + 缓落件）。最新交接卡 =
+  [wiki/port/handoff.md](wiki/port/handoff.md) 2026-10-10（晚）。
+- **接手者第一步**：从待排期池取件——T6.6（供应商韧性 S 件族）、T7.2、
+  MCP 默认 deferred 补齐（D-11）、dynamic-workflow（候选 C + 硬路由）、T7.3
+  余切片 S5–S7·S9、T7.4；或按 provider-usage.md §5.4 续做 T6.3 缓落件；或等
+  用户批量 TUI 真机验收（清单 = `wiki/port/tui-slash-ux.md` §14 + 各面板 +
+  `/usage` 的 plan quota 段）。
 
 ### 近期批次速览（细节 = wiki 卡/分册，勿在此展开）
 
 | 日期 | 批次 | commit | 规格（wiki/port/） |
 |------|------|--------|--------------------|
+| 10-10 晚 | T6.3 供应商套餐余量并入 /usage（`internal/usage` 叶子包 + opencode-go/commandcode 两家 source + OpenCode 凭据发现 + grok 形态额度条） | `daaf54b` | provider-usage.md §5 |
 | 10-11 深夜 2 | 会话用量记帐 + /usage + /stats（O1 + T7.3c S3/S4：statline 叶子包 + 会话 ledger + 子代理归账 + 状态行会话累计 + `↻`/`miss`） | `9c7e8fb` | usage-ledger.md |
 | 10-11 深夜 | T7.1 子智能体中断续接（transcript sidecar + task resume 参数 + 前缀重放/T5.2 标注 + 超窗蒸馏 + resume_hint） | `f6938b0`+`8c0d8f8` | subagent-resume.md §6 |
 | 10-11 续 | T7.1 续接方案细化定稿（四参照深挖 + P1–P5 拍板；零代码，实现移交下会话） | 无（wiki） | subagent-resume.md §5 |
@@ -66,8 +69,16 @@
       恢复会话首帧即显示累计）+ `↻ n` / `miss n` 零时隐藏 + `/usage` 与状态行
       数值一致 + `/stats [day|week|all]` 窗口与按模型聚合 + 子代理开销计入
       （清单 = `wiki/port/usage-ledger.md` §5）；缓落件 = 状态行可配置项面 /
-      `pigo usage --json` + provider quota 段（随 T6.3）/ 费用估算 / process
-      子代理与 `/btw` 侧线程归账（`usage-ledger.md` §6）
+      `pigo usage --json` / 费用估算 / process 子代理与 `/btw` 侧线程归账
+      （`usage-ledger.md` §6）
+- [ ] **T6.3 供应商余量真机验收 + 缓落件**：`/usage` 的 plan quota 段真机手感
+      （会话块之后、条与百分比对齐、无 source 时不留空行；REPL 管道已实测，
+      TUI 待用户）；缓落件 = `pigo usage --json` 只读出口、`[usage.sources.<id>]`
+      第二凭据段、§3 五家完整版（zai/moonshot/minimax/volcengine/dashscope，
+      含 AK/SK 签名与两步链）、commandcode `sandboxMinutes` 泳道与月度百分比、
+      同屏多 provider、opencode-go 真 key 实测留档、凭据发现矩阵其余家
+      （清单 = `wiki/port/provider-usage.md` §5.4；前置手法 = 同文 §5.2，隔离
+      `PIGO_HOME` + REPL 管道 + **原生 Windows 路径形态**）
 - [ ] **T8.2 缓落件**：call hierarchy 缓；lsp_rename 多 root/多 server 路由
       （多语言 server 前提）；auto-install 冷装路径未真机走通（单测钉边界）；
       watched_files 重开条件 = 多语言 server 出现（D-12）
@@ -107,6 +118,10 @@
   Windows 路径形态**（`GOTMPDIR='D:\CODE\ai\pgo-fork\.gtmp'`）；传
   `/d/CODE/...` 这种 MSYS 形态会被 Go 拒绝（`creating work dir:
   GetFileAttributesEx ...: The system cannot find the path specified`）。
+  **同款教训适用于一切交给 Go/Python 的路径**（`PIGO_HOME`、核验脚本的
+  stub 日志路径…）：一律传原生形态（`C:/...` 或 `C:\...`），MSYS 的
+  `/c/...` 会被解释成当前盘根下的 `\c\...` 而静默错位（2026-10-10 核验
+  会话踩过：会话写到别处、Python 直接 FileNotFound，见 `wiki/port/pitfalls.md`）。
 - 本地两份二进制 `./pigo.exe` 与 `./bin/pigo.exe`（gitignored）：**重建时
   build 一次 + `cp` 刷第二份**，否则用户可能跑到旧件（10-08 曾因 bin 停在
   旧版本导致「实测跑的是旧二进制」）。
