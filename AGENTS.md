@@ -304,6 +304,15 @@
   [design-principles.md](wiki/port/design-principles.md) **R12** +
   [tui-slash-ux.md](wiki/port/tui-slash-ux.md) §13 +
   [implementation-plan.md](wiki/port/implementation-plan.md) T7.7。
+- **⑪ T8.2 LSP 支持（gopls 深度适配）已立项（2026-10-10 用户点名，建议排
+  T8.1 后下一个实用件）**：`internal/lsp` 客户端内核（**overlay 诊断回灌** =
+  核心优化：didOpen/didChange 喂内存态，编辑后诊断即时回灌）+ gopls 深度适配
+  （后台预热 / `gopls -remote=auto` daemon 复用 / Windows URI / 多 module）+
+  **工作目录级开关走既有项目层 `./.pigo/config.json`（trust 门 = 安全前置）**+
+  **`/lsp` 声明命令**（TUI 两级面板照 /mcp 先例，REPL 降级，headless 拒绝）+
+  工具族**默认 deferred**（deferred 面 T4.1 机制；+5435 token/轮教训不得重犯）；
+  待拍板 = 全局默认 off/on / rename 是否入首批（多文件写须过 T5.2）/ 面板启停
+  写哪层 / 非 Go 仓空转防护（登记 = implementation-plan T8.2）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
