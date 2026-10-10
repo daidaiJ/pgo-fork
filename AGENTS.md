@@ -5,6 +5,41 @@
 
 ## 🔄 Handoff 摘要
 
+### T8.2 LSP 批 2（B1/B3/B4 落地 + B2 取证改判不落地）— 已落地并推送
+
+- **当前状态：** 2026-10-11 晚落地（接手首件：按交接卡排期口径取待排期池
+  首位；feat + docs 两段提交推送 origin/dev）；44 包 0 FAIL
+  （`.gtmp/t82b2-final.log`）；两份二进制已刷（第二份 = cp，sha256 一致）。
+  **B2（watched_files 代理）取证改判不落地（D-12）；B5（rename + 多路由）
+  缓入随 T7.6+D-C1**；余项全显式登记（lsp-support.md §7）。第 8 期维持
+  ✅ 全部完成 4/4。
+- **关键证据：** ①**B1 评估 = 维持独立工具族（5→7 件）**——deferred 面
+  pre-claim 零成本 + 认领粒度细，grok 单工具多操作是其「内置全直出」经济学
+  产物；真机 gopls 宣告 workspaceSymbol/implementation/callHierarchy 全
+  available，call hierarchy 缓。②**新查询面 `lsp_workspace_symbols` +
+  `lsp_implementations`**（真机：`agentLoop` 100 命中首条精确 loop.go:175、
+  `AgentTool.Name()` 45 实现者）。③**per-tool 开关**：面板工具行 Space 翻转
+  写全局 `[lsp.gopls] tools`（`config.SetLSPTools` 注释保留；下会话生效）+
+  REPL `/lsp tool enable|disable <name>`（`IntentLSPToolToggle`；未知名带
+  全家清单；**禁到最后一件拒绝**）。④**overlay 面扩 go.mod/go.work**
+  （languageId 映射；批 1 的 filter 会静默丢 modfile 写盘——补齐）。⑤**B3
+  拉取兜底**（grok pull.rs 规则：MethodNotFound 才写死；对 gopls 一次写死
+  零成本）+ **restart 收割/重放**（overlay docs 内存收割 → 重建重推，优于
+  grok 读盘重放）+ 启动失败 Status 可见（lastStartErr）。⑥**B4 自动安装**
+  （LookPath 失败 → `go install @latest` 到 `<UserCacheDir>/pigo/bin`；
+  `[lsp.gopls] auto_install` nil 默认 true；custom command 永不装；D-14）。
+  ⑦**B2 改判**：grok 刻意不喂 bash（注释原文取证）+ gopls 宣告后把
+  `**/*.{mod,work}` 委托客户端 ⇒ 宣告 = bash 驱动 go.mod 变更回归；替代 =
+  overlay mod/work 扩面。
+- **拍板登记（本轮默认拍板，可推翻）：** 工具族维持多工具 / per-tool 开关写
+  全局层 / auto_install 默认 true / call hierarchy 缓 / 主动 restart 监视
+  不做（D-13，pigo 无空闲期诊断消费方）。
+- **详情指针：** 规格 + 批 2 定稿 + 偏差 D-12/13/14 =
+  [wiki/port/lsp-support.md](wiki/port/lsp-support.md)（§7 本轮权威）；
+  任务 = implementation-plan T8.2 + [plan/phase-8.md](wiki/port/plan/phase-8.md)
+  （期维持 ✅ 4/4）；卡 = [wiki/port/handoff.md](wiki/port/handoff.md)
+  2026-10-11（晚）。
+
 ### T8.3 输入排队机制补全（队列 pane + 中断冻结 + send-now 插队）— 已落地并推送
 
 - **当前状态：** 2026-10-11 落地（feat + docs 两段提交后推送 origin/dev）；
@@ -263,8 +298,11 @@
 - [ ] **T8.4 TUI /shell 面板真机手感**（后端列表级联序 + `[current]` 标注 +
       Space 切换写全局 config + 下一条命令热切生效；前置 = 无，全局开关件）
 - [ ] **T8.2 TUI /lsp 面板真机手感**（server 行状态/诊断计数 + Enter 展开
-      工具行 + Space 启停写项目层；前置 = `[lsp] enabled = true` 或项目层
-      开 + 目录受信）；批 2 改进切片 B1–B5 待排期（lsp-support.md §7）
+      工具行 + Space 启停写项目层 + **批 2：工具行 Space 翻转写
+      `[lsp.gopls] tools` 的手感**；前置 = `[lsp] enabled = true` 或项目层
+      开 + 目录受信）；批 2 已落地（2026-10-11），**余 B5 = lsp_rename 过
+      T5.2 + 多 root/多 server 路由（随 T7.6+D-C1 取件）** + call hierarchy
+      缓（lsp-support.md §7）
 - [ ] **本批（2026-10-08）：dynamic-workflow 载体路线待拍板**（形态设计
       §8 四条问题：候选 A 嵌入脚本 / B 纯声明式 / C 声明式外层 + 受限表达式
       + 逃生舱〔建议〕；脚本引擎与 code mode 合并选型；排期；是否要
@@ -296,7 +334,15 @@
 
 ## Handoff 摘要指针（每阶段收口必须更新本节）
 
-- **当前阶段**：**2026-10-11：T8.3 输入排队机制补全落地（四条拍板当日收口，
+- **当前阶段**：**2026-10-11 晚：T8.2 LSP 批 2 落地（B1/B3/B4 + B2 取证
+  改判）**——工具族 5→7（评估维持多工具）+ 新查询面 workspace_symbols/
+  implementations（真机 100/45 命中）+ per-tool 开关（面板 Space + REPL
+  文本式，写全局 `[lsp.gopls] tools`）+ overlay 扩 mod/work + pull 兜底 +
+  restart 收割重放 + lastStartErr 可见 + gopls 自动安装（D-14）；B2 改判
+  不落地（D-12 取证反转），B5 随 T7.6+D-C1；44 包 0 FAIL
+  （`.gtmp/t82b2-final.log`）。规格 = wiki/port/lsp-support.md（§7 本轮
+  权威），任务 = implementation-plan T8.2。上一阶段：
+  **2026-10-11：T8.3 输入排队机制补全落地（四条拍板当日收口，
   第 8 期 ✅ 全部完成）**——队列 pane（`#N` + 首行 + `( +N lines)`，cap 3，
   ↑/↓ 选中 + Del 删除，running 槽 / held 态双渲染）+ **Esc 中断后队列冻结
   不偷跑**（裸 Enter 提升队首 / 新提交解冻；退出清队）+ **Alt+Enter send-now
