@@ -20,8 +20,9 @@
   `backlog.md`（待议/优化池 O1/观察池/负面清单 + 已升级件去向）。**无代码
   改动**；port/README 指针同步；wiki 交接卡已轮换（T8.1 卡入 archive）。
 - **对账要点：** 第 1–5 期 ✅ **全部完成**（3/4/5/4/4）；第 6 期 🔶 部分完成
-  = **✅7 · 🔶1（T6.4 盘点 ✅/精选 ⏳ 待拍板）· ⏳2（T6.3 usage MVP、T6.6
-  韧性件——原表无状态标记，本轮补 ⏳ 未开工）**；第 7 期 🔶 部分完成 =
+  = **✅8（含 T6.4 盘点件——其内置精选批 2026-10-10 用户拍板废弃）·
+  ⏳2（T6.3 usage MVP、T6.6 韧性件——原表无状态标记，本轮补 ⏳ 未开工）**；
+  第 7 期 🔶 部分完成 =
   ✅ T7.7/T7.8、🔶 T7.3（四批已落地 / 余 S3–S7·S9 + 真机验收）与 T7.5
   （普查 + farewell ✅ / P1 清单 ⏳）、⏳ T7.1/T7.2（调研定案待实作）/T7.4/
   T7.6；第 8 期 🔶 部分完成 = ✅ T8.1、⏳ T8.2/T8.3（T8.x 自第 7 期段移出
@@ -286,9 +287,8 @@
   XDG 不认 PIGO_HOME**——LoadSkills 过滤读宿主 config，config 路径统一
   待办。）
 - **接手者第一步（待用户拍板）**：①TUI 真彩截图回归核验（对照
-  tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 精选 4+3
-  仍未拍板**（清单 =
-  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）；
+  tui-grok-style §1 截图，同第 2 期收口流程）；②**T6.4 pstack 内置精选批已废弃（2026-10-10 用户拍板；盘点件留档 =
+  [pstack-skill-inventory.md](wiki/port/pstack-skill-inventory.md)）**；
   ③**T7.1 子智能体中断续接：R11 参照调研已完成（2026-10-07 深夜），
   定案 = 融合分层**——A 做底座（task 工具 resume 参数 + 历史落盘前缀
   重放，grok resume_from + opencode task_id 参照）、B 降级为超窗策略
