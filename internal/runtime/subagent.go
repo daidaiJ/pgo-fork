@@ -680,6 +680,13 @@ func (t *SubAgentTool) applyResumeBudget(ctx context.Context, msgs agentcore.Mes
 	if compaction.EstimateContextTokens(withTrailingPrompt(msgs, prompt)).Tokens <= budget {
 		return msgs, nil
 	}
+	// Over budget: distilling needs a summarization stream (the run config's
+	// provider). Without one the resume cannot be made to fit — refuse instead
+	// of sending an over-window request or calling a nil stream.
+	if cfg.Stream == nil {
+		return nil, fmt.Errorf("sub-agent resume refused: the previous transcript exceeds the resume limit (%d tokens of a %d-token window) and this run has no summarization model to distill it; re-dispatch a fresh sub-agent or use a model with a larger context window",
+			compaction.EstimateContextTokens(msgs).Tokens, window)
+	}
 	// Keep the recent tail proportional to the window, clamped to the range
 	// opencode uses (25% usable, 2k..15k).
 	keep := window / 4
