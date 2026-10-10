@@ -620,6 +620,39 @@ func (s *Server) Definition(ctx context.Context, path string, line int, query st
 	})
 }
 
+// Rename asks the server to rename the symbol at (1-based) line and returns
+// the workspace edit flattened to path → edits (B5). The server computes the
+// full reference set — including cross-package hits text search cannot see;
+// applying the edits is the caller's (the tool's) side-effectful half.
+func (s *Server) Rename(ctx context.Context, path string, line int, newName, query string) (map[string][]TextEdit, error) {
+	if strings.TrimSpace(newName) == "" {
+		return nil, fmt.Errorf("rename: new name is empty")
+	}
+	pos, err := s.position(path, line, query)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := s.c.Call(ctx, "textDocument/rename", map[string]any{
+		"textDocument": map[string]any{"uri": PathToURI(path)},
+		"position":     pos,
+		"newName":      newName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var we workspaceEdit
+	if err := json.Unmarshal(raw, &we); err != nil {
+		return nil, fmt.Errorf("rename: decode workspace edit: %w", err)
+	}
+	edits := we.EditsByFile()
+	if len(edits) == 0 {
+		// null result = the position is not renameable (server-reported via
+		// an empty edit set rather than an error).
+		return nil, fmt.Errorf("rename: the server returned no edits for this position (not a renameable symbol?)")
+	}
+	return edits, nil
+}
+
 // References returns the references to the symbol at the position.
 func (s *Server) References(ctx context.Context, path string, line int, query string, includeDeclaration bool) ([]Location, error) {
 	pos, err := s.position(path, line, query)

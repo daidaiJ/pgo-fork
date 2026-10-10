@@ -254,15 +254,32 @@ func Run(opts Options) error {
 	run.SetAskPort(opts.Tools, &stdinAskPort{out: os.Stdout, in: reader, mu: askMu})
 
 	// Permission engine (T5.2): rules + side-effect contract + self-edit
-	// guard, with the stdin ask channel (y/n/a/s) and the trust manager as
-	// the trusted-directory fast path. A config or store error is fatal: a
-	// boundary the user believes is in force must not silently vanish.
+	// guard, with the stdin ask channel (y/n/a/s) and the T7.6 approval
+	// posture driving the plan gate and the trust fast path: --approve seeds
+	// always-approve (Options.Approve semantics), everything else asks —
+	// with the durable grants (trust.json / session trust from /trust or an
+	// "a" answer) still fast-pathing their directories. A config or store
+	// error is fatal: a boundary the user believes is in force must not
+	// silently vanish.
+	approval := toolrules.ModeAsk
+	if opts.Approve {
+		approval = toolrules.ModeAll
+	}
+	approvalState := toolrules.NewModeState(approval)
 	var trustedFn toolrules.TrustedFunc
 	if mgr != nil {
-		trustedFn = mgr.IsTrusted
+		trustedFn = func(dir string) bool {
+			switch approvalState.Mode() {
+			case toolrules.ModeAll:
+				return true
+			default:
+				// plan never reaches the trust step; ask keeps durable grants.
+				return mgr.IsTrusted(dir)
+			}
+		}
 	}
 	permEngine, engineErr := run.BuildPermissionEngine(cwd, opts.Tools, opts.Permissions,
-		trust.StdinAskPort(os.Stdout, reader, askMu, mgr, cwd), trustedFn)
+		trust.StdinAskPort(os.Stdout, reader, askMu, mgr, cwd), trustedFn, approvalState.Mode)
 	if engineErr != nil {
 		return fmt.Errorf("permission engine: %w", engineErr)
 	}
@@ -314,6 +331,8 @@ func Run(opts Options) error {
 		ShellStore: func(backend string) error {
 			return config.SetShellBackend(config.FileConfigPath(), backend)
 		},
+		ModeGet:    approvalState.Mode,
+		ModeStore:  approvalState.Set,
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
 		SkillsDir:  run.SkillsDir(),

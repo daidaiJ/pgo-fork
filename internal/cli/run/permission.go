@@ -18,13 +18,14 @@ import (
 // BuildPermissionEngine wires the permission engine for a run. ask and
 // trusted are the driver-injected seams (nil ask = fail closed at the ask
 // step, headless/TUI-without-channel semantics; nil trusted = never
-// directory-trusted).
+// directory-trusted). mode reads the session's approval posture (T7.6);
+// nil = ask semantics unchanged.
 //
 // Config rules with invalid fields are a hard error — a typo in a boundary
 // the user believes is in force is the worst outcome (ToolPolicyError
 // reasoning). A corrupted permissions FILE is surfaced by LoadStore the same
 // way; a missing file is not an error.
-func BuildPermissionEngine(cwd string, tools []agentcore.AgentTool, perms config.PermissionsConfig, ask toolrules.AskPort, trusted toolrules.TrustedFunc) (*toolrules.Engine, error) {
+func BuildPermissionEngine(cwd string, tools []agentcore.AgentTool, perms config.PermissionsConfig, ask toolrules.AskPort, trusted toolrules.TrustedFunc, mode func() toolrules.ApprovalMode) (*toolrules.Engine, error) {
 	store, err := toolrules.LoadStore(toolrules.DefaultPath())
 	if err != nil {
 		return nil, err
@@ -48,6 +49,7 @@ func BuildPermissionEngine(cwd string, tools []agentcore.AgentTool, perms config
 		Surface:      surface,
 		Trusted:      trusted,
 		Ask:          ask,
+		Mode:         mode,
 	})
 	if err != nil {
 		return nil, err

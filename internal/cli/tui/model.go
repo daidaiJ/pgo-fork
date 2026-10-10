@@ -22,6 +22,7 @@ import (
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/spans"
+	"github.com/smallnest/pigo/internal/toolrules"
 )
 
 // Model is the root Bubble Tea model for the full-screen TUI. It composes a
@@ -183,6 +184,9 @@ type Model struct {
 	// shellP is the /shell panel (T8.4): the backend list with the live one
 	// marked; Space switches (config write + live swap).
 	shellP listPanel
+	// modeP is the /mode panel (T7.6): the approval-posture list with the
+	// live one marked; Space switches (session-scoped, not persisted).
+	modeP listPanel
 
 	// toolCards indexes the rich tool-call cards (#389, US-006) by tool-call id so
 	// a toolEndMsg can locate the card started earlier and flip its state / attach
@@ -228,6 +232,9 @@ type Model struct {
 	// state while the user is answering a questionnaire (nil otherwise).
 	askPort *teaAskPort
 	ask     *askPanel
+	// approval is the live per-call approval panel state (T7.6 D-C1) while
+	// the permission engine waits on a local answer (nil otherwise).
+	approval *approvalPanel
 
 	// pastes stores the full text of collapsed multi-line pastes, keyed by the id
 	// shown in the "[Pasted text #N +M lines]" placeholder left in the composer.
@@ -333,7 +340,7 @@ func (m Model) withSession(s *runSession, history []agentcore.Message) Model {
 // can show the branch/dirty state as soon as it resolves; the alt-screen is
 // requested declaratively via the AltScreen field on the View returned by View.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchGitCmd(m.cwd), m.input.Focus(), m.waitAsk(), func() tea.Msg {
+	return tea.Batch(fetchGitCmd(m.cwd), m.input.Focus(), m.waitAsk(), m.waitApproval(), func() tea.Msg {
 		return tea.RequestBackgroundColor()
 	})
 }
@@ -462,6 +469,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.relayout()
 		}
 		return m, m.waitAsk()
+
+	case approvalReqMsg:
+		// A pending approval ask arrived from the permission engine (T7.6
+		// D-C1). A stale arrival after the run ended (a cancel raced the
+		// request send) is dropped; either way keep exactly one
+		// waitApproval in flight so the next ask is never lost.
+		if m.running {
+			m.approval = newApprovalPanel(msg.req)
+			m.relayout()
+		}
+		return m, m.waitApproval()
 
 	case spinnerTickMsg:
 		// Advance the working animation and schedule the next frame, but only while
@@ -666,9 +684,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner.stop()
 		// The run is over: any still-open sub-agent rows are stale (their tasks ended
 		// with the run), so clear the panel to reclaim its height. A still-open
-		// question panel is likewise stale (the tool returned via ctx cancellation).
+		// question panel is likewise stale (the tool returned via ctx cancellation),
+		// and so is a pending approval (the ask returned via ctx cancellation and
+		// the port already denied).
 		m.subagents = subagentPanel{}
 		m.ask = nil
+		m.approval = nil
 		m.relayout()
 		if msg.err != nil {
 			m.transcript.addSystem("Run ended: " + msg.err.Error())
@@ -764,6 +785,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // streams (the buffer is only read at submit). Keys are matched via
 // KeyPressMsg.String() so the mapping is terminal-independent.
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// While an approval panel is open (T7.6 D-C1), it owns the keys ahead of
+	// every other surface: the pending ask must be answered before the
+	// composer, panels, or the interrupt can react, and Esc inside the panel
+	// denies the call instead of reaching the two-stage interrupt.
+	if m.running && m.session != nil && m.approval.active() {
+		consumed, reply := m.approval.handleKey(msg)
+		if consumed {
+			if reply != nil {
+				if reply.always && m.session.trust != nil {
+					m.session.trust.SetSessionTrust(m.session.cwd)
+				}
+				if m.session.approvalCh != nil {
+					m.session.approvalCh.respond(*reply)
+				}
+				m.approval = nil
+				m.relayout()
+			}
+			return m, nil
+		}
+	}
+
 	// The context panel (TUI context-usage overlay) is modal while open: it
 	// consumes every key. Tab/up/down/esc it handles itself; c copies the
 	// session id (the model owns the clipboard Cmd).
@@ -796,6 +838,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.shellP.open {
 		return m.handleListPanelKey("shell", msg)
+	}
+	if m.modeP.open {
+		return m.handleListPanelKey("mode", msg)
 	}
 
 	// While idle with the /model (or /think) argument popup open, it owns the
@@ -869,6 +914,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.submitSlashSelected()
 		}
 	}
+
+	// While an approval panel is open (T7.6 D-C1), the composer is disabled
+	// and any keys it does not consume fall through to the running composer
+	// below — the panel itself answers only y/n/a/s/Esc/Enter.
 
 	// While a question panel is open (T4.2), the composer is disabled and the
 	// panel owns the keys: option numbers, o/s shortcuts, or free-text entry in
@@ -1071,6 +1120,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.relayout()
 			}
 		}
+		return m, nil
+	case "shift+tab":
+		// Approval-mode cycle (T7.6, grok/claude Shift+Tab convention): ask →
+		// plan → always-approve → ask, mid-run allowed (grok toggles plan
+		// mode while the model is thinking). Panels and the approval panel
+		// above consume their own keys first, so this only fires on the
+		// free composer.
+		m.cycleApprovalMode()
+		m.relayout()
 		return m, nil
 	case "pgup", "pgdown":
 		// Page scrolling reaches the transcript viewport whether idle or running,
@@ -1351,6 +1409,11 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 					break // the parameter form is the text projection (Parse)
 				}
 				return m.openShellPanel(line)
+			case runtime.ProjModePanel:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the parameter form is the text projection (Parse)
+				}
+				return m.openModePanel(line)
 			case runtime.ProjSessionsPicker:
 				return m.openSessionsPicker(line)
 			case runtime.ProjRename:
@@ -1565,6 +1628,21 @@ func (m Model) openLSPPanel(line string) (tea.Model, tea.Cmd) {
 	default:
 		rows, note := gatherLSPRows(m.session)
 		m.lspP = listPanel{open: true, title: "LSP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// openModePanel projects the ProjModePanel face (T7.6): the three approval
+// postures with the live one marked; Space switches (session-scoped, no
+// config write — so the panel may open mid-run, matching shift+tab).
+func (m Model) openModePanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	if m.session == nil {
+		m.transcript.addSystem("(mode unavailable: no active session)")
+	} else {
+		rows, note := gatherModeRows(m.session)
+		m.modeP = listPanel{open: true, title: "审批模式", hint: "↑↓ 选择 · Space 切换 · Esc 关闭", rows: rows, note: note}
 	}
 	m.relayout()
 	return m, nil
@@ -2055,6 +2133,13 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 		apply = func(r listRow) string { return m.session.surface.ShellSwitch(r.title) }
 		regather = func() ([]listRow, string) { return gatherShellRows(m.session) }
 		spaceToggles = true
+	} else if kind == "mode" {
+		// The mode panel (T7.6): Space on a posture row switches the
+		// session's approval posture (session-scoped, no config write).
+		p = &m.modeP
+		apply = func(r listRow) string { return m.session.surface.ModeSet(r.title) }
+		regather = func() ([]listRow, string) { return gatherModeRows(m.session) }
+		spaceToggles = true
 	} else {
 		p = &m.mcpP
 		apply = func(r listRow) string {
@@ -2241,6 +2326,10 @@ func (m Model) renderContent() (string, *tea.Cursor) {
 			b.WriteString(panel)
 			b.WriteByte('\n')
 		}
+		if panel := m.approval.view(m.theme, width); panel != "" {
+			b.WriteString(panel)
+			b.WriteByte('\n')
+		}
 		if panel := m.ask.view(m.theme, width); panel != "" {
 			b.WriteString(panel)
 			b.WriteByte('\n')
@@ -2401,30 +2490,68 @@ func (m Model) providerName() string {
 	return m.opts.ProviderName
 }
 
+// cycleApprovalMode moves the session's approval posture one step along the
+// T7.6 ring and folds the switch feedback line into the transcript (grok's
+// mode-switch banner as a pigo system line). A session-less model has no
+// posture to cycle.
+func (m *Model) cycleApprovalMode() {
+	if m.session == nil || m.session.approval == nil {
+		return
+	}
+	next := m.session.approval.Mode().Next()
+	m.session.approval.Set(next)
+	m.transcript.addSystem(prompts.ApprovalModeNote(next))
+}
+
+// approvalLabel is the S14 tag's approval face (T7.6): the live session
+// posture — plan / ask / always-approve — with the durable-trust suffix in
+// ask mode (a standing grant fast-paths effect calls even while the posture
+// asks). Session-less models keep the launch flag's two-state face.
+func (m Model) approvalLabel() string {
+	if m.session == nil || m.session.approval == nil {
+		if m.opts.Approve {
+			return "always-approve"
+		}
+		return "restricted"
+	}
+	switch mode := m.session.approval.Mode(); mode {
+	case toolrules.ModePlan, toolrules.ModeAll:
+		return mode.String()
+	default:
+		if m.session.trust != nil && m.session.trust.IsTrusted(m.session.cwd) {
+			return "ask·trusted"
+		}
+		return "ask"
+	}
+}
+
 // inputLabel is the tag embedded in the input editor's bottom border (S14):
 // the current shell mode as "model · [think X ·] approval face". pigo's
-// approval face is the launch trust grant (--approve/-a): granted =
-// always-approve, otherwise the TUI runs restricted (flagged commands fail
-// closed; per-call prompts are a REPL face). The thinking level joins the mode
-// readout when it is on, so the reasoning posture is visible where the model
-// types. Later modes (code mode, prompt-constraint styles) append their own
-// segment here rather than growing a second tag slot.
+// approval face is the T7.6 posture (plan / ask / always-approve), cycled
+// with shift+tab or /mode; --approve seeds always-approve. The thinking
+// level joins the mode readout when it is on, so the reasoning posture is
+// visible where the model types. Later modes (code mode, prompt-constraint
+// styles) append their own segment here rather than growing a second tag
+// slot.
 func (m Model) inputLabel() string {
 	parts := []string{m.modelLabel()}
 	if t := m.opts.ThinkingLevel; t != "" && t != agentcore.ThinkingOff {
 		parts = append(parts, "think "+string(t))
 	}
-	approve := "restricted"
-	if m.opts.Approve {
-		approve = "always-approve"
-	}
-	parts = append(parts, approve)
+	parts = append(parts, m.approvalLabel())
 	return strings.Join(parts, " · ")
 }
 
 // keyBinds selects the keys-line content for the current shell mode (S13).
 func (m Model) keyBinds() []keyBind {
 	switch {
+	case m.running && m.approval.active():
+		// Pending approval (T7.6 D-C1): the panel owns the keyboard.
+		binds := []keyBind{{"y", "允许"}, {"n/Esc", "拒绝"}, {"a", "会话信任"}}
+		if m.approval.req.hint.Pattern != "" {
+			binds = append(binds, keyBind{"s", "存规则"})
+		}
+		return binds
 	case m.running && m.subagents.active() > 0 && m.input.Value() == "":
 		return []keyBind{
 			{"↑/↓", "选择"},
@@ -2445,7 +2572,7 @@ func (m Model) keyBinds() []keyBind {
 			{"Ctrl+C", stop},
 		}
 	case m.running:
-		binds := []keyBind{{"Enter", "排队"}, {"Alt+Enter", "插队"}}
+		binds := []keyBind{{"Enter", "排队"}, {"Alt+Enter", "插队"}, {"Shift+Tab", "模式"}}
 		if len(m.queueRows()) > 0 {
 			binds = append(binds, keyBind{"↑/↓", "队列"}, keyBind{"Del", "移除"})
 		}
@@ -2461,6 +2588,7 @@ func (m Model) keyBinds() []keyBind {
 	default:
 		return []keyBind{
 			{"Enter", "发送"},
+			{"Shift+Tab", "模式"},
 			{"Ctrl+O", "工具"},
 			{"Ctrl+T", "思考"},
 			{"Ctrl+C", "退出"},
@@ -2560,7 +2688,9 @@ func (m *Model) relayout() {
 		// wrapped output lines of the expanded row (if any); an empty panel reserves
 		// nothing so the single-run layout is unchanged.
 		rows -= m.subagents.lineCount(m.width)
-		// The question panel (T4.2) reserves its rendered rows the same way.
+		// The approval panel (T7.6 D-C1) and the question panel (T4.2)
+		// reserve their rendered rows the same way.
+		rows -= m.approval.lineCount()
 		rows -= m.ask.lineCount()
 	}
 	if rows < 0 {

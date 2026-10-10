@@ -208,6 +208,29 @@ func runFakeServer() {
 			} else {
 				framedWrite(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": *msg.ID, "error": map[string]any{"code": -32601, "message": "no pull"}})
 			}
+		case msg.ID != nil && msg.Method == "textDocument/rename":
+			// The documentChanges shape (3.17's alternate encoding) so the
+			// e2e covers the decode the changes-map unit test doesn't.
+			var p struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+				NewName string `json:"newName"`
+			}
+			json.Unmarshal(msg.Params, &p)
+			framedWrite(os.Stdout, map[string]any{
+				"jsonrpc": "2.0", "id": *msg.ID,
+				"result": map[string]any{
+					"documentChanges": []map[string]any{
+						{
+							"textDocument": map[string]any{"uri": p.TextDocument.URI},
+							"edits": []map[string]any{
+								{"range": map[string]any{"start": map[string]any{"line": 2, "character": 4}, "end": map[string]any{"line": 2, "character": 7}}, "newText": p.NewName},
+							},
+						},
+					},
+				},
+			})
 		case msg.ID != nil:
 			framedWrite(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": *msg.ID, "error": map[string]any{"code": -32601, "message": "unknown"}})
 		case msg.Method == "exit":
@@ -318,6 +341,39 @@ func TestServerQueryNotFoundOnLine(t *testing.T) {
 	s.Overlay(path, "package a\n\nvar other = 1\n")
 	if _, err := s.Definition(context.Background(), path, 3, "missing"); err == nil {
 		t.Fatal("expected an error for a query absent from the line")
+	}
+}
+
+// TestServerRename covers the B5 wire path end to end: the fake server's
+// documentChanges reply decodes to path → edits, and ApplyEdits turns the
+// real file's content over (the tool's write half is gated by the engine —
+// here only the server + range math run).
+func TestServerRename(t *testing.T) {
+	s := newFakeServer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.go")
+	content := "package a\n\nvar old = 1\n"
+	s.Overlay(path, content)
+	edits, err := s.Rename(context.Background(), path, 3, "new", "old")
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	list, ok := edits[path]
+	if !ok || len(list) != 1 {
+		t.Fatalf("edits = %v", edits)
+	}
+	if list[0] != (TextEdit{StartLine: 2, StartChar: 4, EndLine: 2, EndChar: 7, NewText: "new"}) {
+		t.Fatalf("edit = %+v", list[0])
+	}
+	updated, err := ApplyEdits(content, list)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if updated != "package a\n\nvar new = 1\n" {
+		t.Errorf("updated = %q", updated)
+	}
+	if _, err := s.Rename(context.Background(), path, 3, "  ", ""); err == nil {
+		t.Error("blank new name must refuse")
 	}
 }
 

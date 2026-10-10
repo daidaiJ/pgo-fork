@@ -139,6 +139,16 @@ type runSession struct {
 	// nil when /remote-control is off. buildConfig reads it to install the remote
 	// confirm seam so risky tool calls route to the paired browser while connected.
 	remote *remoteSession
+
+	// approval is the session's approval posture (T7.6): plan / ask /
+	// all. --approve seeds all, everything else ask; shift+tab and /mode
+	// cycle it at runtime. The engine reads it from tool goroutines while
+	// the tea loop writes it, so it rides ModeState's atomic.
+	approval *toolrules.ModeState
+	// approvalCh is the TUI's local per-call approval channel (D-C1): the
+	// engine's ask face when no remote browser is paired. Nil when no
+	// session carries it (session-less models keep failing closed).
+	approvalCh *approvalPort
 }
 
 // newRunSession assembles the run session from the resolved Options, opening the
@@ -270,21 +280,37 @@ func newRunSessionWithStore(store *session.Store, opts Options) (*runSession, []
 	trust.RegisterCommand(s.slash, mgr, cwd)
 
 	// Permission engine (T5.2): rules + side-effect contract + self-edit
-	// guard over the trust manager's directory fast path. --approve joins the
-	// fast path directly (Options.Approve documents "side-effect tools run
-	// without per-call confirmation"): without it a TUI launch whose trust
-	// store has no entry for the directory is "restricted" — and since the
-	// ask channel denies when no remote browser is paired, every bash call
-	// (even read-only git log/status) used to be silently blocked. The ask
-	// channel dereferences s.remote at call time so /remote-control toggling
-	// after assembly keeps working. A config or store error aborts the
-	// launch: a boundary the user believes is in force must not silently
-	// vanish.
-	trustedFn := func(dir string) bool {
-		return opts.Approve || (mgr != nil && mgr.IsTrusted(dir))
+	// guard over the trust manager's directory fast path, with the T7.6
+	// approval posture driving the plan gate and the trust fast path:
+	// always-approve joins the fast path directly (Options.Approve
+	// documents "side-effect tools run without per-call confirmation"); ask
+	// keeps the durable grants (trust.json / session trust) and routes every
+	// other effect call to the ask channel — remote browser first, then the
+	// local per-call panel (D-C1), which replaces the old fail-closed deny
+	// that used to block every untrusted bash call in the TUI. A config or
+	// store error aborts the launch: a boundary the user believes is in
+	// force must not silently vanish.
+	approval := toolrules.ModeAsk
+	if opts.Approve {
+		approval = toolrules.ModeAll
 	}
+	s.approval = toolrules.NewModeState(approval)
+	// The /mode face reads and writes the same posture (T7.7 surface
+	// contract: closures over session state, wired after assembly).
+	s.surface.ModeGet = s.approval.Mode
+	s.surface.ModeStore = s.approval.Set
+	trustedFn := func(dir string) bool {
+		switch s.approval.Mode() {
+		case toolrules.ModeAll:
+			return true
+		default:
+			// plan never reaches the trust step; ask keeps durable grants.
+			return mgr != nil && mgr.IsTrusted(dir)
+		}
+	}
+	s.approvalCh = newApprovalPort()
 	permEngine, engineErr := run.BuildPermissionEngine(cwd, opts.Tools, opts.Permissions,
-		engineAskViaRemote(func() *remoteSession { return s.remote }, mgr, cwd), trustedFn)
+		engineAsk(func() *remoteSession { return s.remote }, s.approvalCh, mgr, cwd), trustedFn, s.approval.Mode)
 	if engineErr != nil {
 		return nil, nil, fmt.Errorf("permission engine: %w", engineErr)
 	}

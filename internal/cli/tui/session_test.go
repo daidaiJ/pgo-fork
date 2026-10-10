@@ -2,12 +2,14 @@ package tui
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/session"
 	"github.com/smallnest/pigo/internal/testenv"
+	"github.com/smallnest/pigo/internal/toolrules"
 )
 
 // newTestStore opens a session store rooted at a temp dir so persistence/resume
@@ -257,15 +259,39 @@ func TestTUIApproveGrantsEngineTrust(t *testing.T) {
 		t.Errorf("--approve should allow bash in a store-untracked directory, got block: %+v", d.Content)
 	}
 
-	// Without --approve and without /trust the unpaired-remote ask channel
-	// still fails closed: the call is blocked (the TUI-local approval channel
-	// and the misleading "denied by the user" wording are registered for
-	// design review, not changed here).
+	// Without --approve and without /trust the ask channel no longer fails
+	// closed: it pends on the TUI-local approval panel (T7.6 D-C1). The
+	// engine waits for a human answer — a y through the port allows the
+	// call, an n blocks it with the refusal wording (the channel WAS
+	// available, so the D-C2 "no channel" text does not apply). Drive the
+	// port from the test.
 	s2, _, err := newRunSessionWithStore(store, Options{Model: "m", ProviderName: "p"})
 	if err != nil {
 		t.Fatalf("newRunSessionWithStore: %v", err)
 	}
-	if d := s2.permEngine.BeforeToolCall(t.Context(), call); d == nil || !d.Block {
-		t.Error("restricted TUI (no --approve, no /trust) must block bash when no approval channel exists")
+	type decided struct {
+		block bool
+		text  string
+	}
+	runAsk := func(decision toolrules.AskDecision) decided {
+		done := make(chan decided, 1)
+		go func() {
+			d := s2.permEngine.BeforeToolCall(t.Context(), call)
+			out := decided{block: d != nil && d.Block}
+			if d != nil {
+				out.text = agentcore.ContentToText(*d.Content)
+			}
+			done <- out
+		}()
+		req := <-s2.approvalCh.requests
+		s2.approvalCh.respond(approvalReply{id: req.id, decision: decision})
+		return <-done
+	}
+	if out := runAsk(toolrules.AskApprove); out.block {
+		t.Errorf("approved ask must run the call, got block: %s", out.text)
+	}
+	out := runAsk(toolrules.AskDeny)
+	if !out.block || !strings.Contains(out.text, "permission denied by the user") {
+		t.Errorf("denied ask must block with the refusal wording, got block=%v text=%q", out.block, out.text)
 	}
 }

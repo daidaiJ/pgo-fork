@@ -133,6 +133,66 @@ type wireDiagnostic struct {
 	Message  string    `json:"message"`
 }
 
+// TextEdit is one replacement range decoded from a workspace edit: 0-based
+// line / UTF-16 character offsets per the LSP wire format, with the
+// replacement text.
+type TextEdit struct {
+	StartLine int
+	StartChar int
+	EndLine   int
+	EndChar   int
+	NewText   string
+}
+
+type wireTextEdit struct {
+	Range   wireRange `json:"range"`
+	NewText string    `json:"newText"`
+}
+
+// workspaceEdit is the textDocument/rename response (3.17 both shapes:
+// changes keyed by URI, or the documentChanges list).
+type workspaceEdit struct {
+	Changes         map[string][]wireTextEdit `json:"changes"`
+	DocumentChanges []textDocumentEdit        `json:"documentChanges"`
+}
+
+type textDocumentEdit struct {
+	TextDocument optionalVersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []wireTextEdit                          `json:"edits"`
+}
+
+type optionalVersionedTextDocumentIdentifier struct {
+	URI string `json:"uri"`
+}
+
+// EditsByFile flattens both WorkspaceEdit shapes into path → edits (URIs
+// resolved through URIToPath; a path appearing in both shapes merges).
+func (w workspaceEdit) EditsByFile() map[string][]TextEdit {
+	out := map[string][]TextEdit{}
+	add := func(uri string, edits []wireTextEdit) {
+		path := URIToPath(uri)
+		if path == "" {
+			return
+		}
+		for _, e := range edits {
+			out[path] = append(out[path], TextEdit{
+				StartLine: e.Range.Start.Line,
+				StartChar: e.Range.Start.Character,
+				EndLine:   e.Range.End.Line,
+				EndChar:   e.Range.End.Character,
+				NewText:   e.NewText,
+			})
+		}
+	}
+	for uri, edits := range w.Changes {
+		add(uri, edits)
+	}
+	for _, d := range w.DocumentChanges {
+		add(d.TextDocument.URI, d.Edits)
+	}
+	return out
+}
+
 func (w wireDiagnostic) flatten() Diagnostic {
 	d := Diagnostic{
 		Line:      w.Range.Start.Line,

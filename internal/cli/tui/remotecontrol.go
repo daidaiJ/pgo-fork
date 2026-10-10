@@ -78,33 +78,39 @@ func (s *runSession) stopRemote() {
 	s.remote = nil
 }
 
-// engineAskViaRemote adapts the permission engine's ask channel (T5.2) to the
-// remote-control bridge: with a paired browser the confirmation routes there
-// (the old remoteConfirmSeam behavior, now behind the engine's judgment
-// order); without one it fails closed — the TUI has no local per-call prompt.
+// engineAsk is the permission engine's ask channel (T5.2) for the TUI
+// (T7.6+D-C1): with a paired browser the confirmation routes there first;
+// without one it falls to the local per-call approval panel, and when even
+// that is missing (session-less models) it answers AskUnavailable so the
+// block message says "no channel" instead of implying a refusal (D-C2).
 // getRs is dereferenced at call time so /remote-control can toggle after the
 // engine is built.
 //
-// A ctx cancellation (interrupt) makes Confirm return remote=false, which is
-// treated as a denial so an interrupted run does not silently proceed.
-func engineAskViaRemote(getRs func() *remoteSession, mgr *trust.Manager, cwd string) toolrules.AskPort {
-	return func(ctx context.Context, call agentcore.AgentToolCall, _ toolrules.AskReason, _ toolrules.ProposedHint) (toolrules.AskDecision, toolrules.Rule) {
-		rs := getRs()
-		if rs == nil || !rs.hasClient() || ctx.Err() != nil {
+// A ctx cancellation (interrupt) denies outright so an interrupted run does
+// not silently proceed; a bridge that could not take the question falls
+// through to the local panel.
+func engineAsk(getRs func() *remoteSession, local *approvalPort, mgr *trust.Manager, cwd string) toolrules.AskPort {
+	return func(ctx context.Context, call agentcore.AgentToolCall, reason toolrules.AskReason, hint toolrules.ProposedHint) (toolrules.AskDecision, toolrules.Rule) {
+		if ctx.Err() != nil {
 			return toolrules.AskDeny, toolrules.Rule{}
 		}
-		summary := trust.ToolCallSummary(call)
-		d, remote := rs.bridge.Confirm(ctx, call.Name, summary)
-		if !remote {
-			return toolrules.AskDeny, toolrules.Rule{}
+		if rs := getRs(); rs != nil && rs.hasClient() {
+			summary := trust.ToolCallSummary(call)
+			d, remote := rs.bridge.Confirm(ctx, call.Name, summary)
+			if remote {
+				if d.Always && mgr != nil {
+					mgr.SetSessionTrust(cwd)
+				}
+				if d.Approve {
+					return toolrules.AskApprove, toolrules.Rule{}
+				}
+				return toolrules.AskDeny, toolrules.Rule{}
+			}
 		}
-		if d.Always && mgr != nil {
-			mgr.SetSessionTrust(cwd)
+		if local == nil {
+			return toolrules.AskUnavailable, toolrules.Rule{}
 		}
-		if !d.Approve {
-			return toolrules.AskDeny, toolrules.Rule{}
-		}
-		return toolrules.AskApprove, toolrules.Rule{}
+		return local.Ask(ctx, call, reason, hint)
 	}
 }
 

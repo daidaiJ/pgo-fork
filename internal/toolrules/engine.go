@@ -7,6 +7,8 @@
 // Judgment order (spec §3.2, the authority table):
 //
 //	1. deny rule hit          → terminal block (trust/bypass never overrides)
+//	1.5 plan mode active      → read-only tools pass, every effect call
+//	                            blocks with a plan-directed message (T7.6)
 //	2. self-edit surface hit  → force the ask channel (skips rules + trust)
 //	3. allow rule hit, tool not destructive → allow
 //	4. tool declares ReadOnly → allow
@@ -58,6 +60,11 @@ const (
 	// AskApproveWithRule allows the call and settles the returned rule
 	// (persisted when the store accepts it, session otherwise).
 	AskApproveWithRule
+	// AskUnavailable denies the call, but reports that the channel could
+	// not take the question rather than a human refusal (D-C2): the engine
+	// renders an honest "no channel available" block instead of implying
+	// the user denied.
+	AskUnavailable
 )
 
 // AskPort is the injected interactive channel (zcode broker精神, T4.2
@@ -82,6 +89,7 @@ type Engine struct {
 	surface  *SelfEditSurface
 	trusted  TrustedFunc
 	ask      AskPort
+	mode     func() ApprovalMode
 	mu       sync.Mutex
 }
 
@@ -103,6 +111,9 @@ type EngineConfig struct {
 	Trusted TrustedFunc
 	// Ask is the interactive channel; nil = fail closed at the ask step.
 	Ask AskPort
+	// Mode reads the session's approval posture (T7.6); nil = ask
+	// semantics unchanged (only the plan gate is mode-driven).
+	Mode func() ApprovalMode
 }
 
 // NewEngine builds an Engine. Session rules are normalized; an invalid
@@ -115,6 +126,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		surface: cfg.Surface,
 		trusted: cfg.Trusted,
 		ask:     cfg.Ask,
+		mode:    cfg.Mode,
 	}
 	for name, eff := range cfg.Effects {
 		e.effects[normalizeToolName(name)] = eff
@@ -183,6 +195,18 @@ func (e *Engine) BeforeToolCall(ctx context.Context, call agentcore.AgentToolCal
 			"adjust the rule in the permissions file if this is wrong.", call.Name))
 	}
 
+	// 1.5 Plan mode (T7.6): read-only investigation passes by contract;
+	// every effect call blocks with a plan-directed message. The gate sits
+	// after the deny rules (still terminal, same intent) and ahead of
+	// everything else — plan mode honors no allow rule, trust grant, or ask
+	// channel for effect calls, because per-call approval of a write would
+	// defeat the posture. Bash is ScopeSystem (never ReadOnly): read-only
+	// bash passes only once the per-command read-only path (D-C3) lands.
+	if e.modeSnapshot() == ModePlan && !e.effectOf(call.Name).ReadOnly {
+		return e.block(call, fmt.Sprintf("tool %q blocked: plan mode is active — only read-only investigation runs here. "+
+			"record this action in the plan instead, or ask the user to switch modes (shift+tab or /mode).", call.Name))
+	}
+
 	// 2. Self-edit surface: the call targets pigo's own boundary files.
 	// Rules and directory trust are skipped — the boundary cannot rewrite
 	// itself. Only a human at the ask channel (step 6) may allow it.
@@ -237,12 +261,28 @@ func (e *Engine) BeforeToolCall(ctx context.Context, call agentcore.AgentToolCal
 			_ = e.AddSessionRule(Rule{Tool: rule.Tool, Pattern: rule.Pattern, Action: ActionAllow, Scope: ScopeSession})
 		}
 		return nil
+	case AskUnavailable:
+		// D-C2: the channel could not take the question — say so instead
+		// of implying a human refused.
+		if selfEdit {
+			return e.block(call, fmt.Sprintf("tool %q blocked: it targets pigo's own configuration (the self-edit surface) and no interactive channel was available to approve it.", call.Name))
+		}
+		return e.block(call, fmt.Sprintf("tool %q blocked: %s is not trusted and no interactive channel was available to approve it (pair a browser with /remote-control, use /trust, a permissions rule, or run with --approve).", call.Name, e.cwd))
 	default: // AskDeny, and any out-of-range value
 	}
 	if selfEdit {
 		return e.block(call, fmt.Sprintf("tool %q blocked: the self-edit surface (pigo's own configuration) requires explicit human approval.", call.Name))
 	}
 	return e.block(call, fmt.Sprintf("tool %q blocked: permission denied by the user.", call.Name))
+}
+
+// modeSnapshot reads the session posture; a nil Mode reads as ask (the
+// zero posture, pre-T7.6 semantics).
+func (e *Engine) modeSnapshot() ApprovalMode {
+	if e.mode == nil {
+		return ModeAsk
+	}
+	return e.mode()
 }
 
 // ruleFamily maps a tool name to its rule family (T8.4): the "shell" alias

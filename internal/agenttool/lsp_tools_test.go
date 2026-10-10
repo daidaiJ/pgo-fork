@@ -137,3 +137,44 @@ func TestLSPNewToolArgValidation(t *testing.T) {
 		t.Fatalf("workspace_symbols blank query: %q", text)
 	}
 }
+
+// TestLSPRenameContract pins the B5 shape: the family's one effect tool —
+// NOT read-only, workspace scope (the T5.2 gate it waited for) — with the
+// rename-specific argument validation and the disabled-manager enable note.
+func TestLSPRenameContract(t *testing.T) {
+	tool := &LSPRenameTool{Mgr: lsp.NewManager(lsp.Settings{Enabled: false}, t.TempDir())}
+	if eff := tool.Effect(); eff.ReadOnly || eff.Destructive || eff.Scope != agentcore.ScopeWorkspace {
+		t.Fatalf("effect = %+v, want a non-readonly workspace write", eff)
+	}
+	if text := lspText(t, runLSP(t, tool, `{"path": "a.go", "line": 1}`)); !strings.Contains(text, "new_name is required") {
+		t.Fatalf("missing new_name: %q", text)
+	}
+	if text := lspText(t, runLSP(t, tool, `{"line": 1, "new_name": "x"}`)); !strings.Contains(text, "path is required") {
+		t.Fatalf("missing path: %q", text)
+	}
+	if text := lspText(t, runLSP(t, tool, `{"path": "a.go", "new_name": "x"}`)); !strings.Contains(text, "line is required") {
+		t.Fatalf("missing line: %q", text)
+	}
+	if text := lspText(t, runLSP(t, tool, `{"path": "a.go", "line": 1, "new_name": "x"}`)); !strings.Contains(text, "lsp: disabled") {
+		t.Fatalf("disabled manager: %q", text)
+	}
+}
+
+// TestInjectLSPSnapshot: the /rewind recorder reaches lsp_rename the same
+// way it reaches edit/write, and a nil recorder is a no-op.
+func TestInjectLSPSnapshot(t *testing.T) {
+	ren := &LSPRenameTool{Mgr: &lsp.Manager{}}
+	InjectLSPSnapshot([]agentcore.AgentTool{ren}, NewFileSnapshotRecorder())
+	if ren.Snap == nil {
+		t.Fatal("recorder not injected")
+	}
+	InjectLSPSnapshot([]agentcore.AgentTool{ren}, nil)
+	if ren.Snap == nil {
+		t.Fatal("nil recorder cleared the journal")
+	}
+	edit := &EditTool{Root: t.TempDir()}
+	InjectLSPSnapshot([]agentcore.AgentTool{edit}, NewFileSnapshotRecorder())
+	if edit.Snap != nil {
+		t.Fatal("non-rename tool was touched")
+	}
+}

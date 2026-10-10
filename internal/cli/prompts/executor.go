@@ -183,6 +183,16 @@ func (x *Executor) execute(it runtime.Intent) string {
 			return "shell: config surface unavailable in this context"
 		}
 		return x.Surface.shellSwitch(it.ShellBackend)
+	case runtime.IntentModeShow:
+		if x.Surface == nil {
+			return "mode: session posture unavailable in this context"
+		}
+		return x.Surface.modeList()
+	case runtime.IntentModeSet:
+		if x.Surface == nil {
+			return "mode: session posture unavailable in this context"
+		}
+		return x.Surface.modeSet(it.Mode)
 	case runtime.IntentStatusShow:
 		if x.Status == nil {
 			return "(status unavailable: no active session)"

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -11,11 +13,12 @@ import (
 	"github.com/smallnest/pigo/internal/lsp"
 )
 
-// The LSP tool family (T8.2): read-only gopls-backed queries over the
-// workspace's language server. All five share one Manager and stay read-only
-// (diagnostics/definition/references/hover/symbols); lsp_rename is a
-// multi-file write and stays out of the face until it can ride the T5.2
-// side-effect contract.
+// The LSP tool family (T8.2): gopls-backed queries over the workspace's
+// language server. Seven of the eight are read-only (diagnostics /
+// definition / references / hover / symbols / implementations); lsp_rename
+// (B5, T7.6) is the family's one effect tool — a multi-file write that rides
+// the T5.2 side-effect contract (deny/allow rules, directory trust, per-call
+// ask), which is the approval face it waited for.
 //
 // The family is registered into the deferred tier by default (T4.1
 // declaration machinery; the model claims the tools it needs via
@@ -23,10 +26,10 @@ import (
 
 // LSPToolNames lists the family in its canonical order (the deferred-tier
 // registration and the [lsp.gopls] tools filter both use these full names).
-var LSPToolNames = []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols", "lsp_implementations", "lsp_workspace_symbols"}
+var LSPToolNames = []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols", "lsp_implementations", "lsp_workspace_symbols", "lsp_rename"}
 
 // LSPTools materializes the tool family over mgr. filter carries the bare
-// names from [lsp.gopls] tools (empty = all seven; entries match with or
+// names from [lsp.gopls] tools (empty = all eight; entries match with or
 // without the lsp_ prefix, case-insensitively; unknown entries are ignored).
 func LSPTools(mgr *lsp.Manager, filter []string) []agentcore.AgentTool {
 	if mgr == nil {
@@ -51,6 +54,7 @@ func LSPTools(mgr *lsp.Manager, filter []string) []agentcore.AgentTool {
 		&LSPSymbolsTool{Mgr: mgr},
 		&LSPImplementationsTool{Mgr: mgr},
 		&LSPWorkspaceSymbolsTool{Mgr: mgr},
+		&LSPRenameTool{Mgr: mgr},
 	} {
 		if include(t.Name()) {
 			out = append(out, t)
@@ -78,6 +82,20 @@ func InjectLSPOverlay(tools []agentcore.AgentTool, mgr *lsp.Manager) {
 			tool.LSP = mgr
 		case *WriteTool:
 			tool.LSP = mgr
+		}
+	}
+}
+
+// InjectLSPSnapshot wires the file-snapshot recorder into lsp_rename so the
+// multi-file write joins /rewind's journal exactly like edit/write (B5).
+// Non-rename tools are untouched.
+func InjectLSPSnapshot(tools []agentcore.AgentTool, snap *FileSnapshotRecorder) {
+	if snap == nil {
+		return
+	}
+	for _, t := range tools {
+		if tool, ok := t.(*LSPRenameTool); ok {
+			tool.Snap = snap
 		}
 	}
 }
@@ -576,6 +594,132 @@ func (t *LSPWorkspaceSymbolsTool) Execute(ctx context.Context, id string, args j
 		} else {
 			fmt.Fprintf(&b, "\n  %s %s — %s", s.KindName, s.Name, loc)
 		}
+	}
+	return lspOk(b.String()), nil
+}
+
+// --- lsp_rename (B5, T7.6: the family's one effect tool, riding T5.2) ---
+
+// LSPRenameTool renames the symbol at a position across the workspace
+// (textDocument/rename): the server computes every reference — including
+// cross-package hits text search cannot see — and the tool applies the
+// returned workspace edit to the files. The write is what makes it an effect
+// tool: deny/allow rules, directory trust and the per-call ask gate all
+// apply, which is the approval face this tool waited for.
+type LSPRenameTool struct {
+	Mgr *lsp.Manager
+	// Snap records each file's prior content so /rewind can restore the
+	// whole rename; nil (tests) skips the journal like a recorder-less
+	// edit tool.
+	Snap *FileSnapshotRecorder
+}
+
+func (t *LSPRenameTool) Name() string { return "lsp_rename" }
+
+func (t *LSPRenameTool) Effect() agentcore.ToolEffect {
+	// Multi-file write: neither read-only nor destructive (a rename is
+	// recoverable via /rewind), so allow rules may settle it and trust may
+	// fast-path it — the contract the engine judges by.
+	return agentcore.ToolEffect{Scope: agentcore.ScopeWorkspace}
+}
+
+func (t *LSPRenameTool) ExecutionMode() agentcore.ToolExecutionMode {
+	return agentcore.ToolExecutionSequential
+}
+
+func (t *LSPRenameTool) Description() string {
+	return "Rename the symbol at a position across the whole workspace, via the language server — every reference including cross-package ones " +
+		"text search cannot see. Applies the returned edits to the files and reports each touched file."
+}
+
+func (t *LSPRenameTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "path":     {"type": "string", "description": "File path, relative to the workspace root."},
+    "line":     {"type": "integer", "description": "1-based line number of the symbol."},
+    "new_name": {"type": "string", "description": "The new identifier name."},
+    "query":    {"type": "string", "description": "Optional: a substring of the symbol on that line, used to locate the column. Empty = column 0."}
+  },
+  "required": ["path", "line", "new_name"],
+  "additionalProperties": false
+}`)
+}
+
+type lspRenameArgs struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+	NewName string `json:"new_name"`
+	Query   string `json:"query"`
+}
+
+func (t *LSPRenameTool) Execute(ctx context.Context, id string, args json.RawMessage, onUpdate agentcore.ToolUpdateFunc) (agentcore.AgentToolResult, error) {
+	a, bad := decodeArgs[lspRenameArgs](args, "lsp_rename")
+	if bad != nil {
+		return *bad, nil
+	}
+	if a.NewName == "" {
+		return errorResult("lsp_rename: new_name is required"), nil
+	}
+	if a.Path == "" {
+		return errorResult("lsp_rename: path is required"), nil
+	}
+	if a.Line < 1 {
+		return errorResult("lsp_rename: line is required (1-based)"), nil
+	}
+	full, err := lspResolve(t.Mgr, a.Path)
+	if err != nil {
+		return errorResult("lsp_rename: " + err.Error()), nil
+	}
+	edits, err := t.Mgr.Rename(ctx, full, a.Line, a.NewName, a.Query)
+	if err != nil {
+		return lspFail(err), nil
+	}
+	// Apply bottom-up per file, snapshotting each prior content so /rewind
+	// can restore the whole rename. A mid-way write failure stops the loop
+	// and names the files already written (honest partial-application
+	// report; the snapshot journal lets /rewind undo it).
+	paths := make([]string, 0, len(edits))
+	for p := range edits {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var written []string
+	var b strings.Builder
+	for _, p := range paths {
+		original, err := os.ReadFile(p)
+		if err != nil {
+			fmt.Fprintf(&b, "lsp_rename: cannot read %q: %v\napplied so far: %s", p, err, strings.Join(written, ", "))
+			return errorResult(b.String()), nil
+		}
+		updated, err := lsp.ApplyEdits(string(original), edits[p])
+		if err != nil {
+			fmt.Fprintf(&b, "lsp_rename: %q: %v\napplied so far: %s", p, err, strings.Join(written, ", "))
+			return errorResult(b.String()), nil
+		}
+		if t.Snap != nil {
+			t.Snap.Record(p)
+		}
+		if err := os.WriteFile(p, []byte(updated), filePerm); err != nil {
+			fmt.Fprintf(&b, "lsp_rename: cannot write %q: %v\napplied so far: %s", p, err, strings.Join(written, ", "))
+			return errorResult(b.String()), nil
+		}
+		written = append(written, p)
+		if t.Mgr != nil {
+			t.Mgr.Overlay(p, updated)
+		}
+	}
+	var total int
+	for _, list := range edits {
+		total += len(list)
+	}
+	fmt.Fprintf(&b, "renamed to %q: %d edit(s) across %d file(s)", a.NewName, total, len(written))
+	for _, p := range written {
+		rel, relErr := filepath.Rel(t.Mgr.Root(), p)
+		if relErr != nil {
+			rel = p
+		}
+		fmt.Fprintf(&b, "\n  %s (%d edit(s))", rel, len(edits[p]))
 	}
 	return lspOk(b.String()), nil
 }

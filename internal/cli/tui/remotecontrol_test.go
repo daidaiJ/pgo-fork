@@ -102,11 +102,12 @@ func TestRemoteConfirmSeamAllowsWhenNoClient(t *testing.T) {
 	}
 	defer s.stopRemote()
 
-	// No client is paired, so hasClient() is false and the ask must deny.
-	ask := engineAskViaRemote(func() *remoteSession { return s.remote }, nil, "/tmp/project")
+	// No client is paired and no local panel port is wired: the ask answers
+	// AskUnavailable — the honest "no channel" word (D-C2), still fail-closed.
+	ask := engineAsk(func() *remoteSession { return s.remote }, nil, nil, "/tmp/project")
 	decision, rule := ask(t.Context(), agentcore.AgentToolCall{Name: "bash"}, toolrules.AskUntrusted, toolrules.ProposedHint{})
-	if decision != toolrules.AskDeny {
-		t.Errorf("ask should deny with no client, got %v", decision)
+	if decision != toolrules.AskUnavailable {
+		t.Errorf("ask with no client and no local port should report unavailable, got %v", decision)
 	}
 	if rule.Action != "" {
 		t.Errorf("no rule should be proposed, got %+v", rule)

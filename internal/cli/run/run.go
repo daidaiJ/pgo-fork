@@ -277,6 +277,9 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 			lspToolNames = append(lspToolNames, t.Name())
 		}
 		tools = append(tools, lspTools...)
+		// lsp_rename (B5) joins /rewind's journal: the same recorder the
+		// edit/write tools share, extracted from the assembled set.
+		agenttool.InjectLSPSnapshot(tools, SnapshotRecorderFromTools(tools))
 		lspMgr.Prewarm()
 		lspSpan.End()
 	}

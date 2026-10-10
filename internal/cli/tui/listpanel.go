@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/smallnest/pigo/internal/agenttool"
+	"github.com/smallnest/pigo/internal/cli/prompts"
+	"github.com/smallnest/pigo/internal/toolrules"
 )
 
 // listPanel is the interactive picker behind bare /skills and /mcp (T7.3
@@ -318,6 +320,26 @@ func gatherShellRows(s *runSession) ([]listRow, string) {
 		out = append(out, row)
 	}
 	return out, "切换写入 config.toml [shell] 并即时生效（下一条命令）；非 bash 后端跳过 shellguard 静态分析"
+}
+
+// gatherModeRows maps the approval postures to the panel's flat rows (T7.6):
+// the live posture carries the [current] tag, every row's desc states what
+// the posture does, and the note states the switch semantics (session-scoped,
+// never persisted).
+func gatherModeRows(s *runSession) ([]listRow, string) {
+	if s == nil || s.approval == nil {
+		return nil, "(mode 面板不可用：无活动会话)"
+	}
+	current := s.approval.Mode()
+	out := make([]listRow, 0, 3)
+	for _, m := range []toolrules.ApprovalMode{toolrules.ModeAsk, toolrules.ModePlan, toolrules.ModeAll} {
+		row := listRow{title: m.String(), desc: prompts.ApprovalModeDesc(m)}
+		if m == current {
+			row.tag = "[current]"
+		}
+		out = append(out, row)
+	}
+	return out, "切换只作用于本会话（不落盘）；shift+tab 循环切换；plan 模式拦截全部 effect 调用"
 }
 
 // gatherLSPRows maps the LSP manager's status to the panel's two-level rows

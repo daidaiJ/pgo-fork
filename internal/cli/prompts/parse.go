@@ -11,6 +11,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/toolrules"
 )
 
 // parseModel implements /model's grammar: a bare invocation views the active
@@ -230,5 +231,28 @@ func parseShell(args string) (runtime.Intent, error) {
 		return runtime.Intent{Kind: runtime.IntentShellSwitch, ShellBackend: strings.ToLower(fields[0])}, nil
 	default:
 		return runtime.Intent{}, fmt.Errorf("shell: unexpected argument %q (usage: /shell [<backend>])", fields[1])
+	}
+}
+
+// parseMode implements /mode's grammar (T7.6): bare lists the approval
+// posture face; one argument switches the session posture ("always-approve"
+// is the display alias of "all" and normalizes here). The posture is
+// validated here so a typo is a usage refusal, not a silent no-op.
+func parseMode(args string) (runtime.Intent, error) {
+	fields := strings.Fields(args)
+	switch len(fields) {
+	case 0:
+		return runtime.Intent{Kind: runtime.IntentModeShow}, nil
+	case 1:
+		name := strings.ToLower(fields[0])
+		if name == "always-approve" {
+			name = "all"
+		}
+		if _, err := toolrules.ParseApprovalMode(name); err != nil {
+			return runtime.Intent{}, err
+		}
+		return runtime.Intent{Kind: runtime.IntentModeSet, Mode: name}, nil
+	default:
+		return runtime.Intent{}, fmt.Errorf("mode: unexpected argument %q (usage: /mode [plan|ask|all])", fields[1])
 	}
 }

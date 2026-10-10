@@ -109,6 +109,11 @@ const (
 	// IntentDump writes the most recent failed provider request (raw request +
 	// response) to the dump directory — /dump.
 	IntentDump
+	// IntentModeShow reports the approval posture face — bare /mode.
+	IntentModeShow
+	// IntentModeSet switches the session's approval posture —
+	// /mode plan|ask|all.
+	IntentModeSet
 )
 
 func (k IntentKind) String() string {
@@ -163,6 +168,10 @@ func (k IntentKind) String() string {
 		return "rebuild"
 	case IntentDump:
 		return "dump"
+	case IntentModeShow:
+		return "mode-show"
+	case IntentModeSet:
+		return "mode-set"
 	default:
 		return "unknown"
 	}
@@ -206,6 +215,9 @@ type Intent struct {
 	LSPTool string
 	// IntentShellSwitch: the backend name (bash|powershell|pwsh|cmd|wsl).
 	ShellBackend string
+	// IntentModeSet: the approval posture name (plan|ask|all), normalized
+	// by Parse ("always-approve" folds into "all").
+	Mode string
 	// IntentCompact: optional free-text user focus for the summarizer (grok
 	// Compact{user_context}). Reserved: the compactor takes no focus argument
 	// yet (spec deviation register), so Parse currently refuses arguments.

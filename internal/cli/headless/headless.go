@@ -175,7 +175,7 @@ func Run(ctx context.Context, p RunParams, out, errOut io.Writer) int {
 		trustMgr = m
 	}
 	permEngine, engineErr := run.BuildPermissionEngine(env.Cwd, env.Tools, p.Permissions, nil,
-		func(cwd string) bool { return trustMgr != nil && trustMgr.IsTrusted(cwd) })
+		func(cwd string) bool { return trustMgr != nil && trustMgr.IsTrusted(cwd) }, nil)
 	if engineErr != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", engineErr)
 		return 2

@@ -180,6 +180,8 @@ const (
 	ProjLSPPanel
 	// ProjShellPanel is the bare-submit shell-backend panel (/shell).
 	ProjShellPanel
+	// ProjModePanel is the bare-submit approval-posture panel (/mode).
+	ProjModePanel
 	// ProjSessionsPicker opens the session picker (/sessions, /resume).
 	ProjSessionsPicker
 	// ProjContextPanel toggles the context-usage overlay (/context).
@@ -235,6 +237,8 @@ func (p Projection) String() string {
 		return "lsp panel"
 	case ProjShellPanel:
 		return "shell panel"
+	case ProjModePanel:
+		return "mode panel"
 	case ProjSessionsPicker:
 		return "sessions picker"
 	case ProjContextPanel:

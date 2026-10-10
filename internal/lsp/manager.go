@@ -414,6 +414,18 @@ func (m *Manager) Implementations(ctx context.Context, path string, line int, qu
 	return srv.Implementations(ctx, path, line, query)
 }
 
+// Rename asks the server for the rename workspace edit of the symbol at the
+// position (B5). It returns path → edits; applying them to the files is the
+// tool's half so the permission engine gates the write.
+func (m *Manager) Rename(ctx context.Context, path string, line int, newName, query string) (map[string][]TextEdit, error) {
+	srv, err := m.ready()
+	if err != nil {
+		return nil, err
+	}
+	m.touch()
+	return srv.Rename(ctx, path, line, newName, query)
+}
+
 // ready returns a ready server or the disabled/failed reason.
 func (m *Manager) ready() (*Server, error) {
 	m.mu.Lock()

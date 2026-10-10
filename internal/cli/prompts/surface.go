@@ -25,6 +25,7 @@ import (
 	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/runtime"
+	"github.com/smallnest/pigo/internal/toolrules"
 )
 
 // SurfaceDeps carries the live state the config-surface commands need. Every
@@ -61,6 +62,11 @@ type SurfaceDeps struct {
 	// (config.SetShellBackend); nil makes /shell <backend> refuse (read-only
 	// surface). The project layer carries no shell key (T8.4 user ruling).
 	ShellStore func(backend string) error
+	// ModeGet reads the session's approval posture (T7.6); ModeStore writes
+	// it. Either nil makes /mode report the posture unavailable (headless —
+	// the posture is session-scoped state).
+	ModeGet   func() toolrules.ApprovalMode
+	ModeStore func(toolrules.ApprovalMode)
 	// Skills returns the current skill view (the filtered LoadSkills result).
 	Skills func() []*runtime.Skill
 	// SetSkills swaps the caller's skill view (used by /skills reload); nil
@@ -113,6 +119,13 @@ func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 		Description:  "show or switch the shell backend (bash|powershell|pwsh|cmd|wsl); writes config, live for the next command",
 		Projection:   runtime.ProjShellPanel,
 		Parse:        parseShell,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:         "mode",
+		ArgumentHint: "[plan|ask|all]",
+		Description:  "approval posture: plan (read-only) / ask (per-call) / all (no prompts); shift+tab cycles",
+		Projection:   runtime.ProjModePanel,
+		Parse:        parseMode,
 	})
 }
 
@@ -724,3 +737,68 @@ func (d *SurfaceDeps) shellSwitch(backend string) string {
 
 // ShellSwitch is the panel-facing wrapper of the /shell <backend> path.
 func (d *SurfaceDeps) ShellSwitch(backend string) string { return d.shellSwitch(backend) }
+
+// ApprovalModeNote is the mode-switch feedback line (T7.6): one line per
+// posture stating what changed. Shared by the executor's /mode <posture>
+// reply and the TUI's shift+tab system line, so every switch surface words
+// the change identically.
+func ApprovalModeNote(m toolrules.ApprovalMode) string {
+	switch m {
+	case toolrules.ModePlan:
+		return "approval mode → plan (read-only investigation; side-effect calls blocked)"
+	case toolrules.ModeAll:
+		return "approval mode → always-approve (side-effect tools run without confirmation)"
+	default:
+		return "approval mode → ask (per-call approval; durable trust still fast-paths)"
+	}
+}
+
+// ApprovalModeDesc is the one-line posture description under the listing.
+func ApprovalModeDesc(m toolrules.ApprovalMode) string {
+	switch m {
+	case toolrules.ModePlan:
+		return "read-only investigation; side-effect calls blocked"
+	case toolrules.ModeAll:
+		return "side-effect tools run without confirmation"
+	default:
+		return "every effect call asks (durable trust still fast-paths)"
+	}
+}
+
+// modeList renders the approval-posture face (T7.6): the three postures with
+// the live one marked and where switching lives. A missing getter is a
+// NEUTRAL state (session-scoped posture absent — headless), never an error.
+func (d *SurfaceDeps) modeList() string {
+	if d.ModeGet == nil {
+		return "mode: session posture unavailable in this context"
+	}
+	current := d.ModeGet()
+	var b strings.Builder
+	fmt.Fprintf(&b, "mode: %s (current) — %s\n", current, ApprovalModeDesc(current))
+	for _, m := range []toolrules.ApprovalMode{toolrules.ModeAsk, toolrules.ModePlan, toolrules.ModeAll} {
+		if m == current {
+			continue
+		}
+		fmt.Fprintf(&b, "  %s — %s\n", m, ApprovalModeDesc(m))
+	}
+	b.WriteString("  switch: /mode plan|ask|all · shift+tab cycles (session-scoped, not persisted)")
+	return b.String()
+}
+
+// modeSet switches the session posture and returns the switch note. The
+// name is re-validated here so a typo is a usage refusal, never a silent
+// no-op.
+func (d *SurfaceDeps) modeSet(name string) string {
+	if d.ModeGet == nil || d.ModeStore == nil {
+		return "mode: session posture unavailable in this context"
+	}
+	m, err := toolrules.ParseApprovalMode(name)
+	if err != nil {
+		return err.Error()
+	}
+	d.ModeStore(m)
+	return ApprovalModeNote(m)
+}
+
+// ModeSet is the panel-facing wrapper of the /mode <posture> path.
+func (d *SurfaceDeps) ModeSet(name string) string { return d.modeSet(name) }
