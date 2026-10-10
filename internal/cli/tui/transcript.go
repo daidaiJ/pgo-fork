@@ -251,6 +251,10 @@ func (t *transcript) appendThinking(delta string) {
 	if t.activeThinking < 0 {
 		t.blocks = append(t.blocks, transcriptBlock{
 			role: roleThinking, started: time.Now(), turn: t.turn,
+			// A live block's default face is the tail window (the newest
+			// reasoning is what matters while it streams); Ctrl+T or a double
+			// click then expands the rest or collapses it to the header.
+			display: displayTail,
 		})
 		t.activeThinking = len(t.blocks) - 1
 		t.lastThinking = t.activeThinking
@@ -271,7 +275,14 @@ func (t *transcript) closeThinking() {
 	blk := &t.blocks[t.activeThinking]
 	blk.done = true
 	blk.ended = time.Now()
-	blk.display = displayCollapsed
+	// The live default face (tail) folds to the summary line at turn end
+	// (grok finished_display_mode=folded). A fold the user chose while the
+	// block was still streaming — expanded to the full body, or collapsed to
+	// the header — is kept: re-folding would yank away the text they just
+	// opened (2026-10-10 real-terminal report: 思考时连展开都不能展开).
+	if blk.display == displayTail {
+		blk.display = displayCollapsed
+	}
 	t.activeThinking = -1
 	t.reflow()
 }
@@ -331,13 +342,13 @@ func (t *transcript) toggleBlock(i int) bool {
 		blk.card.clearCache()
 		blk.cacheKey = blockCacheKey{}
 	case roleThinking:
-		if !blk.done || strings.TrimSpace(blk.text) == "" {
-			// A live thinking block renders the streaming body regardless of
-			// its fold state, and a closed one whose body is whitespace-only
-			// renders nothing at all (see renderThinking) — a toggle would be
-			// a swallowed click with no visual answer in both cases, so report
-			// not-foldable instead (the mouse path falls back to text
-			// selection, Ctrl+T is a no-op).
+		if strings.TrimSpace(blk.text) == "" {
+			// A block with no reasoning body renders nothing at all (see
+			// renderThinking), so a toggle would be a swallowed click with no
+			// visual answer — report not-foldable instead (the mouse path
+			// falls back to text selection, Ctrl+T is a no-op). A live block
+			// is foldable: it walks the same states as a closed one, honoring
+			// the fold while it streams.
 			return false
 		}
 		switch blk.display {
@@ -879,10 +890,12 @@ func (t *transcript) renderUserBand(blk *transcriptBlock) string {
 // "◆ Thought for Xs" summary line (grok finished_display_mode=folded) and the
 // tail/full states show the summary header above the dimmed rail body — title
 // on top, content below (2026-10-07 user report: footer-below-body read
-// upside-down against grok). The raw text renders plain (not markdown): while
-// streaming the block is incomplete and markdown can only be laid out on the
-// whole block, and the collapsed view truncates anyway — the quiet treatment,
-// not formatting, is the point.
+// upside-down against grok). A live block honors the same three faces
+// (2026-10-10 real-terminal report: 思考时连展开都不能展开): collapsed is the
+// bare activity header, tail the newest window, full the whole body. The raw
+// text renders plain (not markdown): while streaming the block is incomplete
+// and markdown can only be laid out on the whole block, and the collapsed view
+// truncates anyway — the quiet treatment, not formatting, is the point.
 func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 	headStyle, bodyStyle := t.theme.ToolVerbThink, t.theme.Thinking
 	rail := t.theme.ThinkingBorder.Render("▌")
@@ -906,6 +919,11 @@ func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 	if blk.done && blk.display == displayCollapsed {
 		return footer
 	}
+	// Live and collapsed: the activity header on its own line — the same
+	// affordance Ctrl+T gives a closed block, available while it streams.
+	if !blk.done && blk.display == displayCollapsed {
+		return t.theme.Chrome.Render("◇ Thinking…")
+	}
 
 	var b strings.Builder
 	if blk.done {
@@ -927,12 +945,13 @@ func (t transcript) renderThinking(blk transcriptBlock, dim bool) string {
 		hidden := len(lines) - thinkingTailWindowLines
 		visible = lines[hidden:]
 		head = []string{fmt.Sprintf("… %d earlier lines hidden (ctrl+t for full)", hidden)}
-	case !blk.done && len(lines) > thinkingCollapsedLines:
-		// While streaming, cap the live body so a long reasoning run does not
-		// push the reply off-screen; the newest reasoning is what matters.
+	case !blk.done && blk.display != displayFull && len(lines) > thinkingCollapsedLines:
+		// While streaming with the default (tail) face, cap the live body so
+		// a long reasoning run does not push the reply off-screen; the newest
+		// reasoning is what matters. Ctrl+T lifts the cap to the full body.
 		hidden := len(lines) - thinkingCollapsedLines
 		visible = lines[hidden:]
-		head = []string{fmt.Sprintf("… %d earlier lines hidden", hidden)}
+		head = []string{fmt.Sprintf("… %d earlier lines hidden (ctrl+t for full)", hidden)}
 	}
 	for _, l := range head {
 		b.WriteString(bodyStyle.Render(l))

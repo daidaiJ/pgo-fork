@@ -289,6 +289,97 @@ func TestTranscriptStreamingMarkdownCacheLifecycle(t *testing.T) {
 	}
 }
 
+// TestLiveThinkingFold covers the 2026-10-10 real-terminal report ("它思考时连
+// 展开都不能展开"): while the model was still thinking, the block ignored its
+// fold state and reported itself not-foldable, so Ctrl+T and a double click
+// changed nothing. A live block now walks the same three states, with collapsed
+// rendering as the activity header alone, and a fold chosen while streaming
+// survives the turn ending.
+func TestLiveThinkingFold(t *testing.T) {
+	tr := newTranscript(DefaultTheme())
+	tr.setSize(60, 20)
+	tr.addUser("hi")
+	for i := 0; i < 13; i++ {
+		tr.appendThinking(fmt.Sprintf("live filler line %02d\n", i))
+	}
+	tr.appendThinking("live newest line\n")
+	idx := len(tr.blocks) - 1
+
+	// Default live face: the tail window (newest visible, earliest hidden).
+	out := stripANSI(tr.renderAll())
+	if !strings.Contains(out, "◇ Thinking…") {
+		t.Errorf("live block missing the activity header; got:\n%s", out)
+	}
+	if !strings.Contains(out, "live newest line") {
+		t.Errorf("live tail face should show the newest reasoning; got:\n%s", out)
+	}
+	if strings.Contains(out, "live filler line 00") {
+		t.Errorf("live tail face leaked the earliest reasoning; got:\n%s", out)
+	}
+	if !strings.Contains(out, "earlier lines hidden (ctrl+t for full)") {
+		t.Errorf("live tail face missing the expansion hint; got:\n%s", out)
+	}
+
+	// The live block is foldable: Ctrl+T (here the shared toggle core) expands
+	// the full body.
+	if !tr.toggleBlock(idx) {
+		t.Fatal("a live thinking block with a body must be foldable")
+	}
+	out = stripANSI(tr.renderAll())
+	if !strings.Contains(out, "live filler line 00") || !strings.Contains(out, "live newest line") {
+		t.Errorf("live full face should show the whole body; got:\n%s", out)
+	}
+	if strings.Contains(out, "hidden") {
+		t.Errorf("live full face still shows a hidden-lines hint; got:\n%s", out)
+	}
+
+	// The next toggle collapses it to the header line alone.
+	if !tr.toggleBlock(idx) {
+		t.Fatal("the live block should keep folding")
+	}
+	out = stripANSI(tr.renderAll())
+	if !strings.Contains(out, "◇ Thinking…") {
+		t.Errorf("live collapsed face lost the activity header; got:\n%s", out)
+	}
+	if strings.Contains(out, "live newest line") {
+		t.Errorf("live collapsed face should hide the body; got:\n%s", out)
+	}
+
+	// A fold chosen while streaming survives the turn ending (the block does
+	// not snap back to the summary line the user just left).
+	tr.closeThinking()
+	if got := tr.blocks[idx].display; got != displayCollapsed {
+		t.Errorf("closeThinking overrode the user's live fold: display = %v", got)
+	}
+
+	// Untouched live blocks still fold to the summary line at turn end.
+	tr2 := newTranscript(DefaultTheme())
+	tr2.setSize(60, 20)
+	tr2.addUser("hi")
+	tr2.appendThinking("some reasoning\n")
+	tr2.closeThinking()
+	if got := tr2.blocks[len(tr2.blocks)-1].display; got != displayCollapsed {
+		t.Errorf("default live block display after close = %v, want collapsed", got)
+	}
+	if out := stripANSI(tr2.renderAll()); !strings.Contains(out, "Thought") {
+		t.Errorf("closed default block missing the summary line; got:\n%s", out)
+	}
+}
+
+// TestEmptyLiveThinkingNotFoldable keeps the empty-body guard: a live block
+// whose reasoning stream has not produced text yet has nothing to expand, so
+// the toggle reports not-foldable and the mouse path falls back to selection.
+func TestEmptyLiveThinkingNotFoldable(t *testing.T) {
+	tr := newTranscript(DefaultTheme())
+	tr.setSize(60, 20)
+	tr.addUser("hi")
+	tr.appendThinking("   \n")
+	idx := len(tr.blocks) - 1
+	if tr.toggleBlock(idx) {
+		t.Error("an empty live thinking block must not report foldable")
+	}
+}
+
 // TestEmptyThinkingRendersNothingNotFoldable covers the 2026-10-07 click
 // stability report: providers that deliver only empty/whitespace thinking must
 // not produce a "◆ Thought" row whose expanded view is visually identical
