@@ -163,6 +163,9 @@ type Model struct {
 	// filter, Enter toggles the row's enabled state. Inactive when closed.
 	skillsP listPanel
 	mcpP    listPanel
+	// lspP is the /lsp panel (T8.2, two-level like mcpP: server row + the
+	// deferred tool family as children).
+	lspP listPanel
 
 	// toolCards indexes the rich tool-call cards (#389, US-006) by tool-call id so
 	// a toolEndMsg can locate the card started earlier and flip its state / attach
@@ -746,6 +749,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mcpP.open {
 		return m.handleListPanelKey("mcp", msg)
 	}
+	if m.lspP.open {
+		return m.handleListPanelKey("lsp", msg)
+	}
 
 	// While idle with the /model (or /think) argument popup open, it owns the
 	// arrow / Tab / Esc / Enter keys before the command menu gets them (T7.3
@@ -1217,6 +1223,11 @@ func (m Model) runSlash(line string) (tea.Model, tea.Cmd) {
 					break // the parameter form is the text projection (Parse)
 				}
 				return m.openMCPPanel(line)
+			case runtime.ProjLSPPanel:
+				if strings.TrimSpace(line) != "/"+name {
+					break // the parameter form is the text projection (Parse)
+				}
+				return m.openLSPPanel(line)
 			case runtime.ProjSessionsPicker:
 				return m.openSessionsPicker(line)
 			case runtime.ProjRename:
@@ -1414,6 +1425,23 @@ func (m Model) openMCPPanel(line string) (tea.Model, tea.Cmd) {
 	default:
 		rows, note := gatherMCPRows(m.session)
 		m.mcpP = listPanel{open: true, title: "MCP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
+	}
+	m.relayout()
+	return m, nil
+}
+
+// openLSPPanel projects the ProjLSPPanel face (T8.2, /mcp panel alignment):
+// the two-level server/tool panel is modal state.
+func (m Model) openLSPPanel(line string) (tea.Model, tea.Cmd) {
+	m.beginSlashInput(line)
+	switch {
+	case m.session == nil:
+		m.transcript.addSystem("(lsp unavailable: no active session)")
+	case m.running:
+		m.transcript.addSystem("(lsp: a run is in progress — open the panel once it finishes)")
+	default:
+		rows, note := gatherLSPRows(m.session)
+		m.lspP = listPanel{open: true, title: "LSP 服务器", hint: "↑↓ 选择 · Enter 展开/收起 · Space 启停 · Esc 关闭", rows: rows, note: note}
 	}
 	m.relayout()
 	return m, nil
@@ -1852,6 +1880,19 @@ func (m Model) handleListPanelKey(kind string, msg tea.KeyPressMsg) (tea.Model, 
 		p = &m.skillsP
 		apply = func(r listRow) string { return m.session.surface.ToggleSkill(r.title, !r.off) }
 		regather = func() ([]listRow, string) { return gatherSkillRows(m.session) }
+	} else if kind == "lsp" {
+		// The LSP panel (T8.2): Space on the server row flips the project
+		// switch (trust-gated write + live apply); tool rows are informational
+		// (default-deferred family, no per-tool switch in this batch).
+		p = &m.lspP
+		apply = func(r listRow) string {
+			if r.tool != "" {
+				return r.tool + ": deferred — call search_tools to load it (per-tool switches come with a later batch)"
+			}
+			return m.session.surface.LSPServerToggle(!r.off)
+		}
+		regather = func() ([]listRow, string) { return gatherLSPRows(m.session) }
+		expand = func(r listRow) { p.toggleExpand(r) }
 	} else {
 		p = &m.mcpP
 		apply = func(r listRow) string {
@@ -2006,6 +2047,9 @@ func (m Model) renderContent() (string, *tea.Cursor) {
 		b.WriteByte('\n')
 	} else if m.mcpP.open {
 		b.WriteString(m.mcpP.view(m.theme, width, max(height-7, 1)))
+		b.WriteByte('\n')
+	} else if m.lspP.open {
+		b.WriteString(m.lspP.view(m.theme, width, max(height-7, 1)))
 		b.WriteByte('\n')
 	} else if m.ctxPanel.open {
 		b.WriteString(m.ctxPanel.render(m.theme, m.contextData(), width, max(height-7, 1)))

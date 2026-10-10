@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/lsp"
 )
 
 // WriteTool writes text files under Root, creating parent directories as needed.
@@ -27,6 +28,9 @@ type WriteTool struct {
 	// Snap, when non-nil, records the file's prior content before it is written so
 	// the /rewind command can roll the change back. It is shared with the edit tool.
 	Snap *FileSnapshotRecorder
+	// LSP, when non-nil, receives the written file's content as an overlay push
+	// after a successful write (T8.2, shared with the edit tool's seam).
+	LSP *lsp.Manager
 }
 
 // writeToolArgs is the decoded argument shape for WriteTool.
@@ -119,6 +123,13 @@ func (t *WriteTool) Execute(ctx context.Context, id string, args json.RawMessage
 	if err := os.WriteFile(full, []byte(a.Content), filePerm); err != nil {
 		return errorResult(fmt.Sprintf("write: cannot write %q: %v", a.Path, err)), nil
 	}
+	// Overlay push (T8.2): same seam as the edit tool, plus the inline error
+	// report when the server publishes within the edit budget.
+	var lspReport string
+	if t.LSP != nil {
+		t.LSP.Overlay(full, a.Content)
+		lspReport = lspEditReport(t.LSP, full)
+	}
 	// The model just authored the full file content (T3.5): the strongest
 	// residency proof — no read required, qwen's write-proves-residency rule.
 	proveResidencyAfterMutation(ReadFileStateFromContext(ctx), full)
@@ -127,6 +138,9 @@ func (t *WriteTool) Execute(ctx context.Context, id string, args json.RawMessage
 		verb = "Overwrote"
 	}
 	msg := fmt.Sprintf("%s %s (%d bytes)", verb, a.Path, len(a.Content))
+	if lspReport != "" {
+		msg += lspReport
+	}
 	return agentcore.AgentToolResult{
 		Content: agentcore.ContentList{agentcore.NewTextContent(msg)},
 		Details: map[string]any{"path": a.Path, "bytes": len(a.Content), "overwrote": overwrote},

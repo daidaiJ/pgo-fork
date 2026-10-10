@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/run"
+	"github.com/smallnest/pigo/internal/lsp"
 )
 
 // --- dispatch seam ---
@@ -134,7 +135,7 @@ func TestCwdChdirRootsEnv(t *testing.T) {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
 
-	env, err := run.SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, run.ToolPolicy{})
+	env, err := run.SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, true /*noSkills*/, "", nil, false /*memEnabled*/, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, lsp.Settings{}, run.ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}

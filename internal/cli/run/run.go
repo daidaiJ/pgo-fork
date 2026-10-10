@@ -19,6 +19,7 @@ import (
 	"github.com/smallnest/pigo/internal/builtinskills"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/hooks"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/memory"
 	"github.com/smallnest/pigo/internal/plugin"
@@ -55,6 +56,11 @@ type Env struct {
 	// config declares servers; nil when tools are disabled or no server is
 	// configured. Tools from it are already in Tools.
 	MCP *mcp.Manager
+
+	// LSP holds the workspace language server (T8.2), or nil when LSP is
+	// disabled or tools are off. The lsp_* tools are already in Tools; the
+	// caller MUST Close it when the run ends (stops the server process).
+	LSP *lsp.Manager
 
 	// Memory is the persistent memory store opened once for the run (issue #481),
 	// or nil when persistent memory is disabled (memory.enabled=false), tools are
@@ -104,7 +110,7 @@ type Env struct {
 // uncapable model falls back to direct declaration before any request is
 // built. It returns an error rather
 // than exiting so the caller owns exit-code mapping.
-func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, policy ToolPolicy) (env Env, err error) {
+func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTools, noSkills bool, systemPrompt string, appendSystemPrompt []string, memEnabled bool, maxCtx config.MaxContext, toolsCfg config.ToolsConfig, mcpCfg config.MCPConfig, lspSet lsp.Settings, policy ToolPolicy) (env Env, err error) {
 	// Startup spans (T1.1): setup_env is the top-level run-assembly span, with
 	// each slow-candidate segment (provider/credentials, tools, memory, schedule,
 	// plugins, skills) as a child. All spans are nil-safe no-ops when recording
@@ -249,6 +255,26 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 			mcpSpan.End()
 		}
 	}
+	// LSP (T8.2): the workspace language server and its read-only query
+	// tools, built like the MCP pair — nil (absent) when tools are disabled
+	// or LSP is off. The edit/write tools get the overlay sink injected so
+	// their writes push the file's new content to the server (diagnostics
+	// follow the edit immediately); the prewarm runs in the background and
+	// skips non-Go workspaces.
+	var lspMgr *lsp.Manager
+	var lspToolNames []string
+	if !noTools && lspSet.Enabled {
+		lspSpan := spans.Begin("startup.setup_env.lsp")
+		lspMgr = lsp.NewManager(lspSet, cwd)
+		agenttool.InjectLSPOverlay(tools, lspMgr)
+		lspTools := agenttool.LSPTools(lspMgr, lspSet.ToolFilter)
+		for _, t := range lspTools {
+			lspToolNames = append(lspToolNames, t.Name())
+		}
+		tools = append(tools, lspTools...)
+		lspMgr.Prewarm()
+		lspSpan.End()
+	}
 	// Load skills once (shared between prompt injection, /skill-name
 	// registration and skill-as-tool materialization). A partial parse error
 	// still yields the skills that DID load, so one malformed file is a
@@ -309,7 +335,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 	// tool, and it must survive a narrow --allowed-tools for the deferred face
 	// to be usable at all. Policy-deny of a concrete tool still holds (the
 	// removed tool never enters the plan → never claimable).
-	if !noTools && (toolsCfg.DeclarationMode == config.ToolDeclarationDeferred || len(toolsCfg.Deferred) > 0) {
+	if !noTools && (toolsCfg.DeclarationMode == config.ToolDeclarationDeferred || len(toolsCfg.Deferred) > 0 || len(lspToolNames) > 0) {
 		if deferredCapable(prov, model, toolsCfg.DeferredCapable) {
 			// The deferred face covers BOTH external surfaces (T6.8, spec
 			// mcp-integration-shape.md §3.2): MCP tools defer by default, in
@@ -333,7 +359,23 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 				}
 				return ""
 			}
-			toolPlan = tooldecl.BuildPlanWithSources(toolsCfg.DeclarationMode, toolsCfg.Deferred, toolsCfg.Direct, hiddenNames, tools, external, sourceOf)
+			// LSP tools defer by default too (T8.2 ④: the +5435-token lesson
+			// applies equally) — decoupled from declaration_mode, with the
+			// [tools] direct list exempting and hidden suppressing as usual.
+			deferredNames := toolsCfg.Deferred
+			if len(lspToolNames) > 0 {
+				deferredNames = append(append([]string{}, deferredNames...), lspToolNames...)
+				sourceOfBuiltin := sourceOf
+				sourceOf = func(name string) string {
+					for _, n := range lspToolNames {
+						if n == name {
+							return "lsp"
+						}
+					}
+					return sourceOfBuiltin(name)
+				}
+			}
+			toolPlan = tooldecl.BuildPlanWithSources(toolsCfg.DeclarationMode, deferredNames, toolsCfg.Direct, hiddenNames, tools, external, sourceOf)
 			if toolPlan != nil {
 				tools = append(tools, &agenttool.SearchToolsTool{})
 			}
@@ -363,6 +405,7 @@ func SetupEnv(model, baseURL, protocol, providerName, apiKey, proxy string, noTo
 		Skills:       skills,
 		Plugins:      mgr,
 		MCP:          mcpMgr,
+		LSP:          lspMgr,
 		Memory:       memStore,
 		Schedule:     sched,
 		MaxContext:   maxCtx,

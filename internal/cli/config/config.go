@@ -109,6 +109,35 @@ type FileConfig struct {
 	// TOML itself rejects a file that carries both shapes, and UnmarshalTOML
 	// below routes the key by shape (string → hint, table → sections).
 	Providers map[string]ProviderSpec `toml:"provider"`
+	// LSP is the [lsp] TOML table (T8.2): the global LSP layer — the enabled
+	// master switch (default off) plus the per-server [lsp.gopls] launch
+	// settings. Pure config plumbing; the layer merge (global toml <
+	// trusted project config.json < PIGO_LSP env) lives in internal/cli/run
+	// (ResolveLSPSettings), the manager in internal/lsp.
+	LSP LSPConfig `toml:"lsp"`
+}
+
+// LSPConfig is the [lsp] TOML table (T8.2). Enabled defaults to false — the
+// global switch is opt-in; a project turns LSP on per-directory through its
+// ./.pigo/config.json (which requires directory trust, since it can spawn a
+// local process).
+type LSPConfig struct {
+	Enabled bool `toml:"enabled"`
+	// IdleMinutes stops an idle server after this many minutes (0 = the
+	// internal default of 10; a server that was never used costs nothing).
+	IdleMinutes int `toml:"idle_minutes"`
+	// Gopls carries the one configured server's launch settings.
+	Gopls LSPServerConfig `toml:"gopls"`
+}
+
+// LSPServerConfig is the [lsp.gopls] TOML table: the command/args to launch
+// (defaults live in internal/lsp: gopls -remote=auto serve, the daemon path)
+// and the optional tools list restricting which lsp_* tools materialize
+// (bare names: "diagnostics", "definition", ...; empty = all).
+type LSPServerConfig struct {
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
+	Tools   []string `toml:"tools"`
 }
 
 // UnmarshalTOML decodes the config with the overloaded "provider" key routed

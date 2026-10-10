@@ -6,6 +6,7 @@ import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	cliconfig "github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/run"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 )
@@ -63,7 +64,7 @@ func New(opts ...Option) (*Session, error) {
 	env, err := run.SetupEnv(
 		c.model, c.baseURL, c.protocol, c.provider, c.apiKey, c.proxy,
 		c.noTools, !c.skills, c.systemPrompt, c.appendSystemPrompt, c.memory,
-		cliconfig.MaxContext{}, cliconfig.ToolsConfig{}, cliconfig.MCPConfig{}, policy,
+		cliconfig.MaxContext{}, cliconfig.ToolsConfig{}, cliconfig.MCPConfig{}, lsp.Settings{}, policy,
 	)
 	if err != nil {
 		return nil, err

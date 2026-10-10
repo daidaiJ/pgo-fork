@@ -176,6 +176,8 @@ const (
 	ProjSkillsPanel
 	// ProjMCPPanel is the bare-submit MCP server/tool panel (/mcp).
 	ProjMCPPanel
+	// ProjLSPPanel is the bare-submit LSP server/tool panel (/lsp).
+	ProjLSPPanel
 	// ProjSessionsPicker opens the session picker (/sessions, /resume).
 	ProjSessionsPicker
 	// ProjContextPanel toggles the context-usage overlay (/context).
@@ -227,6 +229,8 @@ func (p Projection) String() string {
 		return "skills panel"
 	case ProjMCPPanel:
 		return "mcp panel"
+	case ProjLSPPanel:
+		return "lsp panel"
 	case ProjSessionsPicker:
 		return "sessions picker"
 	case ProjContextPanel:

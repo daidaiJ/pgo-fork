@@ -80,6 +80,12 @@ const (
 	IntentMCPToolToggle
 	// IntentMCPReload re-runs tools/list for one server — /mcp reload <server>.
 	IntentMCPReload
+	// IntentLSPShow lists the LSP server state — bare /lsp (the REPL's
+	// degraded projection of the TUI panel).
+	IntentLSPShow
+	// IntentLSPServerToggle flips the project-layer LSP switch —
+	// /lsp enable|disable [server].
+	IntentLSPServerToggle
 	// IntentStatusShow renders the runtime status report — /status.
 	IntentStatusShow
 	// IntentSessionShow renders the session summary — /session.
@@ -127,6 +133,10 @@ func (k IntentKind) String() string {
 		return "mcp-tool-toggle"
 	case IntentMCPReload:
 		return "mcp-reload"
+	case IntentLSPShow:
+		return "lsp-show"
+	case IntentLSPServerToggle:
+		return "lsp-server-toggle"
 	case IntentStatusShow:
 		return "status-show"
 	case IntentSessionShow:
@@ -172,6 +182,11 @@ type Intent struct {
 	ServerEnable bool
 	MCPTool      string
 	ToolDisable  bool
+	// IntentLSPServerToggle: the optional server name (empty = the one
+	// configured server) and the toggle direction (LSPEnable, true = enable —
+	// the project switch speaks "enable", mirroring the server toggle).
+	LSPServer  string
+	LSPEnable  bool
 	// IntentCompact: optional free-text user focus for the summarizer (grok
 	// Compact{user_context}). Reserved: the compactor takes no focus argument
 	// yet (spec deviation register), so Parse currently refuses arguments.

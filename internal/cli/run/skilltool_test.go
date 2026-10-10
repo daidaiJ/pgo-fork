@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/testenv"
@@ -29,7 +30,7 @@ func TestSetupEnvMaterializesSkillTools(t *testing.T) {
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 	writeSkillFile(t, skillsDir, "secret", "---\nname: secret\ndescription: hidden skill\ndisable-model-invocation: true\n---\nSlash only.")
 
-	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", false /*noTools*/, false /*noSkills*/, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, lsp.Settings{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestSetupEnvNoToolsSkipsSkillTools(t *testing.T) {
 	t.Setenv("PIGO_SKILLS_DIR", skillsDir)
 	writeSkillFile(t, skillsDir, "weather", "---\nname: weather\ndescription: get the weather\n---\nDo weather.")
 
-	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, ToolPolicy{})
+	env, err := SetupEnv("openai/gpt-4o", "", "", "", "", "", true /*noTools*/, false, "", nil, false, config.MaxContext{}, config.ToolsConfig{}, config.MCPConfig{}, lsp.Settings{}, ToolPolicy{})
 	if err != nil {
 		t.Fatalf("SetupEnv: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/smallnest/pigo/internal/agentcore"
+	"github.com/smallnest/pigo/internal/lsp"
 )
 
 // EditTool performs exact string replacements in files under Root.
@@ -27,6 +28,11 @@ type EditTool struct {
 	// Snap, when non-nil, records the file's prior content before it is edited so
 	// the /rewind command can roll the change back. It is shared with the write tool.
 	Snap *FileSnapshotRecorder
+	// LSP, when non-nil, receives the edited file's new content as an overlay
+	// push after a successful write (T8.2: the language server's diagnostics
+	// follow the in-memory state immediately). Injected by run.SetupEnv via
+	// InjectLSPOverlay; nil keeps the hook off.
+	LSP *lsp.Manager
 }
 
 // editToolArgs is the decoded argument shape for EditTool.
@@ -134,6 +140,14 @@ func (t *EditTool) Execute(ctx context.Context, id string, args json.RawMessage,
 	if err := os.WriteFile(full, []byte(updated), filePerm); err != nil {
 		return errorResult(fmt.Sprintf("edit: cannot write %q: %v", a.Path, err)), nil
 	}
+	// Overlay push (T8.2): the language server sees the new content now, so a
+	// diagnostics query right after the edit reads the edited state. The
+	// result carries the error-level report inline when one lands in time.
+	var lspReport string
+	if t.LSP != nil {
+		t.LSP.Overlay(full, updated)
+		lspReport = lspEditReport(t.LSP, full)
+	}
 	// The edit just produced the file's current content and the model saw the
 	// diff → post-edit state becomes the new freshness baseline (T3.5).
 	proveResidencyAfterMutation(ReadFileStateFromContext(ctx), full)
@@ -144,6 +158,9 @@ func (t *EditTool) Execute(ctx context.Context, id string, args json.RawMessage,
 		replaced = count
 	}
 	msg := fmt.Sprintf("Edited %s (%d replacement(s))\n%s", a.Path, replaced, diff)
+	if lspReport != "" {
+		msg += lspReport
+	}
 	return agentcore.AgentToolResult{
 		Content: agentcore.ContentList{agentcore.NewTextContent(msg)},
 		Details: map[string]any{"path": a.Path, "replacements": replaced, "diff": diff},

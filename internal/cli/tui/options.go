@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
@@ -60,6 +61,9 @@ type Options struct {
 	// surface commands and the status MCP section; nil when tools are disabled
 	// or no server is configured.
 	MCP *mcp.Manager
+	// LSP is the workspace language server (T8.2, run.Env.LSP); nil when LSP
+	// is disabled. It backs the /lsp surface command and panel.
+	LSP *lsp.Manager
 
 	// ToolPlan is the run's deferred tool declaration plan (T4.1), or nil for
 	// direct declaration. Passed through from run.SetupEnv's Env.ToolPlan.

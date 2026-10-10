@@ -21,6 +21,7 @@ import (
 	"github.com/smallnest/pigo/internal/cli/prompts"
 	"github.com/smallnest/pigo/internal/cli/run"
 	"github.com/smallnest/pigo/internal/dream"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/plugin"
 	"github.com/smallnest/pigo/internal/provider"
@@ -125,6 +126,9 @@ type Options struct {
 	// surface commands and the status MCP section; nil when tools are
 	// disabled or no server is configured.
 	MCP *mcp.Manager
+	// LSP is the workspace language server (T8.2, run.Env.LSP); nil when
+	// LSP is disabled. It backs the /lsp surface command.
+	LSP *lsp.Manager
 }
 
 // Run starts the line-based REPL over a persisted session. It keeps
@@ -285,7 +289,14 @@ func Run(opts Options) error {
 	// without reaching into run state the registry cannot see.
 	skillsView := &opts.Skills
 	surface := &prompts.SurfaceDeps{
-		MCP:        opts.MCP,
+		MCP: opts.MCP,
+		LSP: opts.LSP,
+		LSPStore: func(enabled bool) error {
+			return run.SetProjectLSPEnabled(cwd, enabled)
+		},
+		LSPConfigured: func() bool {
+			return run.LSPProjectConfigured(cwd)
+		},
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
 		SkillsDir:  run.SkillsDir(),

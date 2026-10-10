@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/smallnest/pigo/internal/cli/config"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/runtime"
 )
@@ -33,6 +34,17 @@ type SurfaceDeps struct {
 	// MCP is the live manager from run.SetupEnv (nil when tools are disabled
 	// or no server is configured).
 	MCP *mcp.Manager
+	// LSP is the workspace language server (T8.2, run.Env.LSP); nil when LSP
+	// is disabled. The /lsp listing reads its status; the toggle writes the
+	// project switch through LSPStore and applies live when non-nil.
+	LSP *lsp.Manager
+	// LSPStore persists the project-layer LSP switch (run.SetProjectLSPEnabled,
+	// trust-gated); nil makes /lsp enable|disable refuse (headless-style
+	// read-only surface).
+	LSPStore func(enabled bool) error
+	// LSPConfigured reports whether the project layer carries an lsp section
+	// (informational for the listing); nil = unknown.
+	LSPConfigured func() bool
 	// Skills returns the current skill view (the filtered LoadSkills result).
 	Skills func() []*runtime.Skill
 	// SetSkills swaps the caller's skill view (used by /skills reload); nil
@@ -71,6 +83,13 @@ func RegisterSurfaceCommands(reg *runtime.SlashRegistry, deps *SurfaceDeps) {
 		Description:  "MCP server and per-tool switches, connection state and schema reload",
 		Projection:   runtime.ProjMCPPanel,
 		Parse:        parseMCP,
+	})
+	reg.AddBuiltin(runtime.SlashCommand{
+		Name:         "lsp",
+		ArgumentHint: "[enable|disable [server]]",
+		Description:  "LSP server state and diagnostics counts; enable/disable writes the project switch",
+		Projection:   runtime.ProjLSPPanel,
+		Parse:        parseLSP,
 	})
 }
 
@@ -484,4 +503,69 @@ func (d *SurfaceDeps) ToggleMCPServer(server string, enable bool) string {
 // wrapper of the /mcp tool enable|disable path.
 func (d *SurfaceDeps) ToggleMCPTool(server, tool string, disable bool) string {
 	return d.mcpToolToggle(server, tool, disable)
+}
+
+// lspList renders the LSP face (T8.2): the configured server's state, live
+// diagnostics load, and where the switch lives. A disabled LSP is a NEUTRAL
+// state — a sentence with the enable paths, never an error (spec §5,
+// usage-counter convention).
+func (d *SurfaceDeps) lspList() string {
+	if d.LSP == nil {
+		msg := "lsp: disabled — enable with [lsp] enabled = true in config.toml, or {\"lsp\": {\"enabled\": true}} in ./.pigo/config.json (project layer)"
+		if d.LSPConfigured != nil && d.LSPConfigured() {
+			msg += "\n  (a project ./.pigo/config.json lsp section exists; it only applies when the directory is trusted)"
+		}
+		return msg
+	}
+	var b strings.Builder
+	b.WriteString("lsp:")
+	for _, st := range d.LSP.Status() {
+		fmt.Fprintf(&b, "\n  %s  [%s]", st.Name, st.State)
+		if st.ServerInfo != "" {
+			fmt.Fprintf(&b, " — %s", st.ServerInfo)
+		}
+		if st.DiagFiles > 0 {
+			fmt.Fprintf(&b, "\n    diagnostics: %d in %d file(s)", st.DiagTotal, st.DiagFiles)
+		}
+		if st.Error != "" {
+			fmt.Fprintf(&b, "\n    error: %s", st.Error)
+		}
+	}
+	b.WriteString("\n  tools: lsp_diagnostics, lsp_definition, lsp_references, lsp_hover, lsp_symbols (deferred — search_tools claims them)")
+	return b.String()
+}
+
+// lspServerToggle writes the project-layer switch (trust-gated) and applies
+// it live when the manager is in the session. When LSP is off at startup the
+// face stays frozen for the session (the D-7 session-frozen semantics the
+// skill face uses): the write lands, the next session picks it up.
+func (d *SurfaceDeps) lspServerToggle(enable bool) string {
+	verb := map[bool]string{true: "enable", false: "disable"}[enable]
+	if d.LSPStore == nil {
+		return "lsp: config writes unavailable in this context (read-only surface)"
+	}
+	if err := d.LSPStore(enable); err != nil {
+		return fmt.Sprintf("lsp: %s failed: %v", verb, err)
+	}
+	if d.LSP == nil {
+		return fmt.Sprintf("lsp: %s — written to ./.pigo/config.json; takes effect on the next session", verb)
+	}
+	d.LSP.SetEnabled(enable)
+	detail := "server stopped"
+	if enable {
+		detail = "server starting in the background"
+	}
+	return fmt.Sprintf("lsp: %s — written to ./.pigo/config.json; live: %s", verb, detail)
+}
+
+// LSPServerToggle is the panel-facing wrapper of the /lsp enable|disable path.
+func (d *SurfaceDeps) LSPServerToggle(enable bool) string { return d.lspServerToggle(enable) }
+
+// LSPToolRows returns the deferred tool family rows for the /lsp panel's
+// tool level (the panel-facing data face; empty when LSP is off).
+func (d *SurfaceDeps) LSPToolRows() []string {
+	if d.LSP == nil {
+		return nil
+	}
+	return []string{"lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_symbols"}
 }

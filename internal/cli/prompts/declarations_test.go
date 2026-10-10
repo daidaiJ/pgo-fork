@@ -40,9 +40,9 @@ func TestBuiltinCatalogHasNoSilentStubs(t *testing.T) {
 	reg := bareRegistry(t)
 	want := []string{
 		"btw", "clone", "compact", "context", "copy", "dream", "dump",
-		"exit", "export", "fork", "goal", "help", "import", "mcp", "memory",
+		"exit", "export", "fork", "goal", "help", "import", "lsp", "mcp", "memory",
 		"model", "models", "quit", "rebuild", "remote-control", "rename",
-		"rewind", "session", "sessions", "skills", "status", "think",
+"rewind", "session", "sessions", "skills", "status", "think",
 		"tree",
 	}
 	var got []string

@@ -5,8 +5,10 @@ package runtime
 // and the hard-error paths for malformed files and invalid field values.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/smallnest/pigo/internal/agentcore"
@@ -237,5 +239,25 @@ func TestLoadConfigLayerHooks(t *testing.T) {
 	h := pre[0].Hooks[0]
 	if h.Command != "echo hi" || h.TimeoutSeconds() != 5 {
 		t.Errorf("unexpected hook: cmd=%q timeout=%d", h.Command, h.TimeoutSeconds())
+	}
+}
+
+// TestLSPSettingsJSON pins the project-layer wire shape (T8.2): lowercase
+// "enabled" round-trips, and the layer file stays hand-editable.
+func TestLSPSettingsJSON(t *testing.T) {
+	layer := ConfigLayer{LSP: &LSPSettings{Enabled: true}}
+	data, err := json.Marshal(layer)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"lsp":{"enabled":true}`) {
+		t.Fatalf("marshaled = %s", data)
+	}
+	var back ConfigLayer
+	if err := json.Unmarshal([]byte(`{"lsp": {"enabled": true}}`), &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.LSP == nil || !back.LSP.Enabled {
+		t.Fatalf("decoded = %+v", back.LSP)
 	}
 }

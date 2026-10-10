@@ -13,8 +13,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/smallnest/pigo/internal/agenttool"
 	"github.com/smallnest/pigo/internal/cli/config"
 	"github.com/smallnest/pigo/internal/cli/prompts"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/mcp"
 	"github.com/smallnest/pigo/internal/runtime"
 	"github.com/smallnest/pigo/internal/testenv"
@@ -389,3 +391,85 @@ func TestMCPPanelTreeFlow(t *testing.T) {
 		t.Error("esc did not close the panel")
 	}
 }
+
+// TestGatherLSPRows pins the /lsp panel data pass (T8.2): a disabled LSP is a
+// note with the enable paths (and the untrusted-project hint when a project
+// lsp section exists), a live manager renders one server row with state +
+// diagnostics counts and the deferred tool family as children.
+func TestGatherLSPRows(t *testing.T) {
+	s := &runSession{}
+	rows, note := gatherLSPRows(s)
+	if rows != nil || note == "" {
+		t.Fatalf("gatherLSPRows(nil) = %v, %q; want nil + note", rows, note)
+	}
+	if !strings.Contains(note, "LSP 未启用") {
+		t.Fatalf("note = %q", note)
+	}
+
+	// A project lsp section adds the untrusted hint (LSPConfigured probe).
+	s = &runSession{surface: prompts.SurfaceDeps{
+		LSPConfigured: func() bool { return true },
+	}}
+	_, note = gatherLSPRows(s)
+	if !strings.Contains(note, "目录未信任") {
+		t.Fatalf("configured note = %q", note)
+	}
+
+	// Live manager: one row + five deferred tool children.
+	mgr := lsp.NewManager(lsp.Settings{Enabled: true}, t.TempDir())
+	s = &runSession{surface: prompts.SurfaceDeps{LSP: mgr}}
+	rows, note = gatherLSPRows(s)
+	if note != "" {
+		t.Fatalf("live gather note = %q", note)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (the configured server)", len(rows))
+	}
+	if rows[0].title != "gopls" || rows[0].tag != "[off]" {
+		t.Fatalf("server row = %q %q", rows[0].title, rows[0].tag)
+	}
+	if len(rows[0].children) != len(agenttool.LSPToolNames) {
+		t.Fatalf("children = %d, want %d", len(rows[0].children), len(agenttool.LSPToolNames))
+	}
+	if rows[0].children[0].tag != "[deferred]" {
+		t.Fatalf("child tag = %q", rows[0].children[0].tag)
+	}
+}
+
+// TestLSPServerToggleThroughSurface drives the /lsp enable|disable path with
+// a recording store closure: the write lands, the live manager flips, and a
+// failing store surfaces the error instead of pretending success.
+func TestLSPServerToggleThroughSurface(t *testing.T) {
+	mgr := lsp.NewManager(lsp.Settings{}, t.TempDir())
+	var writes []bool
+	deps := prompts.SurfaceDeps{
+		LSP: mgr,
+		LSPStore: func(enabled bool) error {
+			writes = append(writes, enabled)
+			return nil
+		},
+	}
+	msg := deps.LSPServerToggle(true)
+	if !strings.Contains(msg, "enable") || !strings.Contains(msg, "./.pigo/config.json") {
+		t.Fatalf("enable msg = %q", msg)
+	}
+	if len(writes) != 1 || writes[0] != true {
+		t.Fatalf("writes = %v", writes)
+	}
+	msg = deps.LSPServerToggle(false)
+	if !strings.Contains(msg, "disable") {
+		t.Fatalf("disable msg = %q", msg)
+	}
+	// Store failure surfaces the error.
+	deps.LSPStore = func(bool) error { return errTestLSPStore }
+	msg = deps.LSPServerToggle(true)
+	if !strings.Contains(msg, "failed") {
+		t.Fatalf("failed-store msg = %q", msg)
+	}
+}
+
+var errTestLSPStore = errorString("store closed")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }

@@ -39,6 +39,7 @@ import (
 	"github.com/smallnest/pigo/internal/cli/tui"
 	"github.com/smallnest/pigo/internal/cli/ui"
 	"github.com/smallnest/pigo/internal/dream"
+	"github.com/smallnest/pigo/internal/lsp"
 	"github.com/smallnest/pigo/internal/provider"
 	"github.com/smallnest/pigo/internal/selfupdate"
 	"github.com/smallnest/pigo/internal/shellguard"
@@ -192,6 +193,9 @@ type cliOptions struct {
 	// CLI flags; applyFileConfig overlays it unconditionally and SetupEnv
 	// connects the servers (per-server fault tolerance, never fatal).
 	mcpCfg config.MCPConfig
+	// lspSet is the resolved LSP configuration (T8.2: global [lsp] table
+	// < trusted project switch < PIGO_LSP; resolved once in the main flow).
+	lspSet lsp.Settings
 	// modelProfiles is the [models."<id>"] profile table (T7.3 实测反馈),
 	// passed through to the front-ends so the /model switcher lists the
 	// config's model ids (grok 对齐). Empty when the config declares none.
@@ -344,6 +348,15 @@ func main() {
 		// front-ends so /model lists the config's model ids (grok 对齐).
 		applyModelProfile(&opts, cfg, flag.CommandLine.Changed)
 	}
+	// LSP settings (T8.2): layered once here so every driver — headless,
+	// TUI, REPL, review — shares one resolution. A malformed project
+	// config.json is a hard error, same as the hooks/thinking layers.
+	lspSet, err := run.ResolveLSPSettings(cfg.LSP)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pigo: %v\n", err)
+		os.Exit(2)
+	}
+	opts.lspSet = lspSet
 	cfgLoad.End()
 
 	// Validate the shellguard mode tiers now (flag > file > default off): a
@@ -658,7 +671,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			return 2
 		}
 		modeDispatch.End()
-		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+		env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 		if err != nil {
 			fmt.Fprintf(errOut, "pigo: %v\n", err)
 			return setupExitCode(err)
@@ -668,6 +681,9 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		}
 		if env.MCP != nil {
 			defer closeWithSpan(env.MCP.Close)
+		}
+		if env.LSP != nil {
+			defer closeWithSpan(env.LSP.Close)
 		}
 		if env.Memory != nil {
 			defer closeWithSpan(env.Memory.Close)
@@ -716,6 +732,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 				ToolPlan:          env.ToolPlan,
 				Plugins:           env.Plugins,
 				MCP:               env.MCP,
+				LSP:               env.LSP,
 				ConfigPrompts:     opts.configPrompts,
 				CliPrompts:        opts.promptTemplates,
 				NoPromptTemplates: opts.noPromptTemplates,
@@ -752,6 +769,7 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 			Skills:            env.Skills,
 			Plugins:           env.Plugins,
 			MCP:               env.MCP,
+			LSP:               env.LSP,
 			ToolPlan:          env.ToolPlan,
 			MaxContext:        env.MaxContext,
 			Models:            opts.modelProfiles,
@@ -781,13 +799,16 @@ func dispatch(ctx context.Context, opts cliOptions, out, errOut io.Writer) int {
 		return 2
 	}
 
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
 	}
 	if env.Plugins != nil {
 		defer closeWithSpan(env.Plugins.Close)
+	}
+	if env.LSP != nil {
+		defer closeWithSpan(env.LSP.Close)
 	}
 	if env.Memory != nil {
 		defer closeWithSpan(env.Memory.Close)
@@ -847,13 +868,16 @@ func runGitHubReview(ctx context.Context, opts cliOptions, errOut io.Writer) int
 		fmt.Fprintf(errOut, "pigo: --github-review requires a webhook secret in $%s\n", opts.githubWebhookSecretEnv)
 		return 2
 	}
-	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
+	env, err := run.SetupEnv(opts.model, opts.baseURL, opts.protocol, opts.provider, opts.apiKey, opts.proxy, opts.noTools, opts.noSkills, opts.systemPrompt, opts.appendSystemPrompt, opts.memory.Memory.Enabled, opts.memory.MaxContext, opts.toolsCfg, opts.mcpCfg, opts.lspSet, run.NewToolPolicy(opts.allowedTools, opts.disallowedTools))
 	if err != nil {
 		fmt.Fprintf(errOut, "pigo: %v\n", err)
 		return setupExitCode(err)
 	}
 	if env.Plugins != nil {
 		defer closeWithSpan(env.Plugins.Close)
+	}
+	if env.LSP != nil {
+		defer closeWithSpan(env.LSP.Close)
 	}
 	if env.Memory != nil {
 		defer closeWithSpan(env.Memory.Close)

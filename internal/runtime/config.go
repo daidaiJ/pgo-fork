@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/smallnest/pigo/internal/agentcore"
 	"github.com/smallnest/pigo/internal/hooks"
@@ -40,6 +41,20 @@ type Config struct {
 	// Nil when no layer defined any hooks (FR-18), so the no-hooks path costs
 	// nothing downstream.
 	Hooks hooks.HookSet
+	// LSP is the resolved LSP switch (T8.2). A layer that does not mention
+	// LSP leaves the lower layer's value standing; a layer that does
+	// (ConfigLayer.LSP non-nil) overrides it.
+	LSP LSPSettings
+}
+
+// LSPSettings is the LSP portion of a config layer (T8.2). Only the enabled
+// switch is layer-resolvable today — the server command/args are global
+// config.toml material (they name a local binary, not a per-directory
+// choice).
+type LSPSettings struct {
+	// Enabled is the switch (false = off, the default). Lowercase key: the
+	// project file is hand-editable ({"lsp": {"enabled": true}}).
+	Enabled bool `json:"enabled"`
 }
 
 // ConfigLayer is one partial layer of configuration. Pointer/optional fields
@@ -56,6 +71,11 @@ type ConfigLayer struct {
 	// appends each layer's matchers per event type (FR-2), so lower-layer hooks
 	// always still fire.
 	Hooks hooks.HookSet `json:"hooks,omitempty"`
+	// LSP is this layer's LSP switch (T8.2): {"lsp": {"enabled": true}} in the
+	// project ./.pigo/config.json turns LSP on for the directory (the merge
+	// gates on the run's trust decision — an untrusted directory contributes
+	// no project layer at all, FR-14 style).
+	LSP *LSPSettings `json:"lsp,omitempty"`
 }
 
 // DefaultConfigLayer is the base layer applied before all others. It gives a
@@ -129,6 +149,9 @@ func ResolveConfig(layers ...*ConfigLayer) (Config, error) {
 			}
 			cfg.Hooks[eventType] = append(cfg.Hooks[eventType], matchers...)
 		}
+		if layer.LSP != nil {
+			cfg.LSP = *layer.LSP
+		}
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -161,6 +184,17 @@ func EnvConfigLayer(getenv func(string) string) ConfigLayer {
 	}
 	if v := getenv("PIGO_THINKING_LEVEL"); v != "" {
 		layer.ThinkingLevel = &v
+	}
+	// PIGO_LSP (T8.2): "1"/"true"/"on" enables, "0"/"false"/"off" disables;
+	// anything else is ignored (the layer stays absent).
+	if v := getenv("PIGO_LSP"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "on":
+			enabled := true
+			layer.LSP = &LSPSettings{Enabled: enabled}
+		case "0", "false", "off":
+			layer.LSP = &LSPSettings{Enabled: false}
+		}
 	}
 	return layer
 }

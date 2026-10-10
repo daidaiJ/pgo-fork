@@ -67,8 +67,16 @@ func newSlashRegistry(opts Options, live *cli.LiveConfig, sessionCreds *provider
 	// session/context sections are REPL-only for now (the TUI has no cli.Host;
 	// D-7 of slash-config-surface.md).
 	skillsView := &opts.Skills
+	cwd, _ := os.Getwd()
 	deps := prompts.SurfaceDeps{
-		MCP:        opts.MCP,
+		MCP: opts.MCP,
+		LSP: opts.LSP,
+		LSPStore: func(enabled bool) error {
+			return run.SetProjectLSPEnabled(cwd, enabled)
+		},
+		LSPConfigured: func() bool {
+			return run.LSPProjectConfigured(cwd)
+		},
 		Skills:     func() []*runtime.Skill { return *skillsView },
 		SetSkills:  func(s []*runtime.Skill) { *skillsView = s },
 		SkillsDir:  run.SkillsDir(),

@@ -291,3 +291,49 @@ func gatherMCPRows(s *runSession) ([]listRow, string) {
 	}
 	return out, ""
 }
+
+// gatherLSPRows maps the LSP manager's status to the panel's two-level rows
+// (T8.2, /mcp panel alignment): the configured server row carries its state,
+// live diagnostics load and serverInfo; expanding it shows the deferred tool
+// family (informational rows — the LSP tools are default-deferred, claimed
+// via search_tools, with no per-tool config switch in this batch).
+func gatherLSPRows(s *runSession) ([]listRow, string) {
+	if s == nil {
+		return nil, "(LSP 面板不可用：无活动会话)"
+	}
+	if s.surface.LSP == nil {
+		note := "(LSP 未启用：config.toml [lsp] enabled = true，或项目 ./.pigo/config.json 写 " + `{"lsp": {"enabled": true}}` + ")"
+		if s.surface.LSPConfigured != nil && s.surface.LSPConfigured() {
+			note += "\n(项目层已有 lsp 段：目录未信任时不生效)"
+		}
+		return nil, note
+	}
+	out := make([]listRow, 0)
+	for _, st := range s.surface.LSP.Status() {
+		desc := "LSP 服务器"
+		if st.ServerInfo != "" {
+			desc = st.ServerInfo
+		}
+		if st.DiagFiles > 0 {
+			desc += fmt.Sprintf(" — %d 诊断 / %d 文件", st.DiagTotal, st.DiagFiles)
+		} else {
+			desc += " — 无诊断"
+		}
+		if st.Error != "" {
+			desc += " · error: " + st.Error
+		}
+		tag := "[" + st.State + "]"
+		if !st.Enabled {
+			tag = "[disabled]"
+		}
+		row := listRow{title: st.Name, desc: desc, tag: tag, off: !st.Enabled, server: st.Name}
+		for _, name := range s.surface.LSPToolRows() {
+			row.children = append(row.children, listRow{
+				title: name, desc: "search_tools 认领后进声明面", tag: "[deferred]",
+				server: st.Name, tool: name,
+			})
+		}
+		out = append(out, row)
+	}
+	return out, ""
+}

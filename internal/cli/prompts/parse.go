@@ -170,3 +170,33 @@ func parseDump(args string) (runtime.Intent, error) {
 	}
 	return runtime.Intent{Kind: runtime.IntentDump}, nil
 }
+
+// parseLSP implements /lsp's subcommand grammar (T8.2): bare (or "status")
+// lists the server state; enable|disable [server] writes the project-layer
+// switch. The server name is optional — there is one configured server today
+// (gopls), and a named invocation positions the grammar for more.
+func parseLSP(args string) (runtime.Intent, error) {
+	fields := strings.Fields(args)
+	sub := ""
+	if len(fields) > 0 {
+		sub = strings.ToLower(fields[0])
+	}
+	switch sub {
+	case "", "status":
+		if len(fields) > 1 {
+			return runtime.Intent{}, fmt.Errorf("lsp: unexpected extra argument %q (usage: /lsp [enable|disable [server]])", fields[1])
+		}
+		return runtime.Intent{Kind: runtime.IntentLSPShow}, nil
+	case "enable", "disable":
+		if len(fields) > 2 {
+			return runtime.Intent{}, fmt.Errorf("lsp: unexpected extra argument %q (usage: /lsp %s [server])", fields[2], sub)
+		}
+		server := ""
+		if len(fields) == 2 {
+			server = fields[1]
+		}
+		return runtime.Intent{Kind: runtime.IntentLSPServerToggle, LSPServer: server, LSPEnable: sub == "enable"}, nil
+	default:
+		return runtime.Intent{}, fmt.Errorf("lsp: unknown subcommand %q (want status | enable | disable)", sub)
+	}
+}

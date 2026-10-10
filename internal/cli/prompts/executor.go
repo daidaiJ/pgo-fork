@@ -158,6 +158,16 @@ func (x *Executor) execute(it runtime.Intent) string {
 			return "mcp: config surface unavailable in this context"
 		}
 		return x.Surface.mcpReload(it.MCPServer)
+	case runtime.IntentLSPShow:
+		if x.Surface == nil {
+			return "lsp: config surface unavailable in this context"
+		}
+		return x.Surface.lspList()
+	case runtime.IntentLSPServerToggle:
+		if x.Surface == nil {
+			return "lsp: config surface unavailable in this context"
+		}
+		return x.Surface.lspServerToggle(it.LSPEnable)
 	case runtime.IntentStatusShow:
 		if x.Status == nil {
 			return "(status unavailable: no active session)"
