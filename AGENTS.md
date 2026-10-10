@@ -313,6 +313,15 @@
   工具族**默认 deferred**（deferred 面 T4.1 机制；+5435 token/轮教训不得重犯）；
   待拍板 = 全局默认 off/on / rename 是否入首批（多文件写须过 T5.2）/ 面板启停
   写哪层 / 非 Go 仓空转防护（登记 = implementation-plan T8.2）。
+- **⑫ T8.3 输入排队机制补全（照 grok）已立项（2026-10-10 用户点名「疑似没有
+  排队机制」；核查完成）**：**TUI 已有基础队列**（running 中 Enter 入队 +
+  runEndMsg 逐条排空，有测试钉）——缺 grok 的队列管理面（不可见/不可管理）
+  且**中断语义有坑**（Esc 中断后排队项自动开跑）；REPL 靠终端缓冲巧合。
+  grok 取证 = QueuePane（#N 列表）/ 队列编辑 / **send-now 插队** / 取消分级
+  （interactive 只取消 running、保留排队；hard teardown 才全清）。建议三片 =
+  ①可见+可管理（#N pane）②取消分级（中断后队列冻结不偷跑）③send-now 修饰键
+  插队；待拍板四条 = 中断后队列行为 / send-now 键位与首批 / pane 重排 /
+  REPL 预缓冲回显（登记 = implementation-plan T8.3）。
 - **长期口径（2026-10-06 用户点名）**：**MCP 与 code mode 是后续确定方向**
   ——盘点与排期一律按"前置依赖"分层，**不要用"不做"把件永久封死**（依赖前置
   表见 `wiki/port/pstack-skill-inventory.md` §5）。两条硬约束：MCP 工具默认
